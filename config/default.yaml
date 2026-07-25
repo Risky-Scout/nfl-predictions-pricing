@@ -1,0 +1,30 @@
+legacy:
+  elo:
+    initial_rating: 1500.0
+    reversion_mean: 1505.0
+    reversion_keep: 0.6666666667
+    k_factor: 20.0
+    scale: 400.0
+    elo_to_margin: 25.0
+    home_field_elo: 55.0
+    travel_elo_per_1000_miles: 4.0
+    bye_elo: 25.0
+    playoff_multiplier: 1.2
+  totals:
+    base_weight: 0.70
+    h2h_weight: 0.30
+    wind_intercept: 45.973
+    wind_slope: -0.3787
+
+challenger:
+  max_iter: 180
+  learning_rate: 0.045
+  max_leaf_nodes: 23
+  min_samples_leaf: 24
+  l2_regularization: 1.0
+  random_state: 42
+
+validation:
+  method: expanding_season
+  calibration_seasons: 1
+  push_handling: separate

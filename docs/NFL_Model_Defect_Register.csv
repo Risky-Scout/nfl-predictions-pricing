@@ -1,0 +1,23 @@
+severity,workbook,issue,evidence,affected_area,required_fix
+Critical,NFLMODEL,Travel adjustment disabled,"GetVenueAdjustment sets foundRow when locating the stadium column, so foundColumn remains False and distance returns Empty/zero.",Pregame ML/ATS,Rewrite and unit-test venue lookup.
+Critical,NFLMODEL,Travel sign reversed,"Even after fixing the lookup, homeDistance-awayDistance rewards the wrong side; intended penalty requires awayDistance-homeDistance in the home-minus-away rating difference.",Pregame ML/ATS,Use explicit negative travel penalty per team.
+Critical,NFLMODEL,Unplayed games treated as 0-0 ties,RunElo calculates result 0.5 and updates ratings when both score cells are blank.,All forecasts,Separate fit/update rows from forecast rows and require completed status.
+High,Quarterbackadjustment,Interception sign double-negative,"Coefficient is -14.1 and formula subtracts the coefficient term, so interceptions add value.",All QB-adjusted markets,Use + coefficient × interceptions with coefficient -14.1.
+High,TotalPoints,Approximate VLOOKUP on wind table,VLOOKUP omits FALSE/0 against an unsorted lookup table.,Totals,Replace with continuous formula or exact/interpolated lookup.
+High,TotalPoints,Future leakage,"Attack/defense/H2H aggregates use full-period data, including games after the prediction date.",Totals/ATS,Use rolling as-of features and walk-forward evaluation.
+High,TotalPoints,H2H fixed 30% weight,Exact matchup average receives 30% regardless of sample size or roster era.,Totals,Use shrinkage based on effective sample size or remove.
+High,Market calibration,Incomplete Solver model,Model/error/objective cells are blank in the student file; optimization intent is inferable but not executable as delivered.,Totals/team scores,Rebuild with constrained regularized likelihood.
+High,Market calibration,Unidentified factors,Separate offense/defense multiplicative scales lack an explicit normalization constraint.,Totals/team scores,Constrain geometric mean to 1 or use sum-to-zero log effects.
+High,538 ensemble,In-sample threshold search,Heuristic cutoffs and rankings are evaluated over the same cached seasons used to choose them.,ML,Use nested/walk-forward tuning.
+High,538 ensemble,Model 26 description mismatch,Description says fallback three-way average; formula falls back to Vegas.,ML,Treat formula as source of truth and document.
+High,538 feeds,Stale/brittle web imports,"IMPORTHTML and scrape formulas target old Yahoo, 538, and OddsPortal pages and return cached/#N/A values.",ML/market ensemble,Replace with licensed APIs and timestamped ingestion.
+High,NFLLongTerm,Margin-only fake scores,Simulation sets loser score to 0 and winner score to sampled positive margin.,Totals/ATS,Sample joint home/away scores or margin and total jointly.
+High,NFLLongTerm,Conference winner output bug,Output increments each conference's number-one seed rather than the actual championship winner.,Season simulation,Track actual round winners.
+High,NFLLongTerm,Tie-record bug,Tie branch writes from the wins column instead of incrementing the tie column.,Season simulation,Correct record state mutation and add tests.
+High,NFLLongTerm,Super Bowl gets home venue/HFA,Championship fixture inherits a team's venue and 55 Elo home advantage rather than neutral treatment.,Season simulation,Use neutral-site venue and zero HFA.
+High,NFLLongTerm,Obsolete league structure,256-game regular season and hard-coded playoff bracket reflect the older 16-game format.,Season simulation,Generate schedule/bracket from season rules.
+Medium,NFLscores,Tie/push handling weak,Winner becomes 0 for a tie and favorite-win flag is not a full three-way market treatment.,Calibration,Represent win/loss/tie and ATS/total pushes explicitly.
+Medium,TotalPoints,Exact integer wind domain,Final adjustment supports a narrow integer lookup range rather than continuous/out-of-range values.,Totals,Use continuous bounded weather effect.
+Medium,NFLMODEL,Bivariate Poisson inactive/broken,Named ranges are #REF and the 0-9 grid is imported soccer scaffolding.,All,Do not rely on it; use an NFL-appropriate score distribution.
+Medium,All student templates,Missing formulas are intentional blanks,Several calculation sheets are exercises rather than hidden models.,All,Mark reconstructed logic as inferred; do not present it as exact source code.
+Medium,All,No rigorous temporal validation,"No complete walk-forward, calibration, uncertainty, or line-timestamp evaluation framework.",All,Add season/week walk-forward backtests and bootstrap intervals.

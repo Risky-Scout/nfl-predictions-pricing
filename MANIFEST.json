@@ -1,0 +1,437 @@
+[
+  {
+    "path": ".env.example",
+    "bytes": 208,
+    "sha256": "9115a62fdd8c4a765282ec4e2de55334ae9384a449e0ccee1b9a9442c9697874"
+  },
+  {
+    "path": "CHANGELOG.md",
+    "bytes": 759,
+    "sha256": "26a9387e6735871f45d827978abb838456ddd2a6a0ad8ff04dd16802293f1d30"
+  },
+  {
+    "path": "MANIFEST.txt",
+    "bytes": 2492,
+    "sha256": "63858508d8cca2c7b200cdb6723735915960f1cbaab8841d6bcbf905267190c0"
+  },
+  {
+    "path": "MODEL_ARCHITECTURE.md",
+    "bytes": 2627,
+    "sha256": "5670bea2117872fb1b788fa71751e1c29afa14cc9d846170ba7f61846819dc58"
+  },
+  {
+    "path": "PHASE_A_C_BUILD_REPORT.md",
+    "bytes": 4409,
+    "sha256": "362ad298707af61490e6affbb0c135f58279f8ab8539779d49474c5c7e143e22"
+  },
+  {
+    "path": "README.md",
+    "bytes": 3447,
+    "sha256": "f522d3d461e2f7b6cdf7e0eb38087fd540d350fad5cf8afcc4b01f1281f2de0b"
+  },
+  {
+    "path": "STEP2_BUILD_REPORT.md",
+    "bytes": 3669,
+    "sha256": "63517ac416f49274d6d28cb6fd491fdf0dbcc2b6566658e00bcfa43a408f815c"
+  },
+  {
+    "path": "config/data_sources.yaml",
+    "bytes": 2033,
+    "sha256": "854604c0ca09da3f7bf41234aaf09dbad402feb2ff176049b9dc26682d004ad5"
+  },
+  {
+    "path": "config/default.yaml",
+    "bytes": 603,
+    "sha256": "1128e41b83b9ff0a54c3a1246c7054f90234769ac6b7e53c4cabd03128bfb92e"
+  },
+  {
+    "path": "config/prior_hyperparameters.yaml",
+    "bytes": 968,
+    "sha256": "0c7a8a6d4a2205e6840b125aa95360afb3fc3d445fdc34a7bf5e6dd6bcc6df4b"
+  },
+  {
+    "path": "data/README.md",
+    "bytes": 782,
+    "sha256": "1f8c4b146fcedf594c39f09ba1af36d98b2a2b62c72a0ccb0a99187965030fac"
+  },
+  {
+    "path": "data/templates/offseason_roster_history.csv",
+    "bytes": 446,
+    "sha256": "2546252729f19662a67f71feeda1d37692a40f5da46c1c96b1272e02c5fd348d"
+  },
+  {
+    "path": "data/templates/quarterback_history.csv",
+    "bytes": 99,
+    "sha256": "e033872a869a7bf8a87d253028b6d00352346f5387265e613c3786d240686084"
+  },
+  {
+    "path": "data/templates/starter_probabilities.csv",
+    "bytes": 76,
+    "sha256": "6ac6434482d26da01be2f6f3b0928a4c89e7236d775a5cad798f91f8b77c3d12"
+  },
+  {
+    "path": "data/templates/team_metric_history.csv",
+    "bytes": 80,
+    "sha256": "3804278d487f8503d77a55ea222ce28932fc11f701a261d2c04e8c066df4d002"
+  },
+  {
+    "path": "data/workbook_games_1989_2019.csv",
+    "bytes": 1085227,
+    "sha256": "0216ad8864be0f7c9ce3cd82bcbec1d4a7f6a368a0837dbb52988fef101a5ebf"
+  },
+  {
+    "path": "docs/2026_PRIOR_DATA_PLAN.md",
+    "bytes": 2859,
+    "sha256": "2a13dc81fdb6ac93866830d3dea5ed442115274d737003278bfec9df6f96d18e"
+  },
+  {
+    "path": "docs/CANONICAL_DATA_DICTIONARY.csv",
+    "bytes": 62149,
+    "sha256": "559d60965d2d50c0b170f5ed013afaf641e59b2f7840eeb8e998ef1c09f4a944"
+  },
+  {
+    "path": "docs/NFL_538_Ensemble_Model_Catalog.csv",
+    "bytes": 6188,
+    "sha256": "09d65f1f4195b9fe20c1d3ba79c76693a1d75fde61d14806c35976fa7a1023ea"
+  },
+  {
+    "path": "docs/NFL_Model_Data_Requirements.csv",
+    "bytes": 5624,
+    "sha256": "27e9ace1852dee9473ffbadb1fa45bd265747968d2e05bd6ac0299789e3aa8df"
+  },
+  {
+    "path": "docs/NFL_Model_Defect_Register.csv",
+    "bytes": 4553,
+    "sha256": "8756bd21ee0b900a9fc1d68c4d08d7885ab1902ed00f7b4bb25bafcb84f8c297"
+  },
+  {
+    "path": "docs/NFL_Model_Workbook_Dissection_Step1.md",
+    "bytes": 27270,
+    "sha256": "451cf87b57c1c3d50f91ab6ea9ff5ee729d28ddb3cd66a1ab5d8f614942e9df1"
+  },
+  {
+    "path": "docs/NFL_Model_Workbook_Logic_Map.csv",
+    "bytes": 3630,
+    "sha256": "b99ba90dc1719e0abc032b442166a7619a667222f5ad1e200a45d6d25a883c83"
+  },
+  {
+    "path": "docs/ODDS_BACKFILL_POLICY.md",
+    "bytes": 1873,
+    "sha256": "9faaaa7ffb7668380e83d832ca4a53cca03a7a8b4b62687ed866b259f0212740"
+  },
+  {
+    "path": "docs/PHASE_A_SOURCE_SPEC.md",
+    "bytes": 4650,
+    "sha256": "190eec8247a40e44ad364483beb7e3ed1fc5a8b8240a9c28e8c590e692d1713e"
+  },
+  {
+    "path": "docs/PHASE_C_MODEL_REFINEMENT.md",
+    "bytes": 4162,
+    "sha256": "d857938c817110b5044337917f7875bb10857de66f72468f72875bd1bd67e064"
+  },
+  {
+    "path": "docs/SOURCE_FIELD_MAPPING.csv",
+    "bytes": 27625,
+    "sha256": "ae4376c36c0c1dd9fbb1d94d6a824e438f730ccb268f4c2074fa114a7baa395f"
+  },
+  {
+    "path": "docs/UNRESOLVED_SOURCE_GAPS.md",
+    "bytes": 1808,
+    "sha256": "2939a5339f8f02f0086d63cecdbdce09875c8c933a5471d32b69cb4087fbec58"
+  },
+  {
+    "path": "examples/compare_phase_c_models.py",
+    "bytes": 3334,
+    "sha256": "e21ba3c1c1a5e90842b2744b148945e65980080b8ab97135e7ea4ebb8b0d4241"
+  },
+  {
+    "path": "examples/train_and_predict.py",
+    "bytes": 1475,
+    "sha256": "cda23168065dee59a4594c67d62a009cc2bf1581ed49663bf1551b3c812e2391"
+  },
+  {
+    "path": "outputs/phase_c_model_metrics.csv",
+    "bytes": 3267,
+    "sha256": "9995023fd8a15bf6f4f129a5806ce777612d6b4839ed3da2e5c1879ae9685164"
+  },
+  {
+    "path": "outputs/phase_c_model_predictions.csv",
+    "bytes": 507292,
+    "sha256": "c0ffb8b2fc08d9646c22ef483fb5d971626b594483566b7def79a1472b3a7b7a"
+  },
+  {
+    "path": "outputs/walkforward_metrics.csv",
+    "bytes": 1230,
+    "sha256": "7911e043b894f6d964032e40fafe827a5b3b09ebcd61068e21c1b727814b352c"
+  },
+  {
+    "path": "outputs/walkforward_predictions.csv",
+    "bytes": 250182,
+    "sha256": "ad92f808d795c760307965df8cf6e352b149f80b096aa4f049eec02848231058"
+  },
+  {
+    "path": "pyproject.toml",
+    "bytes": 847,
+    "sha256": "946286563b6fb604d4c58c89394665445aa5d1cb9bf1534c94a825576d36e998"
+  },
+  {
+    "path": "requirements-data.txt",
+    "bytes": 87,
+    "sha256": "8bd7ca633b7516f5dece0215c0e4c16e1d0dac2b039d68eed178d4779c52d14f"
+  },
+  {
+    "path": "requirements.txt",
+    "bytes": 89,
+    "sha256": "8fe7d7f26397a10ade6e98a9a6607965aa9181e806d72dc49268ef3c011f448b"
+  },
+  {
+    "path": "src/nfl_hybrid/__init__.py",
+    "bytes": 186,
+    "sha256": "6813041cc4f05186a292f6ec5931643edfe76dc136f9f8702dd28e05162df423"
+  },
+  {
+    "path": "src/nfl_hybrid/constants.py",
+    "bytes": 436,
+    "sha256": "d161aea849b3cdaebe7ccb51c878635f25e51a64c2a31df0dc67bd326a342fd7"
+  },
+  {
+    "path": "src/nfl_hybrid/data/__init__.py",
+    "bytes": 342,
+    "sha256": "f36c4fb1e4b80087e0ba1fd3798471077063f9fd72253d6386ea6a229e37a69b"
+  },
+  {
+    "path": "src/nfl_hybrid/data/availability.py",
+    "bytes": 1119,
+    "sha256": "830994227ad726b24caa57cb167710540057404979eb1ff98f084c246b23dc39"
+  },
+  {
+    "path": "src/nfl_hybrid/data/backfill.py",
+    "bytes": 10123,
+    "sha256": "750dba433192ac1ac2639ba9ab5312a3f1293dfb65f165ebd2b35a381d1cfc23"
+  },
+  {
+    "path": "src/nfl_hybrid/data/cli.py",
+    "bytes": 2590,
+    "sha256": "1a0eb4be393ad04cde10aa8ad094982953e08904b2eaee1796e0003e3d0da0ad"
+  },
+  {
+    "path": "src/nfl_hybrid/data/contracts.py",
+    "bytes": 4395,
+    "sha256": "011eb19cd39528f365a39693237a7c279870ce8b504a80b60b941ff56bfc7f13"
+  },
+  {
+    "path": "src/nfl_hybrid/data/io.py",
+    "bytes": 1248,
+    "sha256": "77196c6b96a7f8929007dbd2e6e7a66469d22017da8f40eefaafa484a22439c5"
+  },
+  {
+    "path": "src/nfl_hybrid/data/odds.py",
+    "bytes": 5287,
+    "sha256": "a7e27fecf7469fd57b753411c4364d21559c2ec8390dbbf9937e05180bce792f"
+  },
+  {
+    "path": "src/nfl_hybrid/data/provenance.py",
+    "bytes": 2227,
+    "sha256": "e52dc82be48381d399c966702542d3c7848218d6b6f965b2001e0844813521f8"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/__init__.py",
+    "bytes": 455,
+    "sha256": "3a75bef4aca20f27749000355116a8340d3a996301ef865e12b47919f43c7578"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/base.py",
+    "bytes": 595,
+    "sha256": "66f40c42ee058491b2921e60f0ddc66c05a357afeb509c8e4cc8d393d0f664fb"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/nfl_injuries.py",
+    "bytes": 7984,
+    "sha256": "c254dbe850b49b4f11671960d1dfb54eeeb801f50dd7d7a05ae9557ce4ace8bf"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/nflverse.py",
+    "bytes": 10815,
+    "sha256": "efda767c22bc28c2ef722f330d10273cc0161f391edee8f34af965032a9188b1"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/odds_base.py",
+    "bytes": 1234,
+    "sha256": "c6aeec38f692d89872615a22fcb23cae2685d363e521854e48c8b4bb7dcb8a65"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/sportradar.py",
+    "bytes": 7619,
+    "sha256": "a0c2edbafd3019b59339a9ff7454de3de475783a167914255adf0c6212ec1e86"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/spreadspoke.py",
+    "bytes": 6284,
+    "sha256": "7270398338d3d8a5676b22fbfd6bc99ce25ff6a6ce6b17c6fbfd57ab12c53e6a"
+  },
+  {
+    "path": "src/nfl_hybrid/data/providers/the_odds_api.py",
+    "bytes": 10839,
+    "sha256": "b9f89460ceb6abab805709f1cd2fced00785c6c9cd6fdb2a02b43b977d87aade"
+  },
+  {
+    "path": "src/nfl_hybrid/data/reconcile.py",
+    "bytes": 5247,
+    "sha256": "40062ed6e6a034be633560ebd51f2e9ce458a23d741d49a85c4c1da6481a2c46"
+  },
+  {
+    "path": "src/nfl_hybrid/data/team_ids.py",
+    "bytes": 3499,
+    "sha256": "725deac279d3d3b11d8ae1543e99aecfeaa4c35120733ad1d0146dafa68542ef"
+  },
+  {
+    "path": "src/nfl_hybrid/evaluation/__init__.py",
+    "bytes": 198,
+    "sha256": "feb7a4e6aa4fe24b61f1143c3de75388827f20bd150b64beaa2e1471ba502812"
+  },
+  {
+    "path": "src/nfl_hybrid/evaluation/metrics.py",
+    "bytes": 1217,
+    "sha256": "e182e8b240f4604545cde79080887e98ec3da7aa6ddde90690bd6566e4c77a9a"
+  },
+  {
+    "path": "src/nfl_hybrid/evaluation/walkforward.py",
+    "bytes": 4278,
+    "sha256": "28bf54bc7d4e3e5310808ed73f3732958f7390efda7c539744d3d3dc3c8818c9"
+  },
+  {
+    "path": "src/nfl_hybrid/features/__init__.py",
+    "bytes": 526,
+    "sha256": "ee23f5015834929dcb23d2df617919ea4062dec1871bbdd10e800f8c30fb28aa"
+  },
+  {
+    "path": "src/nfl_hybrid/features/opponent_adjustment.py",
+    "bytes": 4143,
+    "sha256": "57ff0afbf05fca4c9152a0f1f6235485bf91e1b7e8581462438fa528b4b4f432"
+  },
+  {
+    "path": "src/nfl_hybrid/features/pregame.py",
+    "bytes": 11994,
+    "sha256": "d1efdbea10be5499c7edbdf58cb0531377688eb0a1279d58a1d5767648b1f79c"
+  },
+  {
+    "path": "src/nfl_hybrid/features/roster_continuity.py",
+    "bytes": 3008,
+    "sha256": "d493cd1164d47963ad3311cebcee2c2246e3c3da4ddc2db8688143e86b827317"
+  },
+  {
+    "path": "src/nfl_hybrid/features/team_game.py",
+    "bytes": 9688,
+    "sha256": "a3f0f7d88e374d91cfec5ccf5af9f4f09b19316100641738ead45f1cbbe24216"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/__init__.py",
+    "bytes": 535,
+    "sha256": "5976d921eead3598165046aac2a7afa58e1f76fafa2ae5e5c9d540088d40e537"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/elo.py",
+    "bytes": 5192,
+    "sha256": "f789924eb9c638c9c3f239e0b97bfc627dc3642f9a3e53d3e78518aff55fffc5"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/ensemble.py",
+    "bytes": 3642,
+    "sha256": "2e21d266afcd45fd5dddc1fede1aa1b8772a5ed235c209f1e7152e68968fd8e4"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/market.py",
+    "bytes": 1233,
+    "sha256": "7d4d5f7aa3980ef8322962134d32feffe021edc674f0814650f92d540309c4cd"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/qb.py",
+    "bytes": 1383,
+    "sha256": "68aa05f27d0adf8a7191746a8a30e384f62cba747a133bd52ae87826e618b0cf"
+  },
+  {
+    "path": "src/nfl_hybrid/legacy/scoring.py",
+    "bytes": 1851,
+    "sha256": "c6b0d92a1141cefcc76902ad02b32dbf49098e36ec0a4bce09f3fc06d84be6a7"
+  },
+  {
+    "path": "src/nfl_hybrid/modern/__init__.py",
+    "bytes": 346,
+    "sha256": "b10b559d05e958a00bc37e52aee93a6490c00a7c2600a0de46354ab42b0592e2"
+  },
+  {
+    "path": "src/nfl_hybrid/modern/inplay.py",
+    "bytes": 4375,
+    "sha256": "a1a6e3a03f562fa6c919f8fa48194e9d2489164e625be9bae98fdb73219a197d"
+  },
+  {
+    "path": "src/nfl_hybrid/modern/joint_score.py",
+    "bytes": 13348,
+    "sha256": "2decc17b2b6333292e81803bedee84edbff81dc1a0b23b531e1c6f2148494ad3"
+  },
+  {
+    "path": "src/nfl_hybrid/modern/market_residual.py",
+    "bytes": 6156,
+    "sha256": "5c1f54b397b0ba439cc55598c3a2d0d3c0c1db825a55989e57f9c27b5d223c1d"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/__init__.py",
+    "bytes": 641,
+    "sha256": "787d6226d15b1799885f5790ac1aa75c98921e283fbd5df6b58042171a33680f"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/cli.py",
+    "bytes": 2578,
+    "sha256": "060548876dbb67408c4ac4df76d1230e10a56a5848a8fd8b263ef4ff1962f58f"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/coach.py",
+    "bytes": 5399,
+    "sha256": "7ef075f206bfad9634c19a68552836bcedb339b456283b54be424c277d4f3d6f"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/quarterback.py",
+    "bytes": 7417,
+    "sha256": "6966c90a3fbcbe093e6fc8c8966a1eea318740ef04c7f827ad5982dd64f28f56"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/roster.py",
+    "bytes": 2129,
+    "sha256": "c28592421ef67e1e64cd01d5849c9f24d893cbd19251956b11a5c1cbafc543ad"
+  },
+  {
+    "path": "src/nfl_hybrid/priors/team.py",
+    "bytes": 7580,
+    "sha256": "440511a8158b33f6f00169b9abbb640729b278a9c22f403dee80796e74276c4a"
+  },
+  {
+    "path": "src/nfl_hybrid/schemas.py",
+    "bytes": 1110,
+    "sha256": "e2115f404bad87eda4e094a52e94308bb4bd9b51e60f105eeb989009292d6510"
+  },
+  {
+    "path": "tests/test_data_adapters.py",
+    "bytes": 10229,
+    "sha256": "7b5e13de4606e8133d86a72f4ee6bbf87d5fbac6b6dce52ad67d67894b3ce682"
+  },
+  {
+    "path": "tests/test_joint_score.py",
+    "bytes": 1307,
+    "sha256": "d540313c6e1edf278da44c610794e63032f8bead9c688107e8fe6d8d3dbe1576"
+  },
+  {
+    "path": "tests/test_legacy.py",
+    "bytes": 2277,
+    "sha256": "859c348b154549332094f3aeed8882f5ecd749aa0f219826bc97b18a6aa75e9a"
+  },
+  {
+    "path": "tests/test_phase_c.py",
+    "bytes": 5641,
+    "sha256": "10a57b3e0b1c0f1afb53a9f1b22ea1c97736f1bdced76fd2ed2e969926e99130"
+  },
+  {
+    "path": "tests/test_phase_c_features.py",
+    "bytes": 4538,
+    "sha256": "07146d3ef3f61fa9444f78e77c42bb35d029351704540a4cc3131fd68062935a"
+  }
+]

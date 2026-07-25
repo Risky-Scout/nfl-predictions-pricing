@@ -1,0 +1,37 @@
+status: provisional_until_2020_2025_walkforward_tuning
+target_season: 2026
+
+team_units:
+  season_weights_initial: [0.60, 0.28, 0.12]
+  season_weight_candidates:
+    - [0.70, 0.30, 0.00]
+    - [0.60, 0.28, 0.12]
+    - [0.50, 0.30, 0.20]
+    - [0.45, 0.35, 0.20]
+  prior_strength_candidates_plays: [150, 250, 400, 600, 900, 1200]
+  initial_prior_strength_plays: 500
+  minimum_between_entity_sd: 0.02
+
+quarterback:
+  latest_dropbacks_cap: 1000
+  recency_half_life_dropbacks: 400
+  prior_dropbacks: 250
+  experience_buckets:
+    - rookie
+    - years_1_2
+    - years_3_5
+    - years_6_9
+    - years_10_plus
+  starter_mixture_required: true
+
+roster_adjustment:
+  method: standardized_ridge
+  ridge_alphas: [0.1, 1.0, 10.0, 100.0]
+  target: early_season_performance_residual
+
+model_selection:
+  validation: expanding_season_walkforward
+  tune_seasons: [2021, 2022, 2023]
+  selection_season: 2024
+  untouched_final_season: 2025
+  freeze_2026_only_after_final_validation: true

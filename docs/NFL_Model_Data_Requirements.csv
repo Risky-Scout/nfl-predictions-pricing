@@ -1,0 +1,32 @@
+category,field_or_group,grain,required_for,availability_timing,priority,workbook_coverage,implementation_note
+Identity,game_id,game,All,Before kickoff,Essential,No single canonical ID in all files,"Stable ID across schedules, markets, PBP, roster and weather."
+Identity,"season, week, game_type/playoff",game,All,Before kickoff,Essential,Present in score/model sheets,Use explicit postseason round; do not infer from week number.
+Identity,"scheduled_kickoff_utc, local_timezone",game,All,Before kickoff,Essential,Date generally present; time inconsistent,"Needed for rest, weather joins, odds snapshots and in-play ordering."
+Identity,"home_team_id, away_team_id",game,All,Before kickoff,Essential,Names plus lookup codes,Canonical franchise IDs and relocation history.
+Venue,"stadium_id, neutral_site, roof, surface",game,All,Before kickoff,Essential,Stadium/neutral present; roof/surface mostly absent,Venue version must be effective-dated.
+Outcome,"home_score, away_score, overtime/tie flag",game,Training labels,Final,Essential,Present,Retain ties and overtime explicitly.
+Market,sportsbook/source and market snapshot timestamp,market snapshot,All,As-of prediction,Essential,Legacy web imports lack robust timestamps,Every price must be linked to its availability time.
+Market,home/away moneyline odds,market snapshot,ML; ensemble,As-of prediction,Essential,American odds in 538 workbook,Store raw odds and de-vigged probabilities; retain vig.
+Market,home spread and both side prices,market snapshot,ATS; implied team scores,As-of prediction,Essential,Favorite spread only in score sheets,Use home-team sign convention; preserve pushes.
+Market,total line and over/under prices,market snapshot,Totals; implied team scores,As-of prediction,Essential,Total line present; prices usually absent,Line alone is not enough to evaluate expected value.
+Market,open/current/close/live quote type,market snapshot,All,As-of prediction,Essential,Not standardized,Closing information cannot be used for earlier predictions.
+Elo,pregame home/away Elo,team-game snapshot,ML; ATS,Before kickoff,Essential,Integrated model,Compute strictly from prior completed games.
+Elo context,"home-field Elo, travel distances, rest/bye days, playoff flag",team-game snapshot,ML; ATS,Before kickoff,Essential,Present in integrated/long-term files,Fix travel sign and use geodesic/itinerary rules.
+QB,expected starter QB ID and status,team-game snapshot,All,"Before kickoff, timestamped",Essential,Workbook uses manual QB adjustment,A starter decision must be known as-of the prediction.
+QB,"QB value/rating, team fallback QB value",player-team snapshot,All,Before kickoff,Essential,QB adjustment workbook,Train on prior games only; define replacement-level handling.
+Availability,injury/practice/game status and inactive list,player-game snapshot,All,Timestamped,Essential for production,Not in workbooks,Keep source timestamp and status changes.
+Team strength,offense and defense scoring factors,team-game snapshot,Totals; team totals; ATS,Before kickoff,Essential,Solver/Points sheets,"Use regularization, recency, and identifiability constraints."
+Team form,"EPA/play, success rate, pace, early-down pass rate, explosive rate",team-game snapshot,Modern challenger,Before kickoff,Recommended,Absent,Optional for exact legacy replication; important for a competitive model.
+Weather,"forecast temperature, wind, precipitation, humidity",game forecast snapshot,Totals; ATS,As-of prediction,Essential,Historical observed weather in score sheets,"Training must use a forecast available at the same lead time, not final observed weather."
+Historical weather,observed game weather,game,Diagnostics,Final,Recommended,Present,"Use for diagnostics or an oracle benchmark, not as a pregame feature unless it was forecast."
+In-play state,"event_id, play_id, event timestamp",play snapshot,In-play all,Live,Essential,Absent,Canonical event ordering and correction/version fields required.
+In-play state,"quarter, game clock, score, possession",play snapshot,In-play all,Live,Essential,Absent,Minimum sufficient state.
+In-play state,"down, distance, yard line, goal-to-go",play snapshot,In-play all,Live,Essential,Absent,Needed for expected points and remaining possession value.
+In-play state,"timeouts, two-minute warnings, overtime state",play snapshot,In-play all,Live,Essential,Absent,Clock-control variables materially change tails.
+In-play state,"drive ID, plays/drives, turnovers, penalties, red-zone state",play snapshot,In-play all,Live,Essential,Absent,Cumulative and current-drive features.
+In-play player state,current QB and material player exits,play snapshot,In-play all,Live,Essential,Absent,Update expected strength after injury/benching.
+In-play market,"live ML, spread, total and prices with quote timestamp",market snapshot,In-play benchmarking/ensemble,Live,Essential for betting use,Absent,Join only quotes already available at each prediction snapshot.
+Governance,"source_event_time, source_publish_time, ingestion_time, revision_id",all records,All,Always,Essential,Absent,Required to prevent look-ahead and handle stat corrections.
+Label,"home_win/tie, home_margin, total_points",game,Training,Final,Essential,Derivable,Primary outcome targets.
+Label,home_cover/push and over/push at each quoted line,game-market snapshot,ATS; totals,Final,Essential,Derivable,Labels are quote-specific because lines differ by source/time.
+Label,"remaining_home_points, remaining_away_points, final margin/total",play snapshot,In-play training,Final,Essential,Absent,Preferred in-play targets; derive market probabilities from a joint score distribution.

@@ -1,0 +1,75 @@
+project:
+  canonical_timezone: UTC
+  internal_team_id_standard: nflverse_current_alias
+  seasons:
+    historical_backfill: [2020, 2021, 2022, 2023, 2024, 2025]
+    prior_training: [2020, 2021, 2022, 2023, 2024, 2025]
+    target_prior_season: 2026
+
+spreadspoke:
+  role: workbook_continuity_and_reference
+  locator_env: SPREADSPOKE_CSV_PATH
+  required_fields:
+    - schedule_date
+    - schedule_season
+    - schedule_week_str
+    - schedule_playoff
+    - team_home
+    - score_home
+    - team_away
+    - score_away
+    - team_favorite_id
+    - spread_favorite
+    - over_under_line
+    - stadium
+    - stadium_neutral
+    - weather_temperature
+    - weather_wind_mph
+    - weather_humidity
+    - weather_detail
+  line_timestamp_policy: unknown_never_use_as_horizon_snapshot
+
+nflverse:
+  role: football_data_backbone
+  python_package: nflreadpy
+  datasets:
+    - schedules
+    - pbp
+    - player_stats
+    - team_stats
+    - rosters
+    - rosters_weekly
+    - snap_counts
+    - depth_charts
+    - injuries_2020_2024
+    - players
+  schedule_kickoff_time_interpretation: America/New_York_then_convert_to_UTC
+  postgame_feature_availability_hours_after_kickoff: 5
+
+odds:
+  provider_interface: ProviderAgnosticOddsAdapter
+  initial_provider: the_odds_api
+  api_key_env: THE_ODDS_API_KEY
+  sport_key: americanfootball_nfl
+  regions: [us]
+  markets: [h2h, spreads, totals]
+  odds_format: american
+  prediction_horizons_minutes: [10080, 4320, 1440, 360, 60, 15]
+  require_cost_confirmation: true
+  retain_every_bookmaker_quote: true
+  retain_raw_and_devig_probabilities: true
+
+injuries:
+  2020_2024_primary: nflverse
+  2025_2026_no_key_fallback: nfl_official_archive_export
+  2025_2026_automated_provider: sportradar
+  sportradar_api_key_env: SPORTRADAR_API_KEY
+  official_archive_url_pattern: https://www.nfl.com/injuries/league/{season}/{week_token}
+  never_infer_missing_team_from_table_order: true
+
+storage:
+  preferred_format: parquet
+  fallback_format: csv
+  retain_raw_provider_tables: true
+  retain_manifests: true
+  checksum: sha256

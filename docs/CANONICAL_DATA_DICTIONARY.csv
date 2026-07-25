@@ -1,0 +1,379 @@
+table,field,type,required,primary_source,model_use,known_at_rule,description,leakage_risk
+games,game_id,string,yes,nflverse,all,schedule publication,Canonical nflverse game identifier.,
+games,spreadspoke_game_id,string,no,Spreadspoke,audit,ingestion only,Cross-source continuity identifier.,
+games,season,int,yes,nflverse/Spreadspoke,all,schedule publication,NFL season year.,
+games,season_type,enum,yes,nflverse,all,schedule publication,"PRE, REG, or POST.",
+games,week,string,yes,nflverse/Spreadspoke,all,schedule publication,Regular-season week or playoff round.,
+games,scheduled_kickoff_utc,timestamp,yes,nflverse,all,schedule update timestamp,Scheduled kickoff converted to UTC.,Reschedules must be versioned.
+games,schedule_version_utc,timestamp,yes,pipeline,all,source retrieval,When this schedule version became known.,
+games,home_team_id,string,yes,nflverse,all,schedule publication,Canonical current-franchise alias.,
+games,away_team_id,string,yes,nflverse,all,schedule publication,Canonical current-franchise alias.,
+games,neutral_site,bool,yes,nflverse/Spreadspoke,all,schedule publication,Neutral-site flag.,
+games,international_game,bool,no,derived,all,schedule publication,Game played outside United States.,
+games,division_game,bool,no,nflverse,all,schedule publication,Divisional matchup.,
+games,stadium_id,string,no,nflverse,all,schedule publication,Canonical venue identifier.,
+games,stadium_name,string,no,nflverse/Spreadspoke,all,schedule publication,Venue name.,
+games,stadium_latitude,float,no,venue dimension,weather/travel,venue dimension version,Venue latitude.,
+games,stadium_longitude,float,no,venue dimension,weather/travel,venue dimension version,Venue longitude.,
+games,stadium_timezone,string,no,venue dimension,all,venue dimension version,IANA venue timezone.,
+games,roof,enum,no,nflverse,totals,schedule/update timestamp,"Dome, closed, open, or outdoors.",Roof decision can change.
+games,surface,string,no,nflverse/Spreadspoke,all,schedule/update timestamp,Playing surface.,
+games,home_rest_days,float,yes,nflverse/derived,all,prior game completion,Days since home team's prior game.,
+games,away_rest_days,float,yes,nflverse/derived,all,prior game completion,Days since away team's prior game.,
+games,home_bye_flag,bool,yes,derived,all,schedule publication,Home team coming off bye.,
+games,away_bye_flag,bool,yes,derived,all,schedule publication,Away team coming off bye.,
+games,home_short_week_flag,bool,yes,derived,all,schedule publication,Home rest below six days.,
+games,away_short_week_flag,bool,yes,derived,all,schedule publication,Away rest below six days.,
+games,home_travel_miles,float,no,derived venue/team locations,all,schedule publication,Great-circle travel estimate.,
+games,away_travel_miles,float,no,derived venue/team locations,all,schedule publication,Great-circle travel estimate.,
+games,home_time_zone_change,float,no,derived,all,schedule publication,Venue minus origin UTC offset.,
+games,away_time_zone_change,float,no,derived,all,schedule publication,Venue minus origin UTC offset.,
+games,home_head_coach_id,string,no,nflverse/manual,all,announcement timestamp,Expected home head coach.,
+games,away_head_coach_id,string,no,nflverse/manual,all,announcement timestamp,Expected away head coach.,
+games,home_score,float,target only,nflverse/Spreadspoke,labels,after game final,Final home score.,Never use as pregame feature.
+games,away_score,float,target only,nflverse/Spreadspoke,labels,after game final,Final away score.,Never use as pregame feature.
+games,home_margin,float,target only,derived,labels,after game final,Home score minus away score.,Never use as feature.
+games,total_points,float,target only,derived,labels,after game final,Combined final score.,Never use as feature.
+games,overtime,bool,target/context,nflverse,labels,after game final,Overtime flag.,Never use pregame.
+games,attendance,float,no,box score/provider,research,after game,Recorded attendance.,Not available pregame.
+games,attendance_capacity_pct,float,no,derived,historical HFA,after game,Attendance divided by capacity.,Use only to estimate future priors.
+games,limited_crowd_flag,bool,no,derived,historical HFA,after game,COVID-era crowd restriction proxy.,Use historical only.
+games,source_name,string,yes,pipeline,audit,ingestion,Primary row source.,
+games,source_retrieved_at_utc,timestamp,yes,pipeline,audit,ingestion,Retrieval timestamp.,
+odds_snapshots,provider_event_id,string,yes,The Odds API,all markets,provider snapshot,Provider event identifier.,
+odds_snapshots,game_id,string,yes,crosswalk,all markets,event match time,Canonical game identifier.,
+odds_snapshots,sport_key,string,yes,The Odds API,audit,provider snapshot,Provider sport key.,
+odds_snapshots,bookmaker_id,string,yes,The Odds API,all markets,provider snapshot,Stable bookmaker key.,
+odds_snapshots,bookmaker_name,string,yes,The Odds API,audit,provider snapshot,Bookmaker display name.,
+odds_snapshots,bookmaker_region,string,yes,adapter config,audit,request time,Region requested.,
+odds_snapshots,market_type,enum,yes,adapter,all markets,provider snapshot,"moneyline, spread, or total.",
+odds_snapshots,outcome_side,enum,yes,adapter,all markets,provider snapshot,"home, away, over, under, or draw.",
+odds_snapshots,outcome_name,string,yes,The Odds API,audit,provider snapshot,Raw outcome name.,
+odds_snapshots,line_value,float,conditional,The Odds API,ATS/totals,provider snapshot,Spread or total point value; null for Moneyline.,
+odds_snapshots,price_american,float,yes,The Odds API,all markets,provider snapshot,American price.,
+odds_snapshots,price_decimal,float,yes,derived,all markets,provider snapshot,Decimal price.,
+odds_snapshots,raw_implied_probability,float,yes,derived,all markets,provider snapshot,Unadjusted implied probability.,
+odds_snapshots,bookmaker_overround,float,yes,derived,all markets,provider snapshot,Sum of paired raw implied probabilities.,
+odds_snapshots,devig_probability,float,yes,derived,all markets,provider snapshot,Multiplicatively de-vigged probability.,
+odds_snapshots,snapshot_utc,timestamp,yes,The Odds API,all markets,provider snapshot,Historical market snapshot time.,
+odds_snapshots,bookmaker_last_update_utc,timestamp,no,The Odds API,all markets,provider market update,Book/market last-update timestamp.,
+odds_snapshots,commence_time_utc,timestamp,yes,The Odds API,join/audit,provider snapshot,Provider event kickoff.,
+odds_snapshots,minutes_to_kickoff,float,yes,derived,all markets,provider snapshot,Kickoff minus snapshot in minutes.,
+odds_snapshots,is_live,bool,yes,derived,routing,provider snapshot,Snapshot at or after kickoff.,
+odds_snapshots,market_active_flag,bool,no,provider,routing,provider snapshot,Market availability flag.,
+odds_snapshots,consensus_line,float,no,derived,ATS/totals,provider snapshot,Median across books for same side.,
+odds_snapshots,consensus_price_american,float,no,derived,all markets,provider snapshot,Median price across books.,
+odds_snapshots,market_line_std,float,no,derived,ATS/totals,provider snapshot,Cross-book line dispersion.,
+odds_snapshots,market_probability_std,float,no,derived,all markets,provider snapshot,Cross-book probability dispersion.,
+odds_snapshots,number_of_books_reporting,int,yes,derived,all markets,provider snapshot,Count of active books.,
+odds_snapshots,opening_line,float,no,derived snapshot history,ATS/totals,first observed snapshot,First observed line.,Opening is provider-coverage dependent.
+odds_snapshots,line_move_from_open,float,no,derived snapshot history,ATS/totals,current snapshot,Current minus opening line.,
+odds_snapshots,source_name,string,yes,pipeline,audit,ingestion,Odds source.,
+odds_snapshots,source_retrieved_at_utc,timestamp,yes,pipeline,audit,ingestion,API retrieval time.,
+plays,game_id,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field game_id.,Only prior completed games for pregame.
+plays,play_id,int,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field play_id.,Only prior completed games for pregame.
+plays,season,int,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field season.,Only prior completed games for pregame.
+plays,season_type,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field season_type.,Only prior completed games for pregame.
+plays,week,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field week.,Only prior completed games for pregame.
+plays,posteam,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field posteam.,Only prior completed games for pregame.
+plays,defteam,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field defteam.,Only prior completed games for pregame.
+plays,home_team,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field home_team.,Only prior completed games for pregame.
+plays,away_team,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field away_team.,Only prior completed games for pregame.
+plays,qtr,int,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field qtr.,Only prior completed games for pregame.
+plays,game_seconds_remaining,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field game_seconds_remaining.,Only prior completed games for pregame.
+plays,half_seconds_remaining,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field half_seconds_remaining.,Only prior completed games for pregame.
+plays,drive,int,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field drive.,Only prior completed games for pregame.
+plays,series,int,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field series.,Only prior completed games for pregame.
+plays,down,int,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field down.,Only prior completed games for pregame.
+plays,ydstogo,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field ydstogo.,Only prior completed games for pregame.
+plays,yardline_100,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field yardline_100.,Only prior completed games for pregame.
+plays,goal_to_go,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field goal_to_go.,Only prior completed games for pregame.
+plays,score_differential,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field score_differential.,Only prior completed games for pregame.
+plays,play_type,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field play_type.,Only prior completed games for pregame.
+plays,pass_attempt,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field pass_attempt.,Only prior completed games for pregame.
+plays,rush_attempt,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field rush_attempt.,Only prior completed games for pregame.
+plays,qb_dropback,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field qb_dropback.,Only prior completed games for pregame.
+plays,sack,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field sack.,Only prior completed games for pregame.
+plays,scramble,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field scramble.,Only prior completed games for pregame.
+plays,complete_pass,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field complete_pass.,Only prior completed games for pregame.
+plays,interception,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field interception.,Only prior completed games for pregame.
+plays,fumble,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field fumble.,Only prior completed games for pregame.
+plays,fumble_lost,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field fumble_lost.,Only prior completed games for pregame.
+plays,touchdown,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field touchdown.,Only prior completed games for pregame.
+plays,first_down,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field first_down.,Only prior completed games for pregame.
+plays,third_down_converted,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field third_down_converted.,Only prior completed games for pregame.
+plays,fourth_down_converted,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field fourth_down_converted.,Only prior completed games for pregame.
+plays,air_yards,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field air_yards.,Only prior completed games for pregame.
+plays,yards_after_catch,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field yards_after_catch.,Only prior completed games for pregame.
+plays,passing_yards,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field passing_yards.,Only prior completed games for pregame.
+plays,rushing_yards,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field rushing_yards.,Only prior completed games for pregame.
+plays,return_yards,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field return_yards.,Only prior completed games for pregame.
+plays,penalty,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field penalty.,Only prior completed games for pregame.
+plays,penalty_yards,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field penalty_yards.,Only prior completed games for pregame.
+plays,epa,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field epa.,Only prior completed games for pregame.
+plays,wpa,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field wpa.,Only prior completed games for pregame.
+plays,success,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field success.,Only prior completed games for pregame.
+plays,cp,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field cp.,Only prior completed games for pregame.
+plays,cpoe,float,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field cpoe.,Only prior completed games for pregame.
+plays,passer_player_id,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field passer_player_id.,Only prior completed games for pregame.
+plays,rusher_player_id,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field rusher_player_id.,Only prior completed games for pregame.
+plays,receiver_player_id,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field receiver_player_id.,Only prior completed games for pregame.
+plays,kicker_player_id,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field kicker_player_id.,Only prior completed games for pregame.
+plays,punter_player_id,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field punter_player_id.,Only prior completed games for pregame.
+plays,special_teams_play,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field special_teams_play.,Only prior completed games for pregame.
+plays,no_huddle,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field no_huddle.,Only prior completed games for pregame.
+plays,shotgun,bool,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field shotgun.,Only prior completed games for pregame.
+plays,time_of_possession,string,no,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field time_of_possession.,Only prior completed games for pregame.
+plays,source_name,string,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field source_name.,Only prior completed games for pregame.
+plays,source_retrieved_at_utc,timestamp,yes,nflverse,pregame features/in-play,after play; corrected postgame,nflverse play-by-play field source_retrieved_at_utc.,Only prior completed games for pregame.
+team_game_features,game_id,string,yes,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field game_id.,Current game excluded.
+team_game_features,team_id,string,yes,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field team_id.,Current game excluded.
+team_game_features,opponent_id,string,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field opponent_id.,Current game excluded.
+team_game_features,is_home,bool,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field is_home.,Current game excluded.
+team_game_features,feature_available_at_utc,timestamp,yes,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field feature_available_at_utc.,Current game excluded.
+team_game_features,plays,int,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field plays.,Current game excluded.
+team_game_features,drives,int,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field drives.,Current game excluded.
+team_game_features,points_per_drive,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field points_per_drive.,Current game excluded.
+team_game_features,epa_per_play,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field epa_per_play.,Current game excluded.
+team_game_features,success_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field success_rate.,Current game excluded.
+team_game_features,dropback_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field dropback_epa.,Current game excluded.
+team_game_features,dropback_success_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field dropback_success_rate.,Current game excluded.
+team_game_features,rush_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field rush_epa.,Current game excluded.
+team_game_features,rush_success_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field rush_success_rate.,Current game excluded.
+team_game_features,early_down_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field early_down_epa.,Current game excluded.
+team_game_features,late_down_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field late_down_epa.,Current game excluded.
+team_game_features,early_down_pass_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field early_down_pass_rate.,Current game excluded.
+team_game_features,neutral_pass_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field neutral_pass_rate.,Current game excluded.
+team_game_features,explosive_pass_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field explosive_pass_rate.,Current game excluded.
+team_game_features,explosive_rush_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field explosive_rush_rate.,Current game excluded.
+team_game_features,turnover_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field turnover_rate.,Current game excluded.
+team_game_features,interception_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field interception_rate.,Current game excluded.
+team_game_features,fumble_lost_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field fumble_lost_rate.,Current game excluded.
+team_game_features,sack_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field sack_rate.,Current game excluded.
+team_game_features,three_and_out_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field three_and_out_rate.,Current game excluded.
+team_game_features,third_down_conversion_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field third_down_conversion_rate.,Current game excluded.
+team_game_features,fourth_down_conversion_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field fourth_down_conversion_rate.,Current game excluded.
+team_game_features,red_zone_trip_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field red_zone_trip_rate.,Current game excluded.
+team_game_features,red_zone_td_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field red_zone_td_rate.,Current game excluded.
+team_game_features,goal_to_go_td_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field goal_to_go_td_rate.,Current game excluded.
+team_game_features,starting_field_position,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field starting_field_position.,Current game excluded.
+team_game_features,field_position_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field field_position_epa.,Current game excluded.
+team_game_features,penalty_rate,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field penalty_rate.,Current game excluded.
+team_game_features,penalty_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field penalty_epa.,Current game excluded.
+team_game_features,pace_seconds_per_play,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field pace_seconds_per_play.,Current game excluded.
+team_game_features,plays_per_drive,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field plays_per_drive.,Current game excluded.
+team_game_features,special_teams_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field special_teams_epa.,Current game excluded.
+team_game_features,field_goal_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field field_goal_epa.,Current game excluded.
+team_game_features,punt_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field punt_epa.,Current game excluded.
+team_game_features,kickoff_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field kickoff_epa.,Current game excluded.
+team_game_features,return_epa,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field return_epa.,Current game excluded.
+team_game_features,season_to_date_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field season_to_date_value.,Current game excluded.
+team_game_features,last_4_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field last_4_value.,Current game excluded.
+team_game_features,last_8_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field last_8_value.,Current game excluded.
+team_game_features,ewma_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field ewma_value.,Current game excluded.
+team_game_features,opponent_adjusted_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field opponent_adjusted_value.,Current game excluded.
+team_game_features,home_split_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field home_split_value.,Current game excluded.
+team_game_features,away_split_value,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field away_split_value.,Current game excluded.
+team_game_features,effective_sample_size,float,no,derived from nflverse pbp/team stats,all,after prior game finalized,Derived team efficiency field effective_sample_size.,Current game excluded.
+player_weekly_stats,season,int,yes,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field season.,Current-game final stats excluded.
+player_weekly_stats,week,string,yes,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field week.,Current-game final stats excluded.
+player_weekly_stats,game_id,string,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field game_id.,Current-game final stats excluded.
+player_weekly_stats,team_id,string,yes,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field team_id.,Current-game final stats excluded.
+player_weekly_stats,player_id,string,yes,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field player_id.,Current-game final stats excluded.
+player_weekly_stats,player_name,string,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field player_name.,Current-game final stats excluded.
+player_weekly_stats,position,string,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field position.,Current-game final stats excluded.
+player_weekly_stats,starter_flag,bool,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field starter_flag.,Current-game final stats excluded.
+player_weekly_stats,expected_starter_flag,bool,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field expected_starter_flag.,Current-game final stats excluded.
+player_weekly_stats,starter_probability,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field starter_probability.,Current-game final stats excluded.
+player_weekly_stats,dropbacks,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field dropbacks.,Current-game final stats excluded.
+player_weekly_stats,attempts,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field attempts.,Current-game final stats excluded.
+player_weekly_stats,completions,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field completions.,Current-game final stats excluded.
+player_weekly_stats,passing_yards,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field passing_yards.,Current-game final stats excluded.
+player_weekly_stats,passing_touchdowns,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field passing_touchdowns.,Current-game final stats excluded.
+player_weekly_stats,interceptions,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field interceptions.,Current-game final stats excluded.
+player_weekly_stats,sacks_suffered,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field sacks_suffered.,Current-game final stats excluded.
+player_weekly_stats,sack_yards_lost,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field sack_yards_lost.,Current-game final stats excluded.
+player_weekly_stats,passing_air_yards,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field passing_air_yards.,Current-game final stats excluded.
+player_weekly_stats,passing_yards_after_catch,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field passing_yards_after_catch.,Current-game final stats excluded.
+player_weekly_stats,scrambles,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field scrambles.,Current-game final stats excluded.
+player_weekly_stats,designed_qb_runs,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field designed_qb_runs.,Current-game final stats excluded.
+player_weekly_stats,rushing_yards,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field rushing_yards.,Current-game final stats excluded.
+player_weekly_stats,rushing_touchdowns,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field rushing_touchdowns.,Current-game final stats excluded.
+player_weekly_stats,fumbles,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field fumbles.,Current-game final stats excluded.
+player_weekly_stats,fumbles_lost,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field fumbles_lost.,Current-game final stats excluded.
+player_weekly_stats,epa_per_dropback,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field epa_per_dropback.,Current-game final stats excluded.
+player_weekly_stats,success_rate,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field success_rate.,Current-game final stats excluded.
+player_weekly_stats,cpoe,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field cpoe.,Current-game final stats excluded.
+player_weekly_stats,average_depth_of_target,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field average_depth_of_target.,Current-game final stats excluded.
+player_weekly_stats,explosive_pass_rate,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field explosive_pass_rate.,Current-game final stats excluded.
+player_weekly_stats,sack_rate,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field sack_rate.,Current-game final stats excluded.
+player_weekly_stats,interception_rate,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field interception_rate.,Current-game final stats excluded.
+player_weekly_stats,scramble_rate,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field scramble_rate.,Current-game final stats excluded.
+player_weekly_stats,red_zone_efficiency,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field red_zone_efficiency.,Current-game final stats excluded.
+player_weekly_stats,third_down_efficiency,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field third_down_efficiency.,Current-game final stats excluded.
+player_weekly_stats,age,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field age.,Current-game final stats excluded.
+player_weekly_stats,years_experience,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field years_experience.,Current-game final stats excluded.
+player_weekly_stats,games_started,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field games_started.,Current-game final stats excluded.
+player_weekly_stats,career_dropbacks,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field career_dropbacks.,Current-game final stats excluded.
+player_weekly_stats,days_since_last_start,float,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field days_since_last_start.,Current-game final stats excluded.
+player_weekly_stats,injury_status,string,no,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field injury_status.,Current-game final stats excluded.
+player_weekly_stats,feature_available_at_utc,timestamp,yes,nflverse player stats/rosters/injuries,Moneyline/ATS/totals,after prior game or report timestamp,Player/QB field feature_available_at_utc.,Current-game final stats excluded.
+rosters,snapshot_utc,timestamp,yes,nflverse,2026 priors/pregame,snapshot_utc,Roster field snapshot_utc.,Use exact snapshot.
+rosters,season,int,yes,nflverse,2026 priors/pregame,snapshot_utc,Roster field season.,Use exact snapshot.
+rosters,week,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field week.,Use exact snapshot.
+rosters,team_id,string,yes,nflverse,2026 priors/pregame,snapshot_utc,Roster field team_id.,Use exact snapshot.
+rosters,player_id,string,yes,nflverse,2026 priors/pregame,snapshot_utc,Roster field player_id.,Use exact snapshot.
+rosters,player_name,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field player_name.,Use exact snapshot.
+rosters,position,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field position.,Use exact snapshot.
+rosters,position_group,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field position_group.,Use exact snapshot.
+rosters,roster_status,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field roster_status.,Use exact snapshot.
+rosters,active_roster_flag,bool,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field active_roster_flag.,Use exact snapshot.
+rosters,practice_squad_flag,bool,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field practice_squad_flag.,Use exact snapshot.
+rosters,injured_reserve_flag,bool,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field injured_reserve_flag.,Use exact snapshot.
+rosters,pup_flag,bool,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field pup_flag.,Use exact snapshot.
+rosters,suspended_flag,bool,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field suspended_flag.,Use exact snapshot.
+rosters,transaction_date,date,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field transaction_date.,Use exact snapshot.
+rosters,transaction_type,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field transaction_type.,Use exact snapshot.
+rosters,previous_team_id,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field previous_team_id.,Use exact snapshot.
+rosters,source_name,string,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field source_name.,Use exact snapshot.
+rosters,source_retrieved_at_utc,timestamp,no,nflverse,2026 priors/pregame,snapshot_utc,Roster field source_retrieved_at_utc.,Use exact snapshot.
+depth_charts,snapshot_utc,timestamp,yes,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field snapshot_utc.,"2025+ is timestamped, not week-assigned."
+depth_charts,season,int,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field season.,"2025+ is timestamped, not week-assigned."
+depth_charts,week,string,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field week.,"2025+ is timestamped, not week-assigned."
+depth_charts,team_id,string,yes,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field team_id.,"2025+ is timestamped, not week-assigned."
+depth_charts,player_id,string,yes,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field player_id.,"2025+ is timestamped, not week-assigned."
+depth_charts,position,string,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field position.,"2025+ is timestamped, not week-assigned."
+depth_charts,position_group,string,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field position_group.,"2025+ is timestamped, not week-assigned."
+depth_charts,depth_chart_position,string,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field depth_chart_position.,"2025+ is timestamped, not week-assigned."
+depth_charts,depth_chart_order,int,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field depth_chart_order.,"2025+ is timestamped, not week-assigned."
+depth_charts,starter_flag,bool,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field starter_flag.,"2025+ is timestamped, not week-assigned."
+depth_charts,source_name,string,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field source_name.,"2025+ is timestamped, not week-assigned."
+depth_charts,source_retrieved_at_utc,timestamp,no,nflverse,pregame/2026 priors,snapshot_utc,Depth chart field source_retrieved_at_utc.,"2025+ is timestamped, not week-assigned."
+snap_counts,game_id,string,yes,nflverse,pregame/2026 priors,after game publication,Snap field game_id.,Current game excluded.
+snap_counts,season,int,no,nflverse,pregame/2026 priors,after game publication,Snap field season.,Current game excluded.
+snap_counts,week,string,no,nflverse,pregame/2026 priors,after game publication,Snap field week.,Current game excluded.
+snap_counts,team_id,string,yes,nflverse,pregame/2026 priors,after game publication,Snap field team_id.,Current game excluded.
+snap_counts,player_id,string,yes,nflverse,pregame/2026 priors,after game publication,Snap field player_id.,Current game excluded.
+snap_counts,offensive_snaps,int,no,nflverse,pregame/2026 priors,after game publication,Snap field offensive_snaps.,Current game excluded.
+snap_counts,defensive_snaps,int,no,nflverse,pregame/2026 priors,after game publication,Snap field defensive_snaps.,Current game excluded.
+snap_counts,special_teams_snaps,int,no,nflverse,pregame/2026 priors,after game publication,Snap field special_teams_snaps.,Current game excluded.
+snap_counts,offensive_snap_pct,float,no,nflverse,pregame/2026 priors,after game publication,Snap field offensive_snap_pct.,Current game excluded.
+snap_counts,defensive_snap_pct,float,no,nflverse,pregame/2026 priors,after game publication,Snap field defensive_snap_pct.,Current game excluded.
+snap_counts,special_teams_snap_pct,float,no,nflverse,pregame/2026 priors,after game publication,Snap field special_teams_snap_pct.,Current game excluded.
+snap_counts,feature_available_at_utc,timestamp,no,nflverse,pregame/2026 priors,after game publication,Snap field feature_available_at_utc.,Current game excluded.
+snap_counts,source_name,string,no,nflverse,pregame/2026 priors,after game publication,Snap field source_name.,Current game excluded.
+snap_counts,source_retrieved_at_utc,timestamp,no,nflverse,pregame/2026 priors,after game publication,Snap field source_retrieved_at_utc.,Current game excluded.
+injuries,season,int,yes,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field season.,Never backfill a later designation into an earlier snapshot.
+injuries,season_type,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field season_type.,Never backfill a later designation into an earlier snapshot.
+injuries,week,string,yes,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field week.,Never backfill a later designation into an earlier snapshot.
+injuries,game_id,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field game_id.,Never backfill a later designation into an earlier snapshot.
+injuries,team_id,string,yes,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field team_id.,Never backfill a later designation into an earlier snapshot.
+injuries,provider_team_id,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field provider_team_id.,Never backfill a later designation into an earlier snapshot.
+injuries,player_id,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field player_id.,Never backfill a later designation into an earlier snapshot.
+injuries,player_sr_id,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field player_sr_id.,Never backfill a later designation into an earlier snapshot.
+injuries,player_name,string,yes,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field player_name.,Never backfill a later designation into an earlier snapshot.
+injuries,position,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field position.,Never backfill a later designation into an earlier snapshot.
+injuries,injury_primary,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field injury_primary.,Never backfill a later designation into an earlier snapshot.
+injuries,injury_description,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field injury_description.,Never backfill a later designation into an earlier snapshot.
+injuries,practice_status_raw,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field practice_status_raw.,Never backfill a later designation into an earlier snapshot.
+injuries,practice_status,enum,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field practice_status.,Never backfill a later designation into an earlier snapshot.
+injuries,game_status_raw,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field game_status_raw.,Never backfill a later designation into an earlier snapshot.
+injuries,game_status,enum,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field game_status.,Never backfill a later designation into an earlier snapshot.
+injuries,status_date_utc,timestamp,yes,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field status_date_utc.,Never backfill a later designation into an earlier snapshot.
+injuries,report_type,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field report_type.,Never backfill a later designation into an earlier snapshot.
+injuries,estimated_return_date,timestamp,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field estimated_return_date.,Never backfill a later designation into an earlier snapshot.
+injuries,inactive_flag,bool,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field inactive_flag.,Never backfill a later designation into an earlier snapshot.
+injuries,inactive_announcement_utc,timestamp,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field inactive_announcement_utc.,Never backfill a later designation into an earlier snapshot.
+injuries,return_to_practice_flag,bool,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field return_to_practice_flag.,Never backfill a later designation into an earlier snapshot.
+injuries,days_on_report,int,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field days_on_report.,Never backfill a later designation into an earlier snapshot.
+injuries,consecutive_dnp_days,int,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field consecutive_dnp_days.,Never backfill a later designation into an earlier snapshot.
+injuries,depth_chart_order,int,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field depth_chart_order.,Never backfill a later designation into an earlier snapshot.
+injuries,expected_snap_reduction,float,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field expected_snap_reduction.,Never backfill a later designation into an earlier snapshot.
+injuries,availability_probability,float,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field availability_probability.,Never backfill a later designation into an earlier snapshot.
+injuries,source_page_url,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field source_page_url.,Never backfill a later designation into an earlier snapshot.
+injuries,source_name,string,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field source_name.,Never backfill a later designation into an earlier snapshot.
+injuries,source_retrieved_at_utc,timestamp,no,nflverse 2020-24; NFL/Sportradar 2025-26,all,status_date_utc,Injury field source_retrieved_at_utc.,Never backfill a later designation into an earlier snapshot.
+weather_forecasts,game_id,string,yes,forecast provider,totals/ATS,forecast_issued_utc,Forecast field game_id.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,stadium_id,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field stadium_id.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,forecast_provider,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field forecast_provider.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,forecast_model,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field forecast_model.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,forecast_run_utc,timestamp,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field forecast_run_utc.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,forecast_issued_utc,timestamp,yes,forecast provider,totals/ATS,forecast_issued_utc,Forecast field forecast_issued_utc.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,forecast_valid_utc,timestamp,yes,forecast provider,totals/ATS,forecast_issued_utc,Forecast field forecast_valid_utc.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,lead_time_hours,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field lead_time_hours.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,temperature_f,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field temperature_f.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,apparent_temperature_f,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field apparent_temperature_f.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,dewpoint_f,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field dewpoint_f.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,relative_humidity,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field relative_humidity.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,wind_speed_mph,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field wind_speed_mph.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,wind_gust_mph,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field wind_gust_mph.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,wind_direction_degrees,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field wind_direction_degrees.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,precipitation_probability,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field precipitation_probability.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,precipitation_amount_inches,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field precipitation_amount_inches.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,snowfall_inches,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field snowfall_inches.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,visibility_miles,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field visibility_miles.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,surface_pressure_hpa,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field surface_pressure_hpa.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,weather_code,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field weather_code.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,thunderstorm_probability,float,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field thunderstorm_probability.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,expected_roof_status,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field expected_roof_status.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,source_name,string,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field source_name.,Observed weather cannot replace historical forecast without proxy flag.
+weather_forecasts,source_retrieved_at_utc,timestamp,no,forecast provider,totals/ATS,forecast_issued_utc,Forecast field source_retrieved_at_utc.,Observed weather cannot replace historical forecast without proxy flag.
+weather_observations,game_id,string,yes,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field game_id.,Postgame observation is not a pregame feature.
+weather_observations,observation_utc,timestamp,yes,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field observation_utc.,Postgame observation is not a pregame feature.
+weather_observations,station_id,string,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field station_id.,Postgame observation is not a pregame feature.
+weather_observations,distance_from_stadium_miles,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field distance_from_stadium_miles.,Postgame observation is not a pregame feature.
+weather_observations,temperature_f,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field temperature_f.,Postgame observation is not a pregame feature.
+weather_observations,dewpoint_f,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field dewpoint_f.,Postgame observation is not a pregame feature.
+weather_observations,relative_humidity,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field relative_humidity.,Postgame observation is not a pregame feature.
+weather_observations,wind_speed_mph,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field wind_speed_mph.,Postgame observation is not a pregame feature.
+weather_observations,wind_gust_mph,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field wind_gust_mph.,Postgame observation is not a pregame feature.
+weather_observations,wind_direction_degrees,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field wind_direction_degrees.,Postgame observation is not a pregame feature.
+weather_observations,precipitation_inches,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field precipitation_inches.,Postgame observation is not a pregame feature.
+weather_observations,snowfall_inches,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field snowfall_inches.,Postgame observation is not a pregame feature.
+weather_observations,visibility_miles,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field visibility_miles.,Postgame observation is not a pregame feature.
+weather_observations,surface_pressure_hpa,float,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field surface_pressure_hpa.,Postgame observation is not a pregame feature.
+weather_observations,weather_code,string,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field weather_code.,Postgame observation is not a pregame feature.
+weather_observations,source_name,string,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field source_name.,Postgame observation is not a pregame feature.
+weather_observations,source_retrieved_at_utc,timestamp,no,NOAA/Spreadspoke,research/forecast error,observation_utc,Observed weather field source_retrieved_at_utc.,Postgame observation is not a pregame feature.
+coaching,snapshot_utc,timestamp,yes,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field snapshot_utc.,Use only information announced by snapshot.
+coaching,season,int,yes,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field season.,Use only information announced by snapshot.
+coaching,week,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field week.,Use only information announced by snapshot.
+coaching,team_id,string,yes,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field team_id.,Use only information announced by snapshot.
+coaching,head_coach_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field head_coach_id.,Use only information announced by snapshot.
+coaching,offensive_coordinator_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field offensive_coordinator_id.,Use only information announced by snapshot.
+coaching,defensive_coordinator_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field defensive_coordinator_id.,Use only information announced by snapshot.
+coaching,offensive_playcaller_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field offensive_playcaller_id.,Use only information announced by snapshot.
+coaching,defensive_playcaller_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field defensive_playcaller_id.,Use only information announced by snapshot.
+coaching,head_coach_tenure_games,int,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field head_coach_tenure_games.,Use only information announced by snapshot.
+coaching,offensive_coordinator_tenure_games,int,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field offensive_coordinator_tenure_games.,Use only information announced by snapshot.
+coaching,defensive_coordinator_tenure_games,int,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field defensive_coordinator_tenure_games.,Use only information announced by snapshot.
+coaching,new_head_coach_flag,bool,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field new_head_coach_flag.,Use only information announced by snapshot.
+coaching,new_offensive_coordinator_flag,bool,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field new_offensive_coordinator_flag.,Use only information announced by snapshot.
+coaching,new_defensive_coordinator_flag,bool,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field new_defensive_coordinator_flag.,Use only information announced by snapshot.
+coaching,offensive_scheme_family,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field offensive_scheme_family.,Use only information announced by snapshot.
+coaching,defensive_scheme_family,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field defensive_scheme_family.,Use only information announced by snapshot.
+coaching,prior_team_id,string,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field prior_team_id.,Use only information announced by snapshot.
+coaching,coach_offensive_residual_prior,float,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field coach_offensive_residual_prior.,Use only information announced by snapshot.
+coaching,coach_defensive_residual_prior,float,no,nflverse/manual,2026 priors/pregame,announcement/snapshot time,Coaching field coach_defensive_residual_prior.,Use only information announced by snapshot.
+season_priors,prior_season,int,yes,derived,2026 priors,as_of_utc,Prior output field prior_season.,Freeze before target-season outcomes.
+season_priors,as_of_utc,timestamp,yes,derived,2026 priors,as_of_utc,Prior output field as_of_utc.,Freeze before target-season outcomes.
+season_priors,entity_type,enum,yes,derived,2026 priors,as_of_utc,Prior output field entity_type.,Freeze before target-season outcomes.
+season_priors,entity_id,string,yes,derived,2026 priors,as_of_utc,Prior output field entity_id.,Freeze before target-season outcomes.
+season_priors,component,string,yes,derived,2026 priors,as_of_utc,Prior output field component.,Freeze before target-season outcomes.
+season_priors,prior_mean,float,yes,derived,2026 priors,as_of_utc,Prior output field prior_mean.,Freeze before target-season outcomes.
+season_priors,prior_standard_deviation,float,yes,derived,2026 priors,as_of_utc,Prior output field prior_standard_deviation.,Freeze before target-season outcomes.
+season_priors,effective_sample_size,float,yes,derived,2026 priors,as_of_utc,Prior output field effective_sample_size.,Freeze before target-season outcomes.
+season_priors,regression_weight,float,yes,derived,2026 priors,as_of_utc,Prior output field regression_weight.,Freeze before target-season outcomes.
+season_priors,league_mean,float,yes,derived,2026 priors,as_of_utc,Prior output field league_mean.,Freeze before target-season outcomes.
+season_priors,season_2025_weight,float,yes,derived,2026 priors,as_of_utc,Prior output field season_2025_weight.,Freeze before target-season outcomes.
+season_priors,season_2024_weight,float,yes,derived,2026 priors,as_of_utc,Prior output field season_2024_weight.,Freeze before target-season outcomes.
+season_priors,season_2023_weight,float,yes,derived,2026 priors,as_of_utc,Prior output field season_2023_weight.,Freeze before target-season outcomes.
+season_priors,returning_snap_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field returning_snap_adjustment.,Freeze before target-season outcomes.
+season_priors,qb_change_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field qb_change_adjustment.,Freeze before target-season outcomes.
+season_priors,coaching_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field coaching_adjustment.,Freeze before target-season outcomes.
+season_priors,age_curve_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field age_curve_adjustment.,Freeze before target-season outcomes.
+season_priors,injury_uncertainty_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field injury_uncertainty_adjustment.,Freeze before target-season outcomes.
+season_priors,market_prior_adjustment,float,yes,derived,2026 priors,as_of_utc,Prior output field market_prior_adjustment.,Freeze before target-season outcomes.
+season_priors,model_version,string,yes,derived,2026 priors,as_of_utc,Prior output field model_version.,Freeze before target-season outcomes.
+season_priors,training_cutoff_utc,timestamp,yes,derived,2026 priors,as_of_utc,Prior output field training_cutoff_utc.,Freeze before target-season outcomes.
+season_priors,source_manifest_hash,string,yes,derived,2026 priors,as_of_utc,Prior output field source_manifest_hash.,Freeze before target-season outcomes.
