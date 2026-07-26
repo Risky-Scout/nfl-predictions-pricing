@@ -523,4 +523,3 @@ def build_game_pregame_matrix(
     )
 
     return matrix
-
