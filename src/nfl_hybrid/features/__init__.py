@@ -36,3 +36,12 @@ from .opponent_pregame import (
     build_game_opponent_adjusted_matrix,
     build_opponent_adjusted_team_features,
 )
+
+from .qb_pregame import (
+    DEFAULT_QB_METRICS,
+    QBPregameConfig,
+    QBMetricSpec,
+    actual_starter_candidates,
+    build_game_qb_matrix,
+    build_qb_pregame_team_features,
+)
