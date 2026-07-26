@@ -28,3 +28,11 @@ from .pregame_rolling import (
     build_team_pregame_features,
     select_team_metric_columns,
 )
+
+from .opponent_pregame import (
+    DEFAULT_STRENGTH_METRICS,
+    OpponentAdjustedConfig,
+    StrengthMetricSpec,
+    build_game_opponent_adjusted_matrix,
+    build_opponent_adjusted_team_features,
+)
