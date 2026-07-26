@@ -6,6 +6,8 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from nfl_hybrid.data.team_ids import canonical_team_id
+
 
 @dataclass(frozen=True)
 class AdvancedPBPConfig:
@@ -21,6 +23,28 @@ class AdvancedPBPConfig:
 
     explosive_pass_yards: float = 20.0
     explosive_rush_yards: float = 10.0
+
+
+
+def _canonicalize_team_columns(
+    frame: pd.DataFrame,
+) -> pd.DataFrame:
+    """Normalize provider aliases such as LA -> LAR."""
+
+    result = frame.copy()
+
+    for column in (
+        "posteam",
+        "defteam",
+        "home_team",
+        "away_team",
+    ):
+        if column in result.columns:
+            result[column] = result[column].map(
+                canonical_team_id
+            )
+
+    return result
 
 
 SPECIAL_METRIC_PREFIXES = (
@@ -428,6 +452,8 @@ def aggregate_advanced_team_game(
         & play_by_play["posteam"].notna()
         & play_by_play["defteam"].notna()
     ].copy()
+
+    work = _canonicalize_team_columns(work)
 
     rows: list[dict[str, object]] = []
 
@@ -910,6 +936,8 @@ def aggregate_qb_game_efficiency(
         & play_by_play["defteam"].notna()
         & play_by_play["passer_player_id"].notna()
     ].copy()
+
+    work = _canonicalize_team_columns(work)
 
     rows: list[dict[str, object]] = []
 

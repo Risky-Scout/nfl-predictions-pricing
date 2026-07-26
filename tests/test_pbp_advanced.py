@@ -15,10 +15,10 @@ def _sample_pbp() -> pd.DataFrame:
             "season": [2025] * 10,
             "season_type": ["REG"] * 10,
             "week": [1] * 10,
-            "home_team": ["A"] * 10,
-            "away_team": ["B"] * 10,
-            "posteam": ["A"] * 5 + ["B"] * 5,
-            "defteam": ["B"] * 5 + ["A"] * 5,
+            "home_team": ["KC"] * 10,
+            "away_team": ["BUF"] * 10,
+            "posteam": ["KC"] * 5 + ["BUF"] * 5,
+            "defteam": ["BUF"] * 5 + ["KC"] * 5,
             "passer_player_id": [
                 "QB_A",
                 None,
@@ -111,7 +111,7 @@ def test_advanced_team_game_has_two_rows():
 
 def test_scrimmage_and_special_teams_are_separate():
     result = aggregate_advanced_team_game(_sample_pbp())
-    team_a = result[result["team_id"] == "A"].iloc[0]
+    team_a = result[result["team_id"] == "KC"].iloc[0]
 
     assert team_a["offense_scrimmage_plays"] == 3
     assert team_a["special_teams_plays"] == 1
@@ -122,7 +122,7 @@ def test_scrimmage_and_special_teams_are_separate():
 
 def test_defensive_mirror_uses_opponent_offense():
     result = aggregate_advanced_team_game(_sample_pbp())
-    team_a = result[result["team_id"] == "A"].iloc[0]
+    team_a = result[result["team_id"] == "KC"].iloc[0]
 
     assert team_a["defense_allowed_turnovers"] == 1
     assert team_a["defense_allowed_scrimmage_plays"] == 3
