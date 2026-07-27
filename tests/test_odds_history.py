@@ -67,3 +67,10 @@ def test_normalize_games_accepts_scheduled_kickoff_utc():
 
     assert result.iloc[0]["game_id"] == "2020_01_HOU_KC"
     assert str(result.iloc[0]["kickoff_utc"]) == "2020-09-11 00:20:00+00:00"
+
+
+from nfl_hybrid.odds_history import _team_id
+
+
+def test_los_angeles_rams_alias_is_canonical():
+    assert _team_id("Los Angeles Rams") == "LAR"

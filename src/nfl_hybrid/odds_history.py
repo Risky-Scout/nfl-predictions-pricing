@@ -36,7 +36,7 @@ TEAM_ALIASES = {
     "Houston Texans": "HOU", "Indianapolis Colts": "IND",
     "Jacksonville Jaguars": "JAX", "Kansas City Chiefs": "KC",
     "Las Vegas Raiders": "LV", "Los Angeles Chargers": "LAC",
-    "Los Angeles Rams": "LA", "Miami Dolphins": "MIA",
+    "Los Angeles Rams": "LAR", "Miami Dolphins": "MIA",
     "Minnesota Vikings": "MIN", "New England Patriots": "NE",
     "New Orleans Saints": "NO", "New York Giants": "NYG",
     "New York Jets": "NYJ", "Philadelphia Eagles": "PHI",
