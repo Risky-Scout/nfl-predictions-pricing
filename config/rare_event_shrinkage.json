@@ -1,0 +1,32 @@
+{
+  "ats_integer_push_rate_prior_mean": 0.04,
+  "ats_margin_prior_sd": 13.5,
+  "ats_prior_strengths": [
+    32.0,
+    64.0,
+    128.0
+  ],
+  "development_seasons": [
+    2021,
+    2022,
+    2023
+  ],
+  "probability_clip": 1e-09,
+  "tie_prior_mean": 0.005,
+  "tie_prior_strengths": [
+    200.0,
+    400.0,
+    800.0
+  ],
+  "total_integer_push_rate_prior_mean": 0.012,
+  "total_points_prior_mean": 45.0,
+  "total_points_prior_sd": 13.0,
+  "total_prior_strengths": [
+    32.0,
+    64.0,
+    128.0
+  ],
+  "warmup_seasons": [
+    2020
+  ]
+}

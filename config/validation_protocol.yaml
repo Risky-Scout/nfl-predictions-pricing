@@ -1,0 +1,39 @@
+chronological_only: true
+random_row_split_prohibited: true
+future_information_prohibited: true
+development_seasons: [2021, 2022, 2023]
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025
+nested_selection:
+  required: true
+  inner_unit: chronological_week
+  outer_unit: season
+baselines:
+  pregame_moneyline:
+    football_only: coin_flip
+    market_augmented: no_vig_market_probability
+  pregame_ats:
+    football_only: coin_flip_conditional_nonpush
+    market_augmented: no_vig_market_probability
+  pregame_total:
+    football_only: coin_flip_conditional_nonpush
+    market_augmented: no_vig_market_probability
+required_metrics:
+  - binary_log_loss
+  - binary_brier
+  - three_way_log_loss
+  - three_way_brier
+  - calibration_intercept
+  - calibration_slope
+  - expected_calibration_error
+  - margin_mae
+  - margin_rmse
+  - total_mae
+  - total_rmse
+uncertainty:
+  bootstrap_unit: season_week_cluster
+  minimum_repetitions: 2000
+selection_labels:
+  - STATISTICALLY_SUPPORTED
+  - PROVISIONAL_ONLY
+  - RETAIN_BASELINE

@@ -1,0 +1,49 @@
+provider_roles:
+  nflverse:
+    role: historical_primary_line_price_pairs
+  spreadspoke:
+    role: continuity_and_independent_cross_check
+  the_odds_api:
+    role: live_and_historical_book_level_quotes
+required_fields:
+  game_id:
+    unit: identifier
+    type: measured
+    availability: source_record_time
+    missing_rule: no_prediction
+  kickoff_utc:
+    unit: utc_timestamp
+    type: measured
+    availability: schedule_publication_time
+    missing_rule: no_prediction
+  bookmaker:
+    unit: identifier
+    type: measured
+    availability: quote_timestamp
+    missing_rule: no_prediction
+  snapshot_utc:
+    unit: utc_timestamp
+    type: measured
+    availability: quote_timestamp
+    missing_rule: no_prediction
+  market_home_spread:
+    unit: points
+    type: measured
+    sign_convention: negative_home_favorite
+    missing_rule: no_prediction_for_ats
+  market_total_line:
+    unit: points
+    type: measured
+    missing_rule: no_prediction_for_total
+  market_home_ml_novig_prob:
+    unit: probability
+    type: derived
+    allowed_range: [0.0, 1.0]
+    missing_rule: no_prediction_for_moneyline_market_augmented
+live_contract:
+  official_snapshot: kickoff_minus_10_minutes
+  consensus_line: median
+  consensus_probability: median_book_level_no_vig
+  ev_price: best_available_eligible_price
+  minimum_books: 3
+  stale_quote_limit_minutes: 15

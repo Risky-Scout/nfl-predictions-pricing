@@ -1,0 +1,7 @@
+development_seasons: [2020, 2021, 2022, 2023]
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025
+minimum_books: 3
+maximum_snapshot_lag_minutes: 5
+preserve_original_compact_matrices: true
+development_only_output: true

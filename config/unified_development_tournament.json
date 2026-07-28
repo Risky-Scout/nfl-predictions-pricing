@@ -1,0 +1,49 @@
+{
+  "blend_weight_grid": [
+    0.0,
+    0.25,
+    0.5,
+    0.75,
+    1.0
+  ],
+  "bootstrap_repetitions": 2000,
+  "bootstrap_seed": 20260327,
+  "candidate_registry_frozen_before_scoring": true,
+  "development_seasons": [
+    2021,
+    2022,
+    2023
+  ],
+  "ece_bins": 10,
+  "feature_sets": [
+    "football_only",
+    "movement_only",
+    "all_canonical"
+  ],
+  "fresh_consensus_selection_eligible": false,
+  "legacy_ats_total_distributional_selection_eligible": false,
+  "maximum_rare_calibration_error": 0.02,
+  "minimum_full_coverage_games": 854,
+  "minimum_winning_seasons": 2,
+  "outer_test_seasons": [
+    2021,
+    2022,
+    2023
+  ],
+  "probability_clip": 1e-09,
+  "rare_event_defaults": {
+    "pregame_ats": "ats_push_blend_strength_64",
+    "pregame_moneyline": "tie_beta_strength_400",
+    "pregame_total": "total_push_blend_strength_64"
+  },
+  "regularization_grid": [
+    0.5,
+    2.0,
+    10.0,
+    50.0
+  ],
+  "statistical_ci_level": 0.95,
+  "warmup_seasons": [
+    2020
+  ]
+}

@@ -1,0 +1,15 @@
+development_seasons: [2021, 2022, 2023]
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025
+calibration:
+  method: expanding_prior_seasons_only
+  conditional_probability: regularized_logistic
+  rare_event_probability: beta_binomial_bucket_scaling
+  push_prior_strength: 40
+bootstrap:
+  unit: season_week_cluster
+  repetitions: 2000
+prohibited:
+  - random_row_calibration_split
+  - future_season_calibration
+  - 2024_or_2025_development_use

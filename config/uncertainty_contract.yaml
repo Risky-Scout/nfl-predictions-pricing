@@ -1,0 +1,23 @@
+components:
+  sampling_uncertainty:
+    method: season_stratified_week_cluster_bootstrap
+  parameter_uncertainty:
+    method: chronological_refit_sensitivity
+  model_form_uncertainty:
+    method: qualifying_architecture_dispersion
+  market_uncertainty:
+    method: cross_book_probability_and_line_dispersion
+  starter_uncertainty:
+    method: starter_mixture_distribution
+  injury_uncertainty:
+    method: availability_probability_times_snap_value
+  weather_uncertainty:
+    method: forecast_ensemble_dispersion
+  random_outcome_variation:
+    method: discrete_margin_and_total_distribution
+required_outputs:
+  - prediction_interval
+  - uncertainty_score
+  - model_probability
+  - push_or_tie_probability
+  - confidence_interval_for_baseline_gain

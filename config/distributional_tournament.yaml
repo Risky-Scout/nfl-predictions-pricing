@@ -1,0 +1,32 @@
+status: provisional_before_2024_architecture_confirmation
+selection_seasons: [2021, 2022, 2023]
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025
+
+architectures:
+  football_only:
+    - absolute_score_discrete
+  market_augmented:
+    - market_residual_discrete
+    - fixed_market_offset_logistic
+
+ridge_alphas: [10.0, 50.0, 200.0]
+fixed_offset_alphas: [0.01, 0.10, 1.0]
+
+probability_outputs:
+  - lower_or_away_or_under
+  - exact_tie_or_push
+  - upper_or_home_or_over
+  - conditional_binary_probability
+
+selection_gates:
+  mean_binary_log_loss_improvement: greater_than_zero
+  mean_binary_brier_improvement: greater_than_zero
+  mean_three_way_log_loss_improvement: greater_than_zero
+  mean_three_way_brier_improvement: nonnegative
+  minimum_binary_log_loss_winning_seasons: 2
+  maximum_single_season_log_loss_regression: 0.005
+
+bootstrap:
+  method: season_stratified_week_cluster
+  repetitions: 2000

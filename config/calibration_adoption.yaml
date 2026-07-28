@@ -1,0 +1,8 @@
+decision_rule:
+  adopt_when:
+    three_way_log_loss_gain_ci_lower: greater_than_zero
+    three_way_brier_gain_ci_lower: greater_than_or_equal_to_zero
+  otherwise: retain_uncalibrated_probabilities
+development_seasons: [2021, 2022, 2023]
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025

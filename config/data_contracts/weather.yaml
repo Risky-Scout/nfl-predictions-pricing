@@ -1,0 +1,26 @@
+primary_provider: open_meteo
+validation_provider: nws
+unit_of_analysis: stadium_game_forecast_snapshot
+timing_rule: forecast_issued_at_or_before_prediction_snapshot
+observed_final_weather_as_pregame_feature_prohibited: true
+required_fields:
+  - game_id
+  - stadium_id
+  - latitude
+  - longitude
+  - weather_as_of_utc
+  - forecast_valid_utc
+  - provider
+  - model_run_utc
+  - temperature_f
+  - wind_speed_mph
+  - wind_gust_mph
+  - precipitation_probability
+  - precipitation_amount_inches
+  - visibility_miles
+  - surface_pressure_hpa
+  - roof_status
+uncertainty_fields:
+  - ensemble_temperature_sd
+  - ensemble_wind_sd
+  - ensemble_precipitation_probability_sd

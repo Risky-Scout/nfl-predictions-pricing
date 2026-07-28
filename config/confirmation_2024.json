@@ -1,0 +1,17 @@
+{
+  "bootstrap_repetitions": 2000,
+  "bootstrap_seed": 20260328,
+  "confirmation_season": 2024,
+  "expected_games": 285,
+  "maximum_absolute_rare_calibration_error": 0.015,
+  "no_retuning": true,
+  "probability_clip": 1e-09,
+  "require_full_game_coverage": true,
+  "training_seasons": [
+    2020,
+    2021,
+    2022,
+    2023
+  ],
+  "tuning_aggregation_rule": "mode_then_strongest_regularization"
+}
