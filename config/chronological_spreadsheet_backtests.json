@@ -1,0 +1,31 @@
+{
+  "development_seasons": [
+    2021,
+    2022,
+    2023
+  ],
+  "elo_k_factor": 20.0,
+  "elo_scale": 400.0,
+  "home_field_elo": 55.0,
+  "initial_team_elo": 1500.0,
+  "league_mean_elo": 1500.0,
+  "margin_prior_sd": 13.5,
+  "minimum_profile_games": 1,
+  "offseason_regression_fraction": 0.3333333333333333,
+  "playoff_multiplier": 1.2,
+  "points_per_elo": 25.0,
+  "probability_clip": 1e-06,
+  "qb_adjustment_multiplier": 3.3,
+  "qb_initial_rating": 50.0,
+  "qb_new_game_weight": 0.1,
+  "random_seed": 20260327,
+  "residual_prior_games": 64,
+  "rest_elo": 25.0,
+  "tie_prior_alpha": 2.0,
+  "tie_prior_beta": 398.0,
+  "total_head_to_head_weight": 0.3,
+  "total_prior_sd": 13.0,
+  "warmup_seasons": [
+    2020
+  ]
+}

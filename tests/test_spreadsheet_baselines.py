@@ -186,3 +186,35 @@ def test_invalid_inputs_raise():
         wind_multiplier(-1)
     with pytest.raises(ValueError):
         probability_average()
+
+
+
+def test_qb_game_value_allows_negative_yardage():
+    value = qb_game_value(
+        pass_attempts=0,
+        completions=0,
+        passing_yards=-5,
+        passing_touchdowns=0,
+        interceptions=0,
+        sacks=0,
+        rush_attempts=0,
+        rushing_yards=-3,
+        rushing_touchdowns=0,
+    )
+
+    assert value == pytest.approx(-2.8)
+
+
+def test_qb_game_value_rejects_negative_count_fields():
+    with pytest.raises(ValueError, match="pass_attempts"):
+        qb_game_value(
+            pass_attempts=-1,
+            completions=0,
+            passing_yards=0,
+            passing_touchdowns=0,
+            interceptions=0,
+            sacks=0,
+            rush_attempts=0,
+            rushing_yards=0,
+            rushing_touchdowns=0,
+        )

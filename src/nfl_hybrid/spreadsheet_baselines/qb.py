@@ -23,19 +23,30 @@ def qb_game_value(
     -14.1*INT - 8*Sacks -1.1*RushAtt + 0.6*RushYds
     +15.9*RushTD
     """
-    values = [
-        pass_attempts,
-        completions,
-        passing_yards,
-        passing_touchdowns,
-        interceptions,
-        sacks,
-        rush_attempts,
-        rushing_yards,
-        rushing_touchdowns,
-    ]
-    if any(float(value) < 0 for value in values):
-        raise ValueError("QB counting statistics cannot be negative.")
+    # Yardage is signed: quarterbacks can legitimately finish with
+    # negative passing or rushing yards. Only true counting statistics
+    # are constrained to be nonnegative.
+    count_values = {
+        "pass_attempts": pass_attempts,
+        "completions": completions,
+        "passing_touchdowns": passing_touchdowns,
+        "interceptions": interceptions,
+        "sacks": sacks,
+        "rush_attempts": rush_attempts,
+        "rushing_touchdowns": rushing_touchdowns,
+    }
+
+    negative_counts = {
+        name: float(value)
+        for name, value in count_values.items()
+        if float(value) < 0
+    }
+
+    if negative_counts:
+        raise ValueError(
+            "QB count statistics cannot be negative: "
+            f"{negative_counts}"
+        )
     return (
         -2.2 * float(pass_attempts)
         + 3.7 * float(completions)
