@@ -1,0 +1,123 @@
+{
+  "pregame_ats": {
+    "AUDIT_ONLY": [
+      "market_t10_requested_snapshot_utc",
+      "market_t10_returned_snapshot_utc",
+      "market_opening_available",
+      "market_opening_missing",
+      "market_opening_novig_probability",
+      "market_opening_line"
+    ],
+    "CANONICAL_ANCHOR": [
+      "market_t10_consensus_line",
+      "market_t10_novig_probability"
+    ],
+    "CHALLENGER_FEATURE": [
+      "market_line_movement",
+      "market_probability_movement",
+      "market_t10_line_sd",
+      "market_t10_probability_sd",
+      "market_opening_horizon_minutes",
+      "ats_t10_spread_magnitude",
+      "ats_t10_spread_distance_to_3",
+      "ats_t10_spread_distance_to_7",
+      "ats_t10_spread_integer_flag",
+      "ats_t10_spread_half_point_flag",
+      "ats_t10_home_favorite_flag"
+    ],
+    "PROHIBITED": [
+      "market_home_spread",
+      "market_home_cover_novig_prob",
+      "market_spread_hold",
+      "market_total_line",
+      "market_implied_margin",
+      "spread_magnitude",
+      "spread_distance_to_3",
+      "spread_distance_to_7",
+      "spread_integer_flag",
+      "spread_half_point_flag",
+      "home_favorite_flag",
+      "market_spread_source_disagreement",
+      "market_total_source_disagreement"
+    ],
+    "QUALITY_GATE": [
+      "market_t10_eligible_books",
+      "market_t10_hold",
+      "market_t10_snapshot_lag_minutes"
+    ]
+  },
+  "pregame_moneyline": {
+    "AUDIT_ONLY": [
+      "market_t10_requested_snapshot_utc",
+      "market_t10_returned_snapshot_utc",
+      "market_opening_available",
+      "market_opening_missing",
+      "market_opening_novig_probability",
+      "market_opening_line"
+    ],
+    "CANONICAL_ANCHOR": [
+      "market_t10_novig_probability"
+    ],
+    "CHALLENGER_FEATURE": [
+      "market_probability_movement",
+      "market_t10_probability_sd",
+      "market_opening_horizon_minutes"
+    ],
+    "PROHIBITED": [
+      "market_home_ml_novig_prob",
+      "market_home_ml_raw_prob",
+      "market_moneyline_hold",
+      "market_implied_margin",
+      "market_total_line",
+      "market_implied_home_points",
+      "market_implied_away_points",
+      "market_spread_source_disagreement",
+      "market_total_source_disagreement",
+      "market_t10_consensus_line",
+      "market_t10_line_sd",
+      "market_line_movement"
+    ],
+    "QUALITY_GATE": [
+      "market_t10_eligible_books",
+      "market_t10_hold",
+      "market_t10_snapshot_lag_minutes"
+    ]
+  },
+  "pregame_total": {
+    "AUDIT_ONLY": [
+      "market_t10_requested_snapshot_utc",
+      "market_t10_returned_snapshot_utc",
+      "market_opening_available",
+      "market_opening_missing",
+      "market_opening_novig_probability",
+      "market_opening_line"
+    ],
+    "CANONICAL_ANCHOR": [
+      "market_t10_consensus_line",
+      "market_t10_novig_probability"
+    ],
+    "CHALLENGER_FEATURE": [
+      "market_line_movement",
+      "market_probability_movement",
+      "market_t10_line_sd",
+      "market_t10_probability_sd",
+      "market_opening_horizon_minutes"
+    ],
+    "PROHIBITED": [
+      "market_total_line",
+      "market_over_novig_prob",
+      "market_total_hold",
+      "market_implied_home_points",
+      "market_implied_away_points",
+      "market_implied_margin",
+      "market_home_spread",
+      "market_total_source_disagreement",
+      "market_spread_source_disagreement"
+    ],
+    "QUALITY_GATE": [
+      "market_t10_eligible_books",
+      "market_t10_hold",
+      "market_t10_snapshot_lag_minutes"
+    ]
+  }
+}

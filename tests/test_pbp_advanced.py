@@ -139,3 +139,15 @@ def test_qb_game_aggregation():
     assert qb_a["dropbacks"] == 2
     assert qb_a["attempts"] == 1
     assert qb_b["interceptions"] == 1
+
+
+def test_neutral_situation_pass_rate():
+    result = aggregate_advanced_team_game(_sample_pbp())
+    team = result[result["team_id"] == "KC"].iloc[0]
+
+    assert team["offense_neutral_scrimmage_plays"] == 3
+    assert team["offense_neutral_dropbacks"] == 2
+    assert np.isclose(
+        team["offense_neutral_situation_pass_rate"],
+        2.0 / 3.0,
+    )

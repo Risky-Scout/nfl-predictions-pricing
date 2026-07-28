@@ -580,6 +580,13 @@ def aggregate_advanced_team_game(
             "neutral_scrimmage_plays": int(
                 neutral.sum()
             ),
+            "neutral_dropbacks": int(
+                (neutral & dropback).sum()
+            ),
+            "neutral_situation_pass_rate": _rate(
+                int((neutral & dropback).sum()),
+                int(neutral.sum()),
+            ),
             "early_down_plays": int(early.sum()),
             "late_down_plays": int(late.sum()),
             "two_minute_plays": int(

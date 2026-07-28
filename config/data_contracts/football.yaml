@@ -1,0 +1,27 @@
+provider: nflverse
+unit_of_analysis: team_game_or_player_game
+timing_rule: strictly_before_prediction_snapshot
+required_provenance:
+  - source_dataset
+  - retrieved_at_utc
+  - available_at_utc
+  - schema_version
+  - sha256
+feature_classes:
+  measured:
+    - play_by_play
+    - snap_counts
+    - roster_records
+  derived:
+    - opponent_adjusted_strength
+    - leakage_safe_rolling_features
+    - qb_priors
+  estimated:
+    - starter_mixture
+    - reliability
+    - uncertainty
+prohibited:
+  - current_game_statistics_in_pregame_row
+  - current_inclusive_season_aggregates
+  - postgame_ratings
+  - future_starter_information

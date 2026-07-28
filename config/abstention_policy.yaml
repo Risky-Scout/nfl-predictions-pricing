@@ -1,0 +1,19 @@
+no_prediction:
+  stale_odds_minutes: 15
+  minimum_eligible_books: 3
+  unresolved_game_mapping: true
+  feature_schema_mismatch: true
+  missing_required_injury_report: true
+  unresolved_material_roof_status: true
+  missing_market_anchor_for_market_augmented_model: true
+no_bet:
+  retain_baseline_status: true
+  nonpositive_expected_value: true
+  edge_not_greater_than_uncertainty: true
+  quote_moved_after_snapshot: true
+  calibration_or_drift_alarm: true
+publication:
+  allow_statistically_supported: true
+  allow_provisional: true
+  provisional_label_required: true
+  allow_retain_baseline_as_prediction: false

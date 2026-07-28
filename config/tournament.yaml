@@ -1,0 +1,27 @@
+status: provisional_before_roster_injury_and_2024_selection
+selection_seasons: [2021, 2022, 2023]
+architecture_selection_season: 2024
+untouched_final_test_season: 2025
+random_seed: 42
+primary_metric: log_loss
+secondary_metric: brier
+calibration_metrics:
+  - calibration_intercept
+  - calibration_slope
+  - expected_calibration_error
+selection_rule: one_standard_error_then_simplest
+integrity_gates:
+  exact_schema_contract: true
+  target_formula_audit: true
+  source_price_side_mapping_audit: true
+  mandatory_market_anchor: true
+  minimum_log_loss_winning_seasons: 2
+  maximum_single_season_log_loss_regression: 0.005
+  must_improve_mean_log_loss: true
+  must_improve_mean_brier: true
+diagnostics:
+  export_oof_predictions: true
+  bootstrap_repetitions: 2000
+  calibration_bins: 10
+  ats_spread_buckets: true
+  total_line_buckets: true

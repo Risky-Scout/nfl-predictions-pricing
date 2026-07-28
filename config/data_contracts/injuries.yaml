@@ -1,0 +1,24 @@
+provider_roles:
+  nflverse:
+    seasons: [2020, 2021, 2022, 2023, 2024]
+  official_nfl_injury_archive:
+    seasons: [2025]
+unit_of_analysis: player_team_game_report
+required_fields:
+  - season
+  - week
+  - game_id
+  - team_id
+  - player_id
+  - player_name
+  - position
+  - injury
+  - practice_status
+  - game_status
+  - report_as_of_utc
+  - source_retrieved_at_utc
+  - source_url
+feature_rule:
+  formula: availability_risk_times_expected_snap_loss_times_prior_player_value
+  simple_injury_counts_prohibited: true
+timing_rule: latest_official_report_available_before_prediction_snapshot

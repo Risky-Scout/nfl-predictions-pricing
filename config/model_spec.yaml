@@ -1,0 +1,26 @@
+model_name: nfl_hybrid_closing_reference
+model_class: predictive_probability_pricing
+sport: NFL
+competition_level: professional
+unit_of_analysis: game_market_quote_snapshot
+prediction_horizon: kickoff_minus_10_minutes
+intended_decision: fair_odds_edge_ev_and_bet_or_no_bet
+causal_claims_supported: false
+markets:
+  pregame_moneyline:
+    outcomes: [away_win, tie, home_win]
+    primary_target: target_home_margin
+  pregame_ats:
+    outcomes: [away_cover, push, home_cover]
+    primary_target: target_home_margin
+  pregame_total:
+    outcomes: [under, push, over]
+    primary_target: target_total_points
+warehouse_policy:
+  modeling_matrix_stage2_qb: FEATURE_WAREHOUSE_ONLY
+  direct_training_prohibited: true
+selection_period:
+  warmup: [2020]
+  development: [2021, 2022, 2023]
+  architecture_confirmation: [2024]
+  untouched_final_test: [2025]

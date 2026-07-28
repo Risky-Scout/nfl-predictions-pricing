@@ -1,0 +1,18 @@
+sport_key: americanfootball_nfl
+regions: [us]
+markets: [h2h, spreads, totals]
+odds_format: decimal
+development_seasons: [2020, 2021, 2022, 2023]
+horizons_minutes:
+  opening_7d: 10080
+  opening_72h: 4320
+  opening_24h: 1440
+  opening_6h: 360
+  opening_60m: 60
+  closing_t10: 10
+minimum_eligible_books: 3
+kickoff_match_tolerance_minutes: 180
+cache_raw_responses: true
+resume_from_cache: true
+architecture_confirmation_season: 2024
+untouched_final_test_season: 2025
