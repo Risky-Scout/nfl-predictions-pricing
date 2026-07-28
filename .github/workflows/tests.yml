@@ -17,69 +17,108 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ${{ vars.TEST_RUNNER || 'ubuntu-latest' }}
+  python-311:
+    name: Python 3.11
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - joseph-nfl-mac
     timeout-minutes: 20
-
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version:
-          - "3.11"
-          - "3.14"
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Set up Python on GitHub-hosted runner
-        if: ${{ vars.TEST_RUNNER != 'joseph-nfl-mac' }}
-        uses: actions/setup-python@v7
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements.txt
-            requirements-data.txt
-
-      - name: Select GitHub-hosted Python
-        if: ${{ vars.TEST_RUNNER != 'joseph-nfl-mac' }}
+      - name: Create Python 3.11 environment
         shell: bash
         run: |
-          echo "PYTHON_BIN=$(command -v python)" >> "$GITHUB_ENV"
-          python --version
+          SYSTEM_PYTHON="$(brew --prefix python@3.11)/bin/python3.11"
+          test -x "$SYSTEM_PYTHON"
 
-      - name: Select Homebrew Python on self-hosted Mac
-        if: ${{ vars.TEST_RUNNER == 'joseph-nfl-mac' }}
-        shell: bash
-        run: |
-          PYTHON_BIN="$(
-            brew --prefix "python@${{ matrix.python-version }}"
-          )/bin/python${{ matrix.python-version }}"
+          VENV_DIR="$RUNNER_TEMP/nfl-python-311"
+          rm -rf "$VENV_DIR"
 
-          test -x "$PYTHON_BIN"
-          echo "PYTHON_BIN=$PYTHON_BIN" >> "$GITHUB_ENV"
-          "$PYTHON_BIN" --version
+          "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
+
+          echo "PYTHON_BIN=$VENV_DIR/bin/python" >> "$GITHUB_ENV"
+          "$VENV_DIR/bin/python" --version
 
       - name: Upgrade packaging tools
+        shell: bash
         run: |
           "$PYTHON_BIN" -m pip install \
             --upgrade pip setuptools wheel
 
       - name: Install project and test dependencies
+        shell: bash
         run: |
           "$PYTHON_BIN" -m pip install -e ".[data,dev]"
 
       - name: Verify installed dependencies
+        shell: bash
         run: |
           "$PYTHON_BIN" -m pip check
 
       - name: Compile source
+        shell: bash
         run: |
           "$PYTHON_BIN" -m compileall -q src examples
 
       - name: Run tests
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pytest -q -W error::FutureWarning
+
+  python-314:
+    name: Python 3.14
+    runs-on:
+      - self-hosted
+      - macOS
+      - ARM64
+      - joseph-nfl-mac
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Create Python 3.14 environment
+        shell: bash
+        run: |
+          SYSTEM_PYTHON="$(brew --prefix python@3.14)/bin/python3.14"
+          test -x "$SYSTEM_PYTHON"
+
+          VENV_DIR="$RUNNER_TEMP/nfl-python-314"
+          rm -rf "$VENV_DIR"
+
+          "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
+
+          echo "PYTHON_BIN=$VENV_DIR/bin/python" >> "$GITHUB_ENV"
+          "$VENV_DIR/bin/python" --version
+
+      - name: Upgrade packaging tools
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pip install \
+            --upgrade pip setuptools wheel
+
+      - name: Install project and test dependencies
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pip install -e ".[data,dev]"
+
+      - name: Verify installed dependencies
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pip check
+
+      - name: Compile source
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m compileall -q src examples
+
+      - name: Run tests
+        shell: bash
         run: |
           "$PYTHON_BIN" -m pytest -q -W error::FutureWarning
