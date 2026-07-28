@@ -1,0 +1,16 @@
+{
+  "closing_horizon": "closing_t10",
+  "future_timestamp_tolerance_seconds": 1.0,
+  "maximum_quote_age_minutes": 15.0,
+  "maximum_snapshot_lag_minutes": 5.0,
+  "minimum_books": 3,
+  "minimum_books_for_outlier_detection": 5,
+  "robust_z_threshold": 6.0,
+  "seasons": [
+    2025
+  ],
+  "spread_pair_tolerance": 0.25,
+  "total_pair_tolerance": 0.25,
+  "zero_mad_line_tolerance": 1.5,
+  "zero_mad_probability_tolerance": 0.1
+}
