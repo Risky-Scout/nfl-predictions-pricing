@@ -423,13 +423,15 @@ def _prepare_game_frame(
     ats = canonical["pregame_ats"][
         [
             "game_id",
-            "target_home_cover",
-            "target_ats_push",
+            "target_t10_home_cover",
+            "target_t10_ats_push",
             "market_t10_consensus_line",
             "market_t10_novig_probability",
         ]
     ].rename(
         columns={
+            "target_t10_home_cover": "target_home_cover",
+            "target_t10_ats_push": "target_ats_push",
             "market_t10_consensus_line": "home_spread",
             "market_t10_novig_probability":
                 "ats_market_home_probability",
@@ -439,14 +441,16 @@ def _prepare_game_frame(
     total = canonical["pregame_total"][
         [
             "game_id",
-            "target_over",
-            "target_total_push",
+            "target_t10_over",
+            "target_t10_total_push",
             "target_total_points",
             "market_t10_consensus_line",
             "market_t10_novig_probability",
         ]
     ].rename(
         columns={
+            "target_t10_over": "target_over",
+            "target_t10_total_push": "target_total_push",
             "market_t10_consensus_line": "total_line",
             "market_t10_novig_probability":
                 "total_market_over_probability",

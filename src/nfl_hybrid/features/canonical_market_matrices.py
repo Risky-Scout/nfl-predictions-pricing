@@ -70,6 +70,88 @@ def _add_ats_features(frame: pd.DataFrame) -> pd.DataFrame:
     return output
 
 
+def _add_t10_targets(
+    frame: pd.DataFrame,
+    market: str,
+) -> pd.DataFrame:
+    """
+    Derive settlement targets from the same verified T-10 line used by
+    the estimator and market baseline.
+
+    Legacy targets remain in the parquet for audit comparison, but the
+    canonical manifest points only to these T-10-aligned targets.
+    """
+    output = frame.copy()
+
+    if market == "pregame_ats":
+        required = {
+            "target_home_margin",
+            "market_t10_consensus_line",
+        }
+        missing = sorted(required - set(output.columns))
+        if missing:
+            raise ValueError(
+                f"ATS T-10 target derivation missing columns: {missing}"
+            )
+
+        margin = pd.to_numeric(
+            output["target_home_margin"],
+            errors="raise",
+        )
+        line = pd.to_numeric(
+            output["market_t10_consensus_line"],
+            errors="raise",
+        )
+        residual = margin + line
+        push = np.isclose(
+            residual,
+            0.0,
+            atol=1e-9,
+            rtol=0.0,
+        )
+
+        output["target_t10_home_cover"] = (
+            residual > 1e-9
+        ).astype(int)
+        output["target_t10_ats_push"] = push.astype(int)
+        output["target_t10_margin_residual"] = residual
+
+    elif market == "pregame_total":
+        required = {
+            "target_total_points",
+            "market_t10_consensus_line",
+        }
+        missing = sorted(required - set(output.columns))
+        if missing:
+            raise ValueError(
+                f"Total T-10 target derivation missing columns: {missing}"
+            )
+
+        points = pd.to_numeric(
+            output["target_total_points"],
+            errors="raise",
+        )
+        line = pd.to_numeric(
+            output["market_t10_consensus_line"],
+            errors="raise",
+        )
+        residual = points - line
+        push = np.isclose(
+            residual,
+            0.0,
+            atol=1e-9,
+            rtol=0.0,
+        )
+
+        output["target_t10_over"] = (
+            residual > 1e-9
+        ).astype(int)
+        output["target_t10_total_push"] = push.astype(int)
+        output["target_t10_total_residual"] = residual
+
+    return output
+
+
 def canonicalize(
     frame: pd.DataFrame,
     manifest: dict[str, Any],
@@ -82,7 +164,12 @@ def canonicalize(
     if frame["game_id"].duplicated().any():
         raise ValueError(f"{market} has duplicate game_id values.")
 
-    output = _add_ats_features(frame) if market == "pregame_ats" else frame.copy()
+    output = (
+        _add_ats_features(frame)
+        if market == "pregame_ats"
+        else frame.copy()
+    )
+    output = _add_t10_targets(output, market)
     original = list(manifest.get("features", []))
     if not original:
         raise ValueError(f"{market} manifest has no features.")
@@ -126,6 +213,32 @@ def canonicalize(
     if leaked:
         raise ValueError(f"{market} blocked estimator fields: {leaked}")
 
+    if market == "pregame_ats":
+        target_columns = [
+            "target_t10_home_cover",
+            "target_t10_ats_push",
+            "target_t10_margin_residual",
+            "target_home_margin",
+        ]
+    elif market == "pregame_total":
+        target_columns = [
+            "target_t10_over",
+            "target_t10_total_push",
+            "target_t10_total_residual",
+            "target_total_points",
+        ]
+    else:
+        target_columns = list(
+            manifest.get(
+                "target_columns",
+                [
+                    "target_home_win",
+                    "target_tie",
+                    "target_home_margin",
+                ],
+            )
+        )
+
     result_manifest = dict(manifest)
     result_manifest.update(
         {
@@ -133,6 +246,7 @@ def canonicalize(
             "rows": int(len(output)),
             "features": features,
             "feature_count": len(features),
+            "target_columns": target_columns,
             "market_feature_roles": mapping,
             "canonical_market_anchors": anchors,
             "approved_market_challenger_features":

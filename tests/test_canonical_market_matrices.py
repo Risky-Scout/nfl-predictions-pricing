@@ -142,6 +142,7 @@ def _frame():
         {
             "game_id": ["G1", "G2"],
             "season": [2021, 2021],
+            "target_home_margin": [3.0, -3.0],
             "football_feature": [0.1, -0.2],
             "market_home_spread": [-3.0, 2.5],
             "market_home_cover_novig_prob": [0.51, 0.49],
@@ -272,3 +273,41 @@ def test_missing_anchor_rejected(roles):
         canonicalize(
             frame, manifest, market="pregame_ats", roles=roles
         )
+
+
+def test_ats_targets_are_derived_from_t10_line():
+    from nfl_hybrid.features.canonical_market_matrices import (
+        _add_t10_targets,
+    )
+
+    frame = pd.DataFrame(
+        {
+            "target_home_margin": [3, 3, -3],
+            "market_t10_consensus_line": [-3.5, -3.0, 3.0],
+        }
+    )
+
+    result = _add_t10_targets(frame, "pregame_ats")
+
+    assert result["target_t10_home_cover"].tolist() == [0, 0, 0]
+    assert result["target_t10_ats_push"].tolist() == [0, 1, 1]
+    assert result["target_t10_margin_residual"].tolist() == [-0.5, 0.0, 0.0]
+
+
+def test_total_targets_are_derived_from_t10_line():
+    from nfl_hybrid.features.canonical_market_matrices import (
+        _add_t10_targets,
+    )
+
+    frame = pd.DataFrame(
+        {
+            "target_total_points": [47, 48, 47],
+            "market_t10_consensus_line": [47.5, 47.0, 47.0],
+        }
+    )
+
+    result = _add_t10_targets(frame, "pregame_total")
+
+    assert result["target_t10_over"].tolist() == [0, 1, 0]
+    assert result["target_t10_total_push"].tolist() == [0, 0, 1]
+    assert result["target_t10_total_residual"].tolist() == [-0.5, 1.0, 0.0]
