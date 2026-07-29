@@ -1,0 +1,132 @@
+position,column_name,data_type,category,nullable,null_count,valid_values_or_range,description
+1,schedule_date,String,Schedule & Game Info,No,0,2741 distinct values,"Game date in ISO format YYYY-MM-DD (e.g., 1966-09-02)."
+2,schedule_season,Integer,Schedule & Game Info,No,0,1966 to 2025,"NFL season year the game belongs to (e.g., 2024)."
+3,schedule_week_str,String,Schedule & Game Info,No,0,22 distinct values,"Week label: regular-season week number (""1""-""18"") or playoff round (""Wildcard"",""Division"",""Conference"",""Superbowl""). Stored as text."
+4,schedule_playoff,Boolean,Schedule & Game Info,No,0,True / False,TRUE if the game is a postseason (playoff) game.
+5,team_home,String,Teams & Scores,No,0,44 distinct values,Full home team name as it was known that season.
+6,home_team_id,String,Teams & Scores,No,0,32 distinct values,"2-or-3-letter franchise ID for the home team (e.g., ""KC"",""SF""). Stable across relocations and name changes."
+7,score_home,Integer,Teams & Scores,No,0,0 to 72,Home team final score.
+8,team_away,String,Teams & Scores,No,0,44 distinct values,Full away team name as it was known that season.
+9,away_team_id,String,Teams & Scores,No,0,32 distinct values,2-or-3-letter franchise ID for the away team. Stable across relocations and name changes.
+10,score_away,Integer,Teams & Scores,No,0,0 to 62,Away team final score.
+11,team_winner_id,String,Teams & Scores,No,0,33 distinct values,"Franchise ID of the winning team; the literal ""TIE"" for tied games (no nulls)."
+12,team_favorite_id,String,Betting Lines,Yes,5,33 distinct values,"Franchise ID of the betting favorite; ""PICK"" for pick'em games with no favorite. Blank for 5 games with no recorded line."
+13,spread_favorite,Float,Betting Lines,Yes,5,-28 to 0,Closing point spread for the favorite. Always <= 0 (negative = favored by that many points); -7 means the favorite is a 7-point favorite. 0 for pick'em games.
+14,favorite_spread_outcome,String,Betting Lines,Yes,200,Cover; No Cover; Push,"Spread result from the favorite's perspective: ""Cover"",""No Cover"", or ""Push"". Blank for pick'em games (no favorite) and games with no line."
+15,spread_outcome,String,Betting Lines,Yes,5,Favorite; Push; Underdog,"""Favorite"" if the favorite covered, ""Underdog"" if it did not, or ""Push""."
+16,team_underdog_id,String,Betting Lines,Yes,5,33 distinct values,"Franchise ID of the betting underdog; ""PICK"" for pick'em games with no favorite. Blank for games with no recorded line."
+17,over_under_line,Float,Betting Lines,Yes,2527,28 to 63.5,Posted total-points line (over/under). Blank before ~1979 when totals were not published.
+18,ou_outcome,String,Betting Lines,Yes,2527,Over; Push; Under,"Total result vs. the line: ""Over"",""Under"", or ""Push"". Blank when no line exists."
+19,score_total,Integer,Betting Lines,No,0,3 to 113,Actual combined final score (score_home + score_away).
+20,margin_of_victory,Integer,Teams & Scores,No,0,0 to 59,"Absolute scoring margin, |score_home - score_away|. 0 for ties."
+21,stadium,String,Schedule & Game Info,No,0,130 distinct values,Stadium name where the game was played.
+22,stadium_neutral,Boolean,Schedule & Game Info,No,0,True / False,"TRUE if played at a neutral site (e.g., Super Bowl, international game)."
+23,weather_temperature,Float,Weather,Yes,490,-9 to 97,Game-time temperature in degrees F. Set to 72 for dome/indoor games. Blank where unknown.
+24,weather_wind_mph,Float,Weather,Yes,507,0 to 40,Wind speed in mph. Set to 0 for dome/indoor games. Blank where unknown.
+25,weather_humidity,Float,Weather,Yes,5653,4 to 100,Relative humidity percentage (4-100). Frequently blank due to missing source data.
+26,weather_detail,String,Weather,Yes,10981,fog; freezing rain; indoor; rain; rain | fog; retractable (open roof); retractable roof (closed); snow; snow | fog; snow | freezing rain; snow | freezing rain | rain | fog; snow | rain | fog,"Condition text, e.g. ""indoor"",""rain"",""snow"",""fog"",""snow | fog"",""retractable (open roof)"". Blank when no notable condition recorded."
+27,indoor_game,Boolean,Weather,No,0,True / False,TRUE if played indoors / under a dome (or closed retractable roof).
+28,temp_bucket,String,Weather,No,0,Chilly; Comfortable; Cool; Freezing; Hot; Mild; Unknown; Warm,"Temperature band: Hot, Warm, Comfortable, Mild, Cool, Chilly, Freezing, or Unknown (no temperature data)."
+29,high_wind,Boolean,Weather,No,0,True / False,TRUE if wind speed is 15 mph or higher.
+30,rain_flag,Boolean,Weather,No,0,True / False,TRUE if rain was recorded for the game.
+31,snow_flag,Boolean,Weather,No,0,True / False,TRUE if snow was recorded for the game.
+32,weather_impact,Integer,Weather,No,0,0 to 2,"Count of extreme weather/wind impact factors present (0, 1, or 2)."
+33,home_rest_days,Float,Rest & Situational,Yes,884,4 to 66,Days since the home team last played. Blank for each team's first game of a season.
+34,away_rest_days,Float,Rest & Situational,Yes,886,4 to 66,Days since the away team last played. Blank for each team's first game of a season.
+35,home_bye_flag,Boolean,Rest & Situational,No,0,True / False,TRUE if the home team is coming off a bye week (did not play the prior week).
+36,away_bye_flag,Boolean,Rest & Situational,No,0,True / False,TRUE if the away team is coming off a bye week (did not play the prior week).
+37,score_diff,Integer,Teams & Scores,No,0,-55 to 59,Signed scoring margin from the home perspective: score_home - score_away.
+38,home_win,Boolean,Teams & Scores,No,0,True / False,TRUE if the home team won.
+39,away_win,Boolean,Teams & Scores,No,0,True / False,TRUE if the away team won.
+40,tie,Boolean,Teams & Scores,No,0,True / False,TRUE if the game ended in a tie.
+41,spread_home,Float,Betting Lines,Yes,5,-27 to 28,"Point spread from the HOME team's perspective (negative = home favored, positive = home underdog). This is a betting line, NOT a score difference. Float."
+42,spread_away,Float,Betting Lines,Yes,5,-28 to 27,"Point spread from the AWAY team's perspective (negative = away favored, positive = away underdog). Mirror of spread_home. Float."
+43,home_spread_outcome,String,Betting Lines,Yes,5,Cover; No Cover; Push,"Spread result from the home team's perspective: ""Cover"",""No Cover"", or ""Push""."
+44,away_spread_outcome,String,Betting Lines,Yes,5,Cover; No Cover; Push,"Spread result from the away team's perspective: ""Cover"",""No Cover"", or ""Push""."
+45,elo_home_pre,Integer,ELO Ratings,No,0,1198 to 1857,Home team ELO rating entering the game. ELO rises with wins and falls with losses; higher = stronger.
+46,elo_away_pre,Integer,ELO Ratings,No,0,1182 to 1834,Away team ELO rating entering the game.
+47,elo_home_post,Integer,ELO Ratings,No,0,1191 to 1857,Home team ELO rating after the game result.
+48,elo_away_post,Integer,ELO Ratings,No,0,1181 to 1839,Away team ELO rating after the game result.
+49,elo_home_pred_spread,Float,ELO Ratings,No,0,-23.5 to 17,Model-predicted spread for the home team derived from the pre-game ELO difference.
+50,elo_away_pred_spread,Float,ELO Ratings,No,0,-17 to 23.5,Model-predicted spread for the away team derived from the pre-game ELO difference.
+51,pyth_home_pre,Float,Pythagorean,No,0,0 to 1,Home team Pythagorean win expectation entering the game (expected win % from prior points for/against). 0-1.
+52,pyth_away_pre,Float,Pythagorean,No,0,0 to 1,Away team Pythagorean win expectation entering the game. 0-1.
+53,pyth_fav_pre,Float,Pythagorean,Yes,5,0 to 1,Favorite team Pythagorean win expectation entering the game. Blank when no favorite/line.
+54,pyth_home_post,Float,Pythagorean,No,0,0 to 1,Home team Pythagorean win expectation after the game result. 0-1.
+55,pyth_away_post,Float,Pythagorean,No,0,0 to 1,Away team Pythagorean win expectation after the game result. 0-1.
+56,pyth_fav_post,Float,Pythagorean,Yes,5,0 to 1,Favorite team Pythagorean win expectation after the game result. Blank when no favorite/line.
+57,win_pct,Float,Home Team Form,No,0,0 to 1,Home team all-time (cumulative) win percentage entering the game. 0-1.
+58,cover_pct,Float,Home Team Form,No,0,0 to 1,Home team all-time against-the-spread cover percentage. 0-1.
+59,over_pct,Float,Home Team Form,No,0,0 to 1,Home team all-time rate of games going over the total. 0-1.
+60,win_pct_roll,Float,Home Team Form,No,0,0 to 1,Home team win percentage over the trailing 4 games. 0-1.
+61,cover_pct_roll,Float,Home Team Form,No,0,0 to 1,Home team ATS cover percentage over the trailing 4 games. 0-1.
+62,over_pct_roll,Float,Home Team Form,No,0,0 to 1,Home team over rate over the trailing 4 games. 0-1.
+63,pts_for_roll,Float,Home Team Form,No,0,0 to 52,Home team average points scored over the trailing 4 games.
+64,pts_against_roll,Float,Home Team Form,No,0,0.75 to 48.75,Home team average points allowed over the trailing 4 games.
+65,mov_roll,Float,Home Team Form,No,0,-34.25 to 45,Home team average margin of victory over the trailing 4 games (can be negative).
+66,win_pct_season,Float,Home Team Form,No,0,0 to 1,Home team season-to-date win percentage within the current season (resets each season; includes the current game). 0-1.
+67,cover_pct_season,Float,Home Team Form,No,0,0 to 1,Home team season-to-date against-the-spread cover percentage (resets each season). 0-1.
+68,over_pct_season,Float,Home Team Form,No,0,0 to 1,Home team season-to-date rate of games going over the total (resets each season). 0-1.
+69,pts_for_season,Float,Home Team Form,No,0,0 to 59,Home team season-to-date average points scored (resets each season).
+70,pts_against_season,Float,Home Team Form,No,0,0 to 62,Home team season-to-date average points allowed (resets each season).
+71,mov_season,Float,Home Team Form,No,0,-55 to 51,Home team season-to-date average margin of victory (resets each season; can be negative).
+72,opp_win_pct,Float,Opponent Form,No,0,0 to 1,Away/opponent team all-time win percentage. 0-1.
+73,opp_cover_pct,Float,Opponent Form,No,0,0 to 1,Opponent all-time ATS cover percentage. 0-1.
+74,opp_over_pct,Float,Opponent Form,No,0,0 to 1,Opponent all-time over rate. 0-1.
+75,opp_win_pct_roll,Float,Opponent Form,No,0,0 to 1,Opponent win percentage over the trailing 4 games. 0-1.
+76,opp_cover_pct_roll,Float,Opponent Form,No,0,0 to 1,Opponent ATS cover percentage over the trailing 4 games. 0-1.
+77,opp_over_pct_roll,Float,Opponent Form,No,0,0 to 1,Opponent over rate over the trailing 4 games. 0-1.
+78,opp_pts_for_roll,Float,Opponent Form,No,0,0 to 47.5,Opponent average points scored over the trailing 4 games.
+79,opp_pts_against_roll,Float,Opponent Form,No,0,1.5 to 50.75,Opponent average points allowed over the trailing 4 games.
+80,opp_mov_roll,Float,Opponent Form,No,0,-38 to 31.5,Opponent average margin of victory over the trailing 4 games (can be negative).
+81,opp_win_pct_season,Float,Opponent Form,No,0,0 to 1,Opponent season-to-date win percentage within the current season (resets each season). 0-1.
+82,opp_cover_pct_season,Float,Opponent Form,No,0,0 to 1,Opponent season-to-date ATS cover percentage (resets each season). 0-1.
+83,opp_over_pct_season,Float,Opponent Form,No,0,0 to 1,Opponent season-to-date over rate (resets each season). 0-1.
+84,opp_pts_for_season,Float,Opponent Form,No,0,0 to 62,Opponent season-to-date average points scored (resets each season).
+85,opp_pts_against_season,Float,Opponent Form,No,0,0 to 59,Opponent season-to-date average points allowed (resets each season).
+86,opp_mov_season,Float,Opponent Form,No,0,-46 to 55,Opponent season-to-date average margin of victory (resets each season; can be negative).
+87,opp_elo_pre,Integer,Opponent Form,No,0,1182 to 1834,Opponent (away) team ELO rating entering the game.
+88,sos_cum,Float,Strength of Schedule,No,0,1394 to 1574,Cumulative strength of schedule (average opponent ELO faced to date).
+89,sos_roll,Float,Strength of Schedule,No,0,1334.5 to 1701,Rolling strength of schedule (average opponent ELO over the trailing window).
+90,home_ats_win_cum,Integer,ATS Records,No,0,0 to 267,Home team cumulative ATS wins to date.
+91,home_ats_loss_cum,Integer,ATS Records,No,0,0 to 255,Home team cumulative ATS losses to date.
+92,home_ats_push_cum,Integer,ATS Records,No,0,0 to 18,Home team cumulative ATS pushes to date.
+93,home_ats_win_roll,Float,ATS Records,No,0,0 to 4,Home team ATS wins over the trailing 4 games (0-4).
+94,home_ats_loss_roll,Float,ATS Records,No,0,0 to 4,Home team ATS losses over the trailing 4 games (0-4).
+95,home_ats_push_roll,Float,ATS Records,No,0,0 to 2,Home team ATS pushes over the trailing 4 games.
+96,opp_ats_win_cum,Integer,ATS Records,No,0,0 to 259,Opponent cumulative ATS wins to date.
+97,opp_ats_loss_cum,Integer,ATS Records,No,0,0 to 254,Opponent cumulative ATS losses to date.
+98,opp_ats_push_cum,Integer,ATS Records,No,0,0 to 19,Opponent cumulative ATS pushes to date.
+99,opp_ats_win_roll,Float,ATS Records,No,0,0 to 4,Opponent ATS wins over the trailing 4 games (0-4).
+100,opp_ats_loss_roll,Float,ATS Records,No,0,0 to 4,Opponent ATS losses over the trailing 4 games (0-4).
+101,opp_ats_push_roll,Float,ATS Records,No,0,0 to 2,Opponent ATS pushes over the trailing 4 games.
+102,div_game,Boolean,Schedule & Game Info,No,0,True / False,TRUE if the matchup is between two divisional opponents.
+103,day_of_week,Integer,Schedule & Game Info,No,0,0 to 6,"Day-of-week index of the game date: 0=Monday, 1=Tuesday, ... 6=Sunday."
+104,prime_time_approx,Boolean,Schedule & Game Info,No,0,True / False,TRUE if the game is approximately a prime-time slot (heuristic based on day/time).
+105,magnitude_spread,Float,Betting Lines,Yes,5,0 to 28,"Absolute value of the spread, |spread_favorite| (0-28). 0 for pick'em. Blank when no line."
+106,spread_group,Float,Betting Lines,Yes,5,0 to 4,"Categorical bucket of spread magnitude (0-4, larger = bigger spread). Blank when no line."
+107,total_group,Float,Betting Lines,Yes,2527,0 to 4,"Categorical bucket of the over/under line (0-4, larger = higher total). Blank when no line."
+108,home_ats_target,Integer,ML Features,No,0,0 to 1,"Binary modeling target: 1 if the home team covered the spread, else 0."
+109,home_elo_diff,Integer,ML Features,No,0,-473 to 522,Pre-game ELO edge for the home team: elo_home_pre - elo_away_pre.
+110,home_pyth_diff,Float,ML Features,No,0,-1 to 1,Pre-game Pythagorean edge for the home team: pyth_home_pre - pyth_away_pre.
+111,home_rest_adv,Float,ML Features,Yes,894,-14 to 9,Home rest advantage: home_rest_days - away_rest_days. Blank when either rest value is missing.
+112,prime_time_exact,Integer,ML Features,No,0,0 to 1,Binary flag (1/0): exact prime-time game indicator.
+113,surface_grass,Integer,ML Features,No,0,0 to 1,"Binary flag (1/0): 1 if the playing surface is grass, 0 if artificial/turf."
+114,spread_bin_0-3,Boolean,ML Features,No,0,True / False,One-hot flag: TRUE if |spread| is in the 0-3 point range.
+115,spread_bin_3-7,Boolean,ML Features,No,0,True / False,One-hot flag: TRUE if |spread| is in the 3-7 point range.
+116,spread_bin_7-10,Boolean,ML Features,No,0,True / False,One-hot flag: TRUE if |spread| is in the 7-10 point range.
+117,spread_bin_10+,Boolean,ML Features,No,0,True / False,One-hot flag: TRUE if |spread| is greater than 10 points.
+118,home_ats_roll,Float,ML Features,No,0,0 to 1,Home team rolling ATS cover rate (0-1) over the trailing window.
+119,away_ats_roll,Float,ML Features,No,0,0 to 1,Away team rolling ATS cover rate (0-1) over the trailing window.
+120,home_off_eff,Float,ML Features,No,0,0 to 0.973214,Home team normalized offensive efficiency rating (0-1 scale).
+121,home_def_eff,Float,ML Features,No,0,0.0267857 to 1,Home team normalized defensive efficiency rating (0-1 scale).
+122,away_off_eff,Float,ML Features,No,0,0 to 0.952,Away team normalized offensive efficiency rating (0-1 scale).
+123,away_def_eff,Float,ML Features,No,0,0.048 to 1,Away team normalized defensive efficiency rating (0-1 scale).
+124,home_pace,Float,ML Features,No,0,11.25 to 77.75,Home team rolling scoring pace metric (avg points context; higher = faster/higher-scoring).
+125,home_underdog,Boolean,ML Features,No,0,True / False,TRUE if the home team is the betting underdog (spread_home > 0).
+126,under_streak_1w,Integer,ML Features,No,0,0 to 1,1/0 flag: the under hit in the team's most recent (1-week) game.
+127,under_streak_2w,Integer,ML Features,No,0,0 to 1,1/0 flag: the under hit in each of the last 2 weeks.
+128,under_streak_3w,Integer,ML Features,No,0,0 to 1,1/0 flag: the under hit in each of the last 3 weeks.
+129,under_momentum_60pct_1w,Integer,ML Features,No,0,0 to 1,1/0 flag: unders hit at a >=60% rate over the trailing 1-week window.
+130,under_momentum_60pct_2w,Integer,ML Features,No,0,0 to 1,1/0 flag: unders hit at a >=60% rate over the trailing 2-week window.
+131,under_momentum_60pct_3w,Integer,ML Features,No,0,0 to 1,1/0 flag: unders hit at a >=60% rate over the trailing 3-week window.
