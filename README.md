@@ -119,6 +119,19 @@ probabilities but stake **zero**; (4) log an immutable pre-kickoff record to
 (5) after games resolve, score vs the market and update the drift monitor;
 (6) apply the **live-promotion gate**.
 
+### Own-book line capture (build the movement dataset for ~free)
+```bash
+scripts/capture_lines.py --label sun_t10   # 1 call, 3 credits, whole slate x 3 markets
+```
+Each call appends an immutable, book-attributed, de-vigged snapshot to
+`data/line_history/` with a manifest. **Cost math:** current-odds =
+regions×markets = 1×3 = **3 credits per call** (returns every game at once, not per
+game). Recommended weekly cadence **Tue open / Fri / Sun T-60 / Sun T-10** = 4
+calls = **12 credits/week**; a full 18-week season ≈ **216 credits** for
+opening-to-closing movement on every game and market. This is the #1 ranked
+acquisition from `FINAL_REPORT.md`, self-built — no historical purchase needed.
+`run_week.sh` runs one capture per invocation (step 1b).
+
 **Live-promotion gate (fixed):** a PROVISIONAL market may stake (1/8 Kelly, 5%
 per-bet / 15% weekly caps) only after **≥ 8 live weeks** with **cumulative
 log-loss gain > 0** *and* **live pick-accuracy 95% CI lower bound > 0.524**. A

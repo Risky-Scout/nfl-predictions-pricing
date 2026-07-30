@@ -22,6 +22,14 @@ else
   echo "  SPREADSPOKE_CSV_PATH unset; skipping refresh, using existing backfill."
 fi
 
+echo "== [1b] own-book line capture (accumulates the open->close movement dataset) =="
+if [ -n "${THE_ODDS_API_KEY:-}" ]; then
+  $PY scripts/capture_lines.py --label "${CAPTURE_LABEL:-run_week}" || echo "  (capture failed; continuing)"
+  echo "  cadence: Tue open / Fri / Sun T-60 / T-10 = 4 calls x 3 credits = 12 credits/week (~216/season)."
+else
+  echo "  No THE_ODDS_API_KEY; skipping capture."
+fi
+
 echo "== [2/6] fetch current-week lines =="
 LINES_CSV="$SEASON_DIR/lines_wk${WEEK}.csv"
 if [ -n "${THE_ODDS_API_KEY:-}" ]; then
