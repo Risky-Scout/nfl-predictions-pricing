@@ -1,0 +1,13 @@
+{
+  "source_manifest_hash": "daec211cfe940ff0b8c175d9b16010e7",
+  "seasons": [
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025
+  ],
+  "generated_from": "data/backfill_2020_2025 (nflverse PBP/team_stats/snaps/depth_charts/schedules)",
+  "note": "Coordinators/play-callers are external-only and not included; head coaches from schedules."
+}

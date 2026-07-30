@@ -1,0 +1,42 @@
+{
+  "leakage_team_history_pass": true,
+  "team_priors_rows": 480,
+  "team_priors_metrics": 15,
+  "team_priors_teams": 32,
+  "qb_team_mixtures_rows": 32,
+  "qb_player_priors_rows": 208,
+  "qb_2026_starter_candidates": 81,
+  "roster_model_fit": true,
+  "roster_features_used": [
+    "returning_offensive_snap_percentage",
+    "returning_defensive_snap_percentage",
+    "returning_special_teams_snap_percentage"
+  ],
+  "roster_residual_sd": 0.0974,
+  "roster_training_rows": 160,
+  "coach_priors_rows": 70,
+  "coach_priors_coaches": 70,
+  "comparison_vs_epa_only": {
+    "epa_only_metrics": 2,
+    "full_metrics": 15,
+    "epa_only_rows": 64,
+    "full_rows": 480,
+    "added_metrics": [
+      "defense_allowed_epa_per_play",
+      "defense_allowed_success_rate",
+      "offense_early_down_epa",
+      "offense_epa_per_play",
+      "offense_explosive_rate",
+      "offense_fumble_lost_rate",
+      "offense_int_rate",
+      "offense_late_down_epa",
+      "offense_pace_plays_per_game",
+      "offense_pass_epa",
+      "offense_red_zone_epa",
+      "offense_rush_epa",
+      "offense_sack_rate",
+      "offense_success_rate",
+      "special_teams_epa_per_play"
+    ]
+  }
+}
