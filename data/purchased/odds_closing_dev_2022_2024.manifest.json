@@ -1,0 +1,24 @@
+{
+  "columns": 35,
+  "dataframe_sha256": "13a3b5649111affa35382e9c67f9cb7a67fb30b39ae0473ab63818b97493c70c",
+  "dataset_name": "odds_closing_dev_2022_2024",
+  "request_parameters": {
+    "benchmark_label": "REAL-CLOSING",
+    "estimated_credits": 12180,
+    "horizon_minutes": [
+      15
+    ],
+    "requested_snapshots": 406,
+    "seasons": [
+      2022,
+      2023,
+      2024
+    ]
+  },
+  "retrieved_at_utc": "2026-07-30T01:53:25.723631Z",
+  "rows": 472376,
+  "source_license_note": null,
+  "source_locator": "historical/sports/americanfootball_nfl/odds (closing, h=15m)",
+  "source_name": "the_odds_api",
+  "source_version": null
+}
