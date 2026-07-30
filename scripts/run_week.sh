@@ -40,14 +40,17 @@ else
   echo "  No THE_ODDS_API_KEY. Provide $LINES_CSV using examples/games_2026_week1_placeholder.csv as a template."
 fi
 
-echo "== [3/6] generate betting card (PROVISIONAL -> stake ZERO until live gate passes) =="
+echo "== [3/6] generate betting card (frozen calibration artifact; PROVISIONAL -> stake ZERO) =="
 CARD="$SEASON_DIR/card_wk${WEEK}.csv"
-if [ -f "$LINES_CSV" ]; then
-  $PY -m nfl_hybrid.pricing.predict_week --season "$SEASON" --week "$WEEK" \
-    --games "$LINES_CSV" --output "$CARD"
-else
-  echo "  No lines CSV; card not generated."
+ASOF="${AS_OF_UTC:-$($PY -c 'from nfl_hybrid.data.provenance import utc_now_iso; print(utc_now_iso())')}"
+PRELIM_FLAG="${PRELIMINARY:+--preliminary}"
+if [ ! -f "$LINES_CSV" ]; then
+  echo "  CRITICAL: no lines CSV at $LINES_CSV" >&2; exit 1   # critical failure: stop
 fi
+# critical stage: no '|| continue'. A pricing/validation failure stops the run.
+$PY -m nfl_hybrid.pricing.predict_week --season "$SEASON" --week "$WEEK" \
+  --games "$LINES_CSV" --output "$CARD" --as-of-utc "$ASOF" \
+  --injury-data-utc "$ASOF" $PRELIM_FLAG
 
 echo "== [4/6] log immutable pre-kickoff prediction record =="
 $PY -c "

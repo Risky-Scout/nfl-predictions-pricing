@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Frozen pricing-calibration artifact (empirical margin surface + sigmas).",
     )
     parser.add_argument("--output", required=True, help="Output betting-card CSV path.")
+    parser.add_argument("--as-of-utc", default=None, help="Deterministic replay timestamp (UTC).")
+    parser.add_argument("--preliminary", action="store_true", help="Label the card PRELIMINARY.")
+    parser.add_argument("--injury-data-utc", default=None, help="Timestamp of the injury/roster refresh.")
+    parser.add_argument("--require-priced", action="store_true", help="Fail if no game has posted lines.")
     return parser
 
 
@@ -96,6 +100,7 @@ def main() -> None:
         raise SystemExit(
             f"No games found for season {args.season} week {args.week}."
         )
+    as_of = args.as_of_utc or "2026-07-30T00:00:00Z"
 
     spec_path = Path(args.production_spec)
     if spec_path.exists():
@@ -113,12 +118,30 @@ def main() -> None:
     except FileNotFoundError:
         print("WARNING: pricing artifact not found; using built-in normal surface.")
 
+    # critical pre-pricing validation (raises WeeklyRunError -> job stops)
+    from nfl_hybrid.pricing.weekly import (
+        assemble_audit,
+        validate_lines,
+        validate_probability_identity,
+    )
+
+    if "status" in games.columns:
+        validate_lines(games, require_priced=args.require_priced)
+        priceable = games[games["status"] == "PRICED"].copy()
+    else:
+        priceable = games
+
     card = build_betting_card(
-        games,
+        priceable,
         readiness_by_market=readiness,
         staking_policy=StakingPolicy(),
         config=CardConfig(),
         pricing_artifact=artifact,
+    )
+    validate_probability_identity(card)
+    card = assemble_audit(
+        card, as_of_utc=as_of, artifact=artifact, lines=games,
+        injury_data_utc=args.injury_data_utc, preliminary=args.preliminary,
     )
 
     out = Path(args.output)
@@ -126,8 +149,9 @@ def main() -> None:
     card.to_csv(out, index=False)
 
     bets = int(card["should_bet"].sum())
-    print(f"card_rows={len(card)} games={games['game_id'].nunique()} recommended_bets={bets}")
-    print(f"readiness={readiness}")
+    n_no_price = int((card["card_status"] == "NO_PRICE").sum()) if "card_status" in card else 0
+    print(f"card_rows={len(card)} games={priceable['game_id'].nunique()} recommended_bets={bets} no_price_rows={n_no_price}")
+    print(f"status={'PRELIMINARY' if args.preliminary else 'VALID_LIVE_CARD'} artifact={getattr(artifact,'artifact_sha256','none')[:12]}")
     print(f"output={out}")
 
 

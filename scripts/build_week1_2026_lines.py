@@ -53,6 +53,9 @@ def main() -> None:
                 s = matched[(matched["market_type"] == market) & (matched["outcome_side"] == side)]
                 return s.groupby("game_id")[col].median()
 
+            from nfl_hybrid.data.provenance import utc_now_iso
+            now = pd.Timestamp(utc_now_iso())
+            qts = matched.groupby("game_id")["bookmaker_last_update_utc"].max()
             priced = pd.DataFrame({
                 "home_spread": cons("spread", "home", "line_value"),
                 "total_line": cons("total", "over", "line_value"),
@@ -60,6 +63,8 @@ def main() -> None:
                 "market_cover_probability": cons("spread", "home", "devig_probability"),
                 "market_over_probability": cons("total", "over", "devig_probability"),
                 "n_books": matched.groupby("game_id")["bookmaker_id"].nunique(),
+                "quote_timestamp_utc": qts,
+                "quote_age_minutes": (now - pd.to_datetime(qts, utc=True)).dt.total_seconds() / 60.0,
             })
 
     rows = []
@@ -77,10 +82,13 @@ def main() -> None:
                              "market_cover_probability": float(p.get("market_cover_probability", np.nan)),
                              "market_over_probability": float(p.get("market_over_probability", np.nan)),
                              "market_source": "LIVE-CURRENT", "status": "PRICED",
-                             "n_books": int(p["n_books"])})
+                             "n_books": int(p["n_books"]),
+                             "quote_timestamp_utc": p.get("quote_timestamp_utc"),
+                             "quote_age_minutes": float(p.get("quote_age_minutes", np.nan))})
                 continue
         rows.append({**base, "home_spread": np.nan, "total_line": np.nan,
-                     "market_source": "UNPRICED-AWAITING-LINES", "status": "UNPRICED-AWAITING-LINES", "n_books": 0})
+                     "market_source": "UNPRICED-AWAITING-LINES", "status": "UNPRICED-AWAITING-LINES", "n_books": 0,
+                     "quote_timestamp_utc": None, "quote_age_minutes": np.nan})
 
     frame = pd.DataFrame(rows)
     frame.to_csv(output, index=False)
