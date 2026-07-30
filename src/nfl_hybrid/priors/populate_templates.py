@@ -183,35 +183,8 @@ def build_starter_probabilities(pbp: pd.DataFrame, depth: pd.DataFrame, src_hash
     hist["needs_human_review"] = False
     hist = hist[["team_id", "player_id", "starter_probability", "as_of_utc", "source", "season", "needs_human_review"]]
 
-    # 2026 projection from latest available depth chart (rank-based)
-    proj_rows = []
-    if depth is not None and len(depth):
-        d = depth.copy()
-        pos_col = next((c for c in ("position", "pos_abb", "depth_position", "pos") if c in d.columns), None)
-        rank_col = next((c for c in ("pos_rank", "depth_chart_order", "rank") if c in d.columns), None)
-        pid_col = next((c for c in ("gsis_id", "player_id", "player_gsis_id") if c in d.columns), None)
-        team_col = next((c for c in ("club_code", "team", "recent_team") if c in d.columns), None)
-        if pos_col and pid_col and team_col:
-            latest_season = int(pd.to_numeric(d["season"], errors="coerce").max())
-            qb = d[(d[pos_col].astype(str).str.upper() == "QB") & (pd.to_numeric(d["season"], errors="coerce") == latest_season)]
-            if rank_col:
-                qb = qb.copy()
-                qb["_rank"] = pd.to_numeric(qb[rank_col], errors="coerce").fillna(9)
-            else:
-                qb = qb.assign(_rank=1)
-            # one row per (team, player) at its best (min) rank
-            qb = qb.sort_values("_rank").drop_duplicates([team_col, pid_col])
-            rank_prob = {1: 0.85, 2: 0.12, 3: 0.03}
-            for team, tg in qb.groupby(team_col):
-                tg = tg.sort_values("_rank").head(3)
-                for _, r in tg.iterrows():
-                    proj_rows.append(dict(
-                        team_id=team, player_id=r[pid_col],
-                        starter_probability=rank_prob.get(int(r["_rank"]), 0.02),
-                        as_of_utc="2026-08-01T00:00:00Z",
-                        source="depth_chart_rank", season=2026, needs_human_review=True,
-                    ))
-    proj = pd.DataFrame(proj_rows)
+    # 2026 projection from the latest available depth chart (rank-based).
+    proj = build_projected_starters(depth, target_season=2026, as_of_utc="2026-08-01T00:00:00Z")
     out = pd.concat([hist, proj], ignore_index=True)
     out["source_manifest_hash"] = src_hash
     return out.reset_index(drop=True)
@@ -220,6 +193,63 @@ def build_starter_probabilities(pbp: pd.DataFrame, depth: pd.DataFrame, src_hash
 # --------------------------------------------------------------------------- #
 # 4. offseason_roster_history (returning snap shares by unit + residual target)
 # --------------------------------------------------------------------------- #
+RANK_WEIGHTS = {1: 0.85, 2: 0.12, 3: 0.03}
+
+
+def _rank_from_depth(qb: pd.DataFrame) -> pd.Series:
+    """Robust integer QB depth rank. Uses depth_team (the populated column),
+    falling back to pos_rank, then to first-seen order. Normalizes strings/floats."""
+    rank = pd.Series(np.nan, index=qb.index, dtype=float)
+    for col in ("depth_team", "pos_rank", "depth_chart_order"):
+        if col in qb.columns:
+            cand = pd.to_numeric(qb[col], errors="coerce")
+            rank = rank.where(rank.notna(), cand)
+    return rank
+
+
+def build_projected_starters(depth: pd.DataFrame, *, target_season: int, as_of_utc: str) -> pd.DataFrame:
+    """Rank-based projected starter probabilities for every team from the latest
+    depth chart. Ranks are normalized; per-team probabilities sum to 1.0."""
+    if depth is None or len(depth) == 0:
+        return pd.DataFrame()
+    d = depth.copy()
+    pos_col = next((c for c in ("position", "pos_abb", "depth_position", "pos") if c in d.columns), None)
+    pid_col = next((c for c in ("gsis_id", "player_id", "player_gsis_id") if c in d.columns), None)
+    team_col = next((c for c in ("club_code", "team", "recent_team") if c in d.columns), None)
+    name_col = next((c for c in ("full_name", "player_name", "football_name") if c in d.columns), None)
+    if not (pos_col and pid_col and team_col):
+        return pd.DataFrame()
+    d["season_num"] = pd.to_numeric(d["season"], errors="coerce")
+    d["week_num"] = pd.to_numeric(d.get("week", 0), errors="coerce").fillna(0)
+    latest_season = int(d["season_num"].max())
+    qb = d[(d[pos_col].astype(str).str.upper() == "QB") & (d["season_num"] == latest_season)].copy()
+    if qb.empty:
+        return pd.DataFrame()
+    # keep each player's most recent week, then their best (lowest) rank
+    qb["_rank_raw"] = _rank_from_depth(qb)
+    qb = qb.sort_values(["week_num"], ascending=False).drop_duplicates([team_col, pid_col])
+
+    rows = []
+    for team, tg in qb.groupby(team_col):
+        tg = tg.copy()
+        # normalize ranks: dense-rank the raw ranks so 1,2,3 are contiguous even with gaps
+        tg["_rank"] = tg["_rank_raw"].rank(method="first").astype(int)
+        tg = tg.sort_values("_rank").head(4)
+        weights = tg["_rank"].map(lambda r: RANK_WEIGHTS.get(int(r), 0.01)).to_numpy(float)
+        if weights.sum() <= 0:
+            weights = np.ones(len(tg))
+        probs = weights / weights.sum()  # per-team probabilities sum to 1.0
+        for (_, r), p in zip(tg.iterrows(), probs):
+            rows.append(dict(
+                team_id=team, player_id=r[pid_col],
+                player_name=r.get(name_col) if name_col else None,
+                starter_probability=float(p), rank=int(r["_rank"]),
+                as_of_utc=as_of_utc, source="depth_chart_rank",
+                season=target_season, needs_human_review=True,
+            ))
+    return pd.DataFrame(rows)
+
+
 _UNIT_COLS = {
     "returning_offensive_snap_percentage": "offense_snaps",
     "returning_defensive_snap_percentage": "defense_snaps",

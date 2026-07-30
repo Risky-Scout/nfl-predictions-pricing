@@ -1,0 +1,286 @@
+{
+  "artifact_sha256": "d5c7b5b9cea3bc3931f59a6fae751447b3c4b9938258932dd50d02dc2c27a6db",
+  "artifact_version": "pricing_calibration_2026.v1",
+  "code_commit": "c99be7b33bc7b07f755bef921b4fbfecc7d7d752",
+  "created_at_utc": "2026-07-30T00:00:00Z",
+  "devig_consensus": {
+    "moneyline": {
+      "selected_consensus": "equal_mean",
+      "selected_devig": "proportional",
+      "tie_break_vs_default": {
+        "ci_lower": -0.0009732568506832304,
+        "ci_upper": 0.002849437800768069,
+        "default_minus_best_mean": 0.0010381394925270484
+      }
+    },
+    "spread": {
+      "selected_consensus": "equal_mean",
+      "selected_devig": "proportional",
+      "tie_break_vs_default": null
+    },
+    "total": {
+      "selected_consensus": "equal_mean",
+      "selected_devig": "proportional",
+      "tie_break_vs_default": {
+        "ci_lower": -4.128554623552172e-05,
+        "ci_upper": 0.00038286702550251254,
+        "default_minus_best_mean": 0.00016648653913727454
+      }
+    }
+  },
+  "devig_consensus_full_grid": {
+    "moneyline": {
+      "power+equal_mean": {
+        "brier": 0.2094785716322462,
+        "ece": 0.03215783853461723,
+        "log_loss": 0.6065345953068478,
+        "n": 834
+      },
+      "power+median": {
+        "brier": 0.2094459693519291,
+        "ece": 0.03210960133281264,
+        "log_loss": 0.606433808158006,
+        "n": 834
+      },
+      "proportional+equal_mean": {
+        "brier": 0.20978824163618937,
+        "ece": 0.035420502298673245,
+        "log_loss": 0.607471947650533,
+        "n": 834
+      },
+      "proportional+median": {
+        "brier": 0.20975317324784776,
+        "ece": 0.03292255003545686,
+        "log_loss": 0.6073505042797815,
+        "n": 834
+      },
+      "shin+equal_mean": {
+        "brier": 0.20955523379540736,
+        "ece": 0.033288929633002354,
+        "log_loss": 0.6067919628099444,
+        "n": 834
+      },
+      "shin+median": {
+        "brier": 0.2095240131944856,
+        "ece": 0.0332194344366382,
+        "log_loss": 0.6066859251721034,
+        "n": 834
+      }
+    },
+    "spread": {
+      "power+equal_mean": {
+        "brier": 0.2500289250608366,
+        "ece": 0.04487754760309024,
+        "log_loss": 0.693205083524948,
+        "n": 806
+      },
+      "power+median": {
+        "brier": 0.250107697514373,
+        "ece": 0.033850867412318277,
+        "log_loss": 0.6933625823559603,
+        "n": 806
+      },
+      "proportional+equal_mean": {
+        "brier": 0.25002448360655005,
+        "ece": 0.04734532040657039,
+        "log_loss": 0.6931961904151853,
+        "n": 806
+      },
+      "proportional+median": {
+        "brier": 0.250098539087699,
+        "ece": 0.04327452986153288,
+        "log_loss": 0.6933442659877034,
+        "n": 806
+      },
+      "shin+equal_mean": {
+        "brier": 0.2500274023434947,
+        "ece": 0.047354343369651886,
+        "log_loss": 0.6932020344916654,
+        "n": 806
+      },
+      "shin+median": {
+        "brier": 0.25010456721973157,
+        "ece": 0.05071201210434465,
+        "log_loss": 0.693356321965616,
+        "n": 806
+      }
+    },
+    "total": {
+      "power+equal_mean": {
+        "brier": 0.25004078998437246,
+        "ece": 0.05812798638044368,
+        "log_loss": 0.6932287605964361,
+        "n": 824
+      },
+      "power+median": {
+        "brier": 0.24995507825368818,
+        "ece": 0.048439706764902016,
+        "log_loss": 0.6930573325146305,
+        "n": 824
+      },
+      "proportional+equal_mean": {
+        "brier": 0.2500383192168274,
+        "ece": 0.06056355825226247,
+        "log_loss": 0.6932238190537676,
+        "n": 824
+      },
+      "proportional+median": {
+        "brier": 0.24995823141034373,
+        "ece": 0.0401454183315573,
+        "log_loss": 0.693063639684154,
+        "n": 824
+      },
+      "shin+equal_mean": {
+        "brier": 0.25003995909476207,
+        "ece": 0.0581308197742268,
+        "log_loss": 0.6932270988152441,
+        "n": 824
+      },
+      "shin+median": {
+        "brier": 0.24995615284629993,
+        "ece": 0.04027388732992866,
+        "log_loss": 0.6930594820043025,
+        "n": 824
+      }
+    }
+  },
+  "holdout_untouched": 2025,
+  "margin_sigma": {
+    "constant_minus_linear": {
+      "ci_lower": -0.009469565644749232,
+      "ci_upper": 0.004601552467086572,
+      "mean": -0.002402900294800454
+    },
+    "constant_sigma": 12.74755574833145,
+    "kind": "margin",
+    "linear_coef": {
+      "a": 11.05356199473073,
+      "b": 0.026367067116621064
+    },
+    "oos_gauss_nll": {
+      "constant": 3.9470918317306363,
+      "linear_in_total": 3.949494732025437
+    },
+    "selected": "constant",
+    "total_range": [
+      28.5,
+      58.5
+    ]
+  },
+  "margin_surface": {
+    "baseline_sigma": 12.74755574833145,
+    "bucket_width": 3.0,
+    "candidates": {
+      "empirical_bw1.0": {
+        "brier": 0.21013896619479303,
+        "ece": 0.03280126216412903,
+        "log_loss": 0.6081592665985888
+      },
+      "empirical_bw2.0": {
+        "brier": 0.21032890109721905,
+        "ece": 0.04749861628295348,
+        "log_loss": 0.6083200671146403
+      },
+      "empirical_bw3.0": {
+        "brier": 0.2093070044149683,
+        "ece": 0.03388715687444411,
+        "log_loss": 0.606142426048036
+      },
+      "normal_baseline": {
+        "brier": 0.2115556179149271,
+        "ece": 0.04680532103002284,
+        "log_loss": 0.6116870085970402
+      }
+    },
+    "fallback": "normal",
+    "pmf_export_csv": "config/pricing_calibration_2026_pmf.csv",
+    "primary_metric_moneyline_logloss_tie": {
+      "ci_lower": -0.001832149137330337,
+      "ci_upper": 0.012125796111493493,
+      "mean": 0.005544582549004173
+    },
+    "selected": "empirical",
+    "selection_note": "Moneyline log-loss statistically indistinguishable from normal (bootstrap CI includes 0). Empirical selected per registry Amendment 1 for correct push/key-number mass; normal retained as configurable fallback.",
+    "tail_cutoff": 21
+  },
+  "push_calibration": {
+    "empirical": {
+      "by_key_number": {
+        "away_+3": {
+          "actual_push": 0.1897,
+          "n": 58,
+          "predicted_push": 0.0689
+        },
+        "home_-3": {
+          "actual_push": 0.0676,
+          "n": 74,
+          "predicted_push": 0.0767
+        },
+        "home_-6": {
+          "actual_push": 0.1,
+          "n": 30,
+          "predicted_push": 0.0313
+        }
+      },
+      "push_mae": 0.06620000000000001
+    },
+    "normal": {
+      "by_key_number": {
+        "away_+3": {
+          "actual_push": 0.1897,
+          "n": 58,
+          "predicted_push": 0.0313
+        },
+        "home_-3": {
+          "actual_push": 0.0676,
+          "n": 74,
+          "predicted_push": 0.0313
+        },
+        "home_-6": {
+          "actual_push": 0.1,
+          "n": 30,
+          "predicted_push": 0.0313
+        }
+      },
+      "push_mae": 0.0878
+    }
+  },
+  "random_seed": 20260815,
+  "runtime_defaults": {
+    "ats_consensus": "equal_mean",
+    "ats_devig": "proportional",
+    "margin_sigma_value": 12.74755574833145,
+    "moneyline_consensus": "equal_mean",
+    "moneyline_devig": "proportional",
+    "total_consensus": "equal_mean",
+    "total_devig": "proportional",
+    "total_sigma_value": 13.049625340727756
+  },
+  "source_hashes": {
+    "purchased_closing_odds": "c2a5f9cc6badb310a501361f973a1543073dc7ac3c0f369efe3188d0fcc05636",
+    "spreadspoke": "cf8f29fc8949e4bdc28f8024829be1e9d2e9d4d1b992f7ad2eda002fbcbd910c"
+  },
+  "total_sigma": {
+    "constant_minus_linear": {
+      "ci_lower": -0.0019021479990468722,
+      "ci_upper": 0.0013826224464259405,
+      "mean": -0.0001002598282864392
+    },
+    "constant_sigma": 13.049625340727756,
+    "kind": "total",
+    "linear_coef": {
+      "a": 10.132070473261747,
+      "b": 0.061417645325447835
+    },
+    "oos_gauss_nll": {
+      "constant": 3.9823315174994205,
+      "linear_in_total": 3.982431777327707
+    },
+    "selected": "constant",
+    "total_range": [
+      28.5,
+      58.5
+    ]
+  },
+  "training_cutoff_season": 2024
+}

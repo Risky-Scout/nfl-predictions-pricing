@@ -61,12 +61,20 @@ def _three_region(edge_mean: float, sd: float, line: float) -> tuple[float, floa
     return fav, push, unfav
 
 
-def price_spread(mean_margin: float, spread: float, *, config: AltLineConfig | None = None) -> dict:
+def price_spread(mean_margin: float, spread: float, *, config: AltLineConfig | None = None, surface=None) -> dict:
     """Price one spread. ``spread`` is the home team's line (home covers if
-    home_margin + spread > 0)."""
+    home_margin + spread > 0).
+
+    If ``surface`` (a :class:`~nfl_hybrid.pricing.margin_surface.MarginSurface`) is
+    supplied, cover/push probabilities come from the calibrated margin surface
+    (empirical PMF); otherwise the normal continuity-corrected model is used.
+    """
     cfg = config or AltLineConfig()
-    edge = mean_margin + spread
-    home, push, away = _three_region(edge, cfg.margin_sd, spread)
+    if surface is not None:
+        home, push, away = surface.cover_probabilities(-mean_margin, spread, cfg.margin_sd)
+    else:
+        edge = mean_margin + spread
+        home, push, away = _three_region(edge, cfg.margin_sd, spread)
     return {
         "line": spread,
         "home_cover_probability": home,
@@ -95,18 +103,21 @@ def price_total(mean_total: float, total: float, *, config: AltLineConfig | None
     }
 
 
-def price_spread_ladder(mean_margin: float, spreads, *, config: AltLineConfig | None = None) -> pd.DataFrame:
-    return pd.DataFrame([price_spread(mean_margin, s, config=config) for s in spreads])
+def price_spread_ladder(mean_margin: float, spreads, *, config: AltLineConfig | None = None, surface=None) -> pd.DataFrame:
+    return pd.DataFrame([price_spread(mean_margin, s, config=config, surface=surface) for s in spreads])
 
 
 def price_total_ladder(mean_total: float, totals, *, config: AltLineConfig | None = None) -> pd.DataFrame:
     return pd.DataFrame([price_total(mean_total, t, config=config) for t in totals])
 
 
-def price_moneyline(mean_margin: float, *, config: AltLineConfig | None = None) -> dict:
+def price_moneyline(mean_margin: float, *, config: AltLineConfig | None = None, surface=None) -> dict:
     """Win/tie/loss from the margin distribution (tie = integer-0 push)."""
     cfg = config or AltLineConfig()
-    home, tie, away = _three_region(mean_margin, cfg.margin_sd, 0.0)
+    if surface is not None:
+        home, tie, away = surface.moneyline_probabilities(-mean_margin, cfg.margin_sd)
+    else:
+        home, tie, away = _three_region(mean_margin, cfg.margin_sd, 0.0)
     return {
         "home_win_probability": home,
         "tie_probability": tie,

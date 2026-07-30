@@ -68,34 +68,44 @@ def _reference_distribution(
     total_line: np.ndarray,
     *,
     config: CardConfig,
+    surface=None,
 ) -> pd.DataFrame:
     """Closed-form market/reference probabilities from closing lines.
 
-    Uses the same normal continuity-corrected score model as
-    :class:`JointScoreModel`, so the reference card is consistent with the model.
-    The market's implied home margin is ``-home_spread``.
+    Margin quantities (moneyline tie/win, ATS cover/push) come from the calibrated
+    margin surface when ``surface`` is supplied (empirical PMF; correct key-number
+    push mass); otherwise the normal continuity-corrected model. Totals always use
+    the normal model with the fitted total sigma.
     """
 
     margin_mean = -home_spread
     total_mean = total_line
     m_sd, t_sd = config.margin_sd, config.total_sd
 
-    tie = norm.cdf((0.5 - margin_mean) / m_sd) - norm.cdf((-0.5 - margin_mean) / m_sd)
-    home_win_uncond = 1.0 - norm.cdf((0.5 - margin_mean) / m_sd)
-    home_win = np.clip(home_win_uncond, 0.0, 1.0)
-
-    ats_edge = margin_mean + home_spread  # == 0 for the reference line
-    ats_integer = np.isfinite(home_spread) & np.isclose(home_spread, np.round(home_spread))
-    ats_push = np.where(
-        ats_integer,
-        norm.cdf((0.5 - ats_edge) / m_sd) - norm.cdf((-0.5 - ats_edge) / m_sd),
-        0.0,
-    )
-    cover = np.where(
-        ats_integer,
-        1.0 - norm.cdf((0.5 - ats_edge) / m_sd),
-        norm.cdf(ats_edge / m_sd),
-    )
+    if surface is not None:
+        n = len(home_spread)
+        tie = np.empty(n); home_win = np.empty(n); ats_push = np.empty(n); cover = np.empty(n)
+        for i in range(n):
+            hs = home_spread[i]
+            hw, ti, _ = surface.moneyline_probabilities(hs, m_sd)
+            home_win[i], tie[i] = hw, ti
+            hc, pu, _ = surface.cover_probabilities(hs, hs, m_sd)  # cover the closing line
+            cover[i], ats_push[i] = hc, pu
+    else:
+        tie = norm.cdf((0.5 - margin_mean) / m_sd) - norm.cdf((-0.5 - margin_mean) / m_sd)
+        home_win = np.clip(1.0 - norm.cdf((0.5 - margin_mean) / m_sd), 0.0, 1.0)
+        ats_edge = margin_mean + home_spread
+        ats_integer = np.isfinite(home_spread) & np.isclose(home_spread, np.round(home_spread))
+        ats_push = np.where(
+            ats_integer,
+            norm.cdf((0.5 - ats_edge) / m_sd) - norm.cdf((-0.5 - ats_edge) / m_sd),
+            0.0,
+        )
+        cover = np.where(
+            ats_integer,
+            1.0 - norm.cdf((0.5 - ats_edge) / m_sd),
+            norm.cdf(ats_edge / m_sd),
+        )
 
     total_edge = total_mean - total_line  # == 0 for the reference line
     total_integer = np.isfinite(total_line) & np.isclose(total_line, np.round(total_line))
@@ -129,6 +139,7 @@ def build_betting_card(
     readiness_by_market: dict[str, str],
     staking_policy: StakingPolicy | None = None,
     config: CardConfig | None = None,
+    pricing_artifact=None,
 ) -> pd.DataFrame:
     """Build a per-(game, market) betting card.
 
@@ -146,6 +157,18 @@ def build_betting_card(
     config = config or CardConfig()
     policy = staking_policy or StakingPolicy()
 
+    surface = None
+    pricing_surface_version = "normal_builtin"
+    if pricing_artifact is not None:
+        # use the fitted margin surface + fitted sigmas from the frozen artifact
+        surface = pricing_artifact.margin_surface
+        config = CardConfig(
+            margin_sd=pricing_artifact.margin_sigma,
+            total_sd=pricing_artifact.total_sigma,
+            default_decimal_odds=config.default_decimal_odds,
+        )
+        pricing_surface_version = f"{pricing_artifact.version}:{pricing_artifact.artifact_sha256[:12]}"
+
     required = {
         "game_id",
         "season",
@@ -162,7 +185,7 @@ def build_betting_card(
     g = games.copy()
     home_spread = pd.to_numeric(g["home_spread"], errors="coerce").to_numpy(float)
     total_line = pd.to_numeric(g["total_line"], errors="coerce").to_numpy(float)
-    ref = _reference_distribution(home_spread, total_line, config=config)
+    ref = _reference_distribution(home_spread, total_line, config=config, surface=surface)
     market_source = g.get("market_source", pd.Series(["REFERENCE-LINE PROXY"] * len(g)))
 
     def _col(name: str, fallback: np.ndarray) -> np.ndarray:
@@ -249,6 +272,7 @@ def build_betting_card(
     from nfl_hybrid.pricing.alt_lines import CALIBRATION_STATEMENT
 
     card["calibration_statement"] = CALIBRATION_STATEMENT
+    card["pricing_surface_version"] = pricing_surface_version
     return card.sort_values(["week", "game_id", "market"], kind="stable").reset_index(
         drop=True
     )

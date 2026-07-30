@@ -11,6 +11,27 @@ For a non-author running the season. Read the box first.
 
 ---
 
+## Two paths (offline calibration vs weekly runtime)
+- **Offline (rarely, you rebuild the pricing math):**
+  `PYTHONPATH=src python scripts/build_pricing_calibration.py` fits/selects the margin
+  surface, sigmas, de-vig and consensus by walk-forward and writes the frozen artifact
+  `config/pricing_calibration_2026.json` (+ `_pmf.csv`). See `CALIBRATION_REPORT.md`.
+  The weekly job never refits — it only loads this artifact.
+- **Weekly runtime (every week):** `scripts/run_week.sh 2026 <WEEK>` refreshes data,
+  captures odds, loads the frozen artifact, prices, validates, and logs. Pricing is
+  deterministic and runs in ~3 ms; identical inputs reproduce identical probabilities.
+
+**Selected pricing math (frozen):** empirical margin PMF (correct key-number pushes,
+e.g. P(push −3)=0.077), constant margin sigma 12.75 / total sigma 13.05, and
+proportional de-vig + equal-mean consensus for all three markets.
+
+**Audit fields on every card row:** `as_of_utc`, `quote_timestamp_utc`,
+`quote_age_minutes`, `bookmakers_used`, `devig_method`, `consensus_method`,
+`pricing_surface_version`, `artifact_sha256`, `code_commit`, `market_fair_probability`,
+`model_probability`, `push_probability`, `readiness_status`, `qb_review_status` (via
+priors), `injury_data_utc`, `data_quality_status`, and `card_status`
+(`PRELIMINARY` / `VALID_LIVE_CARD` / `NO_PRICE`). July cards are `PRELIMINARY`.
+
 ## 0. One-time setup
 ```bash
 cd nfl-predictions-pricing
