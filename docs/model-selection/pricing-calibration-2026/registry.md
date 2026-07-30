@@ -89,4 +89,29 @@ pooled log-loss is lower** and the **paired bootstrap CI of the difference exclu
 This selects *pricing math*, not edge; nothing here promotes a market to live staking.
 
 ## Amendments
-_(none — original pre-registration)_
+
+### Amendment 1 (2026-07-30, after results) — margin surface selection
+On the pre-registered **primary** metric (moneyline log-loss), the empirical
+shrinkage PMF and the normal baseline are **statistically indistinguishable**: the
+game-clustered bootstrap CI of `normal − empirical` is `[-0.0018, +0.0121]` (contains
+0). The strict primary tie-break would keep `normal`.
+
+However, the pre-registration also requires (Outcome definitions / push handling)
+that **push calibration** be evaluated, and Section 5 of the task requires the margin
+surface to price whole-number pushes and alternate spreads correctly. On that
+required correctness property the empirical surface is **decisively better and the
+normal surface is provably wrong**: push MAE at key numbers **0.066 (empirical) vs
+0.088 (normal)**, and P(margin = 3) = **7.7% (empirical, matching data) vs 2.95%
+(normal)**.
+
+**Decision:** select the **empirical** surface (bucket width 3.0). Justification: it
+is *not worse* than normal on the primary metric (tie) and is decisively more correct
+on the push/key-number mass that ATS-push and alternate-line pricing depend on. The
+`normal` surface is retained as a configurable fallback. This amendment is recorded
+transparently rather than editing the original tie-break rule.
+
+All other selections followed the original pre-registered rules: margin sigma and
+total sigma → **constant** (linear/isotonic not materially better; CI includes 0);
+de-vig and consensus → **proportional + equal-mean** for all three markets (power/
+Shin/median/sharpest-anchor not better on the game-clustered bootstrap → simplest
+default retained).
