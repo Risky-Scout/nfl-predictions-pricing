@@ -26,7 +26,7 @@ echo "== [2/6] fetch current-week lines =="
 LINES_CSV="$SEASON_DIR/lines_wk${WEEK}.csv"
 if [ -n "${THE_ODDS_API_KEY:-}" ]; then
   echo "  Odds API keyed. current-odds costs regions*markets = 3 credits per call."
-  $PY scripts/fetch_current_week_lines.py --season "$SEASON" --week "$WEEK" --output "$LINES_CSV" || \
+  $PY scripts/build_week1_2026_lines.py --season "$SEASON" --week "$WEEK" --output "$LINES_CSV" || \
     echo "  (fetch failed; provide $LINES_CSV manually from the template)"
 else
   echo "  No THE_ODDS_API_KEY. Provide $LINES_CSV using examples/games_2026_week1_placeholder.csv as a template."
