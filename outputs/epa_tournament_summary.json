@@ -1,0 +1,12 @@
+{
+  "test_seasons": [
+    2022,
+    2023,
+    2024
+  ],
+  "benchmark": "REAL-CLOSING (de-vigged closing, 2022-2024)",
+  "n_candidates": 5,
+  "n_candidate_markets": 15,
+  "n_promoted": 0,
+  "promoted": []
+}
