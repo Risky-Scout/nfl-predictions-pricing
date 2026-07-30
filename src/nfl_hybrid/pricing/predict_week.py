@@ -80,6 +80,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="config/production_model_spec.json",
         help="Frozen production spec for per-market readiness status.",
     )
+    parser.add_argument(
+        "--pricing-artifact",
+        default="config/pricing_calibration_2026.json",
+        help="Frozen pricing-calibration artifact (empirical margin surface + sigmas).",
+    )
     parser.add_argument("--output", required=True, help="Output betting-card CSV path.")
     return parser
 
@@ -98,11 +103,22 @@ def main() -> None:
     else:
         readiness = {"moneyline": "RETAIN_BASELINE", "ats": "RETAIN_BASELINE", "total": "RETAIN_BASELINE"}
 
+    # load the frozen pricing-calibration artifact (empirical margin surface + fitted
+    # sigmas); fall back to the built-in normal model if it is not present.
+    artifact = None
+    try:
+        from nfl_hybrid.pricing.artifact import load_pricing_artifact
+
+        artifact = load_pricing_artifact(args.pricing_artifact)
+    except FileNotFoundError:
+        print("WARNING: pricing artifact not found; using built-in normal surface.")
+
     card = build_betting_card(
         games,
         readiness_by_market=readiness,
         staking_policy=StakingPolicy(),
         config=CardConfig(),
+        pricing_artifact=artifact,
     )
 
     out = Path(args.output)
