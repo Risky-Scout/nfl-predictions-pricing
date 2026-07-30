@@ -246,6 +246,9 @@ def build_betting_card(
 
     card = pd.concat(per_market, ignore_index=True)
     card = stake_bets(card, policy=policy)
+    from nfl_hybrid.pricing.alt_lines import CALIBRATION_STATEMENT
+
+    card["calibration_statement"] = CALIBRATION_STATEMENT
     return card.sort_values(["week", "game_id", "market"], kind="stable").reset_index(
         drop=True
     )
