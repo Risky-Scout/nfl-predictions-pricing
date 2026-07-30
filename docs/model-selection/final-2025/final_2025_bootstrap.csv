@@ -1,0 +1,4 @@
+market,selected_model_family,selected_model_name,games,mean_log_loss_gain,log_loss_ci_lower,log_loss_ci_upper,mean_brier_gain,brier_ci_lower,brier_ci_upper
+pregame_moneyline,market_baseline,production_market_t10_canonical,285,0.0,0.0,0.0,0.0,0.0,0.0
+pregame_ats,rare_event_market_baseline,ats_push_exact_margin_strength_32,285,0.00019936021555624312,-0.0003368045702647351,0.0007518423954399842,-0.00022866185441811207,-0.0003068166953944902,-0.0001459491337060931
+pregame_total,market_baseline,production_market_t10_canonical,285,0.0,0.0,0.0,0.0,0.0,0.0

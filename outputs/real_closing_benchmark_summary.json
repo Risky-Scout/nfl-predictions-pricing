@@ -1,0 +1,15 @@
+{
+  "dev_games_total": 854,
+  "games_with_closing_benchmark": 834,
+  "coverage_fraction": 0.9766,
+  "median_closing_minutes_to_kickoff": 19.4,
+  "median_closing_books": 15,
+  "by_season": {
+    "2022": 280,
+    "2023": 281,
+    "2024": 273
+  },
+  "mean_ml_home_prob": 0.5521,
+  "mean_cover_home_prob": 0.5001,
+  "mean_over_prob": 0.5001
+}

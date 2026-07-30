@@ -1,0 +1,4 @@
+market,live_weeks,n,cumulative_log_loss_gain,cumulative_brier_gain,live_pick_accuracy,pick_accuracy_ci_lower,pick_accuracy_ci_upper
+ats,1,16,0.0,0.0,0.4375,0.1875,0.6875
+moneyline,1,16,0.0,0.0,0.8125,0.625,1.0
+total,1,16,0.0,0.0,0.75,0.5,0.9375

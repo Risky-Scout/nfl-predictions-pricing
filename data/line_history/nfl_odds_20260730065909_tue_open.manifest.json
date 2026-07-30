@@ -1,0 +1,16 @@
+{
+  "columns": 36,
+  "dataframe_sha256": "1caa96b6acc992a9da682856c73a96fdc444a1bc5610dea08355d121ccae845f",
+  "dataset_name": "line_capture_20260730065909_tue_open",
+  "request_parameters": {
+    "capture_label": "tue_open",
+    "credits_remaining_after": "4291011",
+    "credits_spent": "3"
+  },
+  "retrieved_at_utc": "2026-07-30T06:59:09.945291Z",
+  "rows": 4618,
+  "source_license_note": null,
+  "source_locator": "sports/americanfootball_nfl/odds (current)",
+  "source_name": "the_odds_api",
+  "source_version": null
+}

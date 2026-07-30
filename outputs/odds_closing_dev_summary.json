@@ -1,0 +1,24 @@
+{
+  "seasons": [
+    2022,
+    2023,
+    2024
+  ],
+  "horizon_minutes": [
+    15
+  ],
+  "requested_snapshots": 406,
+  "estimated_credits": 12180,
+  "credits_remaining_before": "4306057",
+  "credits_remaining_after": "4293888",
+  "credits_used_delta": 12169,
+  "raw_quote_rows": 483406,
+  "matched_quote_rows": 472376,
+  "match_status_counts": {
+    "matched": 472376,
+    "kickoff_outside_tolerance": 10846,
+    "team_pair_not_found": 184
+  },
+  "matched_dev_games": 834,
+  "dev_games_total": 854
+}

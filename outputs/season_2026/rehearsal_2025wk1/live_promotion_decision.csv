@@ -1,0 +1,4 @@
+market,live_decision,reason,live_weeks,cumulative_log_loss_gain,pick_accuracy_ci_lower
+ats,HOLD_PROVISIONAL_STAKE_ZERO,weeks<8;log_loss_gain<=0;pick_acc_ci_lower<=0.524,1,0.0,0.1875
+moneyline,HOLD_PROVISIONAL_STAKE_ZERO,weeks<8;log_loss_gain<=0,1,0.0,0.625
+total,HOLD_PROVISIONAL_STAKE_ZERO,weeks<8;log_loss_gain<=0;pick_acc_ci_lower<=0.524,1,0.0,0.5

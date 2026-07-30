@@ -1,0 +1,8 @@
+{
+  "maximum_quote_age_minutes": 15.0,
+  "minimum_conservative_edge_probability": 0.0,
+  "minimum_conservative_ev_per_1": 0.0,
+  "probability_tolerance": 1e-09,
+  "require_quote_age": false,
+  "require_uncertainty_bounds": true
+}

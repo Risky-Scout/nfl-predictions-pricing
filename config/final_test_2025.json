@@ -1,0 +1,21 @@
+{
+  "bootstrap_repetitions": 2000,
+  "bootstrap_seed": 20260329,
+  "calibration_changes_prohibited": true,
+  "expected_games": 285,
+  "feature_changes_prohibited": true,
+  "final_test_season": 2025,
+  "maximum_absolute_rare_calibration_error": 0.015,
+  "probability_clip": 1e-09,
+  "require_full_game_coverage": true,
+  "require_nonworse_brier_for_challenger": true,
+  "require_nonworse_log_loss_for_challenger": true,
+  "retuning_prohibited": true,
+  "training_and_selection_seasons": [
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ]
+}

@@ -97,6 +97,39 @@ def match_odds_to_games(
     return out
 
 
+_MATCHED_STATUSES = ("matched", "matched_nearest_ambiguous")
+
+
+def require_matched_events(
+    matched_odds: pd.DataFrame,
+    *,
+    allowed_statuses: tuple[str, ...] = _MATCHED_STATUSES,
+) -> pd.DataFrame:
+    """Raise if any priced event failed to match a canonical game.
+
+    Before purchased quotes are swapped in as a benchmark, a silent
+    ``game_id = NA`` would quietly drop games and bias the comparison. This
+    validator fails loudly instead, listing the offending provider event ids and
+    their statuses.
+    """
+
+    if "game_match_status" not in matched_odds.columns:
+        raise ValueError("Input has no game_match_status; run match_odds_to_games first.")
+    bad = matched_odds[~matched_odds["game_match_status"].isin(allowed_statuses)]
+    if len(bad):
+        offenders = (
+            bad[["provider_event_id", "home_team_id", "away_team_id", "game_match_status"]]
+            .drop_duplicates()
+            .head(20)
+            .to_dict("records")
+        )
+        raise ValueError(
+            f"{bad['provider_event_id'].nunique()} event(s) did not match a "
+            f"canonical game: {offenders}"
+        )
+    return matched_odds
+
+
 def add_market_consensus(odds: pd.DataFrame) -> pd.DataFrame:
     """Add consensus line/probability without deleting bookmaker observations."""
     out = odds.copy()
