@@ -95,6 +95,42 @@ nfl-hybrid-priors qb-mixture   --history data/templates/quarterback_history.csv 
 The included prior hyperparameters are provisional. Actual 2026 priors must be
 frozen only after the complete 2020–2025 walk-forward replay.
 
+## 2026 Season Operations
+
+The 2026 EPA candidate tournament promoted **no** market
+(`docs/model-selection/candidates-2026/results.md`), so every market is
+`RETAIN_BASELINE` and the weekly card **stakes zero**. The weekly loop runs anyway
+as the live search instrument, accumulating an immutable out-of-sample record.
+
+```bash
+export PYTHONPATH="$PWD/src"
+export SPREADSPOKE_CSV_PATH="$PWD/data/spreadspoke_enhanced.csv"
+export THE_ODDS_API_KEY="..."       # optional; enables live current-week lines
+
+# one command per week (pre-kickoff):
+scripts/run_week.sh 2026 1
+```
+
+`run_week.sh` performs: (1) incremental data refresh; (2) fetch current-week lines
+via the Odds API current-odds endpoint (**3 credits/call**) or a lines CSV
+template if unkeyed; (3) generate the betting card — PROVISIONAL markets print
+probabilities but stake **zero**; (4) log an immutable pre-kickoff record to
+`outputs/season_2026/predictions_wkNN.csv` (UTC-timestamped, never overwritten);
+(5) after games resolve, score vs the market and update the drift monitor;
+(6) apply the **live-promotion gate**.
+
+**Live-promotion gate (fixed):** a PROVISIONAL market may stake (1/8 Kelly, 5%
+per-bet / 15% weekly caps) only after **≥ 8 live weeks** with **cumulative
+log-loss gain > 0** *and* **live pick-accuracy 95% CI lower bound > 0.524**. A
+drift alarm demotes immediately. Backtests never grant live staking; only the
+live record can.
+
+Rehearse the whole loop on 2025 week-1 real data (no selection is made from 2025):
+
+```bash
+.venv/bin/python scripts/dryrun_week_loop.py
+```
+
 ## Documentation
 
 - `docs/PHASE_A_SOURCE_SPEC.md`
