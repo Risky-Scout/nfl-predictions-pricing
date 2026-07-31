@@ -62,9 +62,14 @@ def load_shadow():
     import joblib
     if not MODEL_PATH.exists():
         return None, None, None
+    from nfl_hybrid.features.augmented_matrix import FROZEN_FEATURES
+
     model = joblib.load(MODEL_PATH)
     features = json.loads(FEATURES_JSON.read_text())
     meta = json.loads(META_PATH.read_text())
+    # the artifact must expose exactly the single authoritative 19-feature contract
+    if features != FROZEN_FEATURES:
+        raise ValueError("shadow artifact feature list does not match FROZEN_FEATURES")
     return model, features, meta
 
 

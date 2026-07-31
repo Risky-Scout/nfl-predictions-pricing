@@ -140,6 +140,157 @@ def _outcome_columns(games: pd.DataFrame) -> pd.DataFrame:
     return g
 
 
+# Exact frozen 19-feature contract (order matters; must match the shadow artifact).
+FROZEN_FEATURES = [
+    "home_spread", "total_line",
+    "epa_matchup_home_last4_mean", "epa_matchup_away_last4_mean", "epa_net_edge_last4_mean",
+    "success_rate_net_last4_mean", "dropback_epa_net_last4_mean", "rush_epa_net_last4_mean",
+    "epa_matchup_home_season_mean", "epa_matchup_away_season_mean", "epa_net_edge_season_mean",
+    "success_rate_net_season_mean", "dropback_epa_net_season_mean", "rush_epa_net_season_mean",
+    "home_rest_days", "away_rest_days", "rest_diff", "home_short_week", "away_short_week",
+]
+_ID_COLS = {"game_id", "team_id", "opponent_id", "season", "week"}
+
+
+def build_live_augmented_features(
+    historical_games: pd.DataFrame,
+    target_games: pd.DataFrame,
+    play_by_play: pd.DataFrame,
+    *,
+    as_of_utc: str,
+    rolling_config: PregameRollingConfig | None = None,
+) -> tuple[pd.DataFrame, dict]:
+    """Assemble the frozen 19 pregame features for upcoming ``target_games``.
+
+    Leakage-safe by construction: each upcoming game is inserted into its teams'
+    rolling sequences as a metrics-NaN placeholder, and the shared shift-then-roll
+    builder uses only *prior* completed games. The target's own (unknown) result and
+    play-by-play never enter its features. Returns (features, status_report) with one
+    row per target ``game_id`` and columns in exactly ``FROZEN_FEATURES`` order.
+    """
+    import hashlib
+    import json
+
+    cfg = rolling_config or PregameRollingConfig(windows=(4,))
+    now = pd.Timestamp(as_of_utc)
+    if now.tzinfo is None:
+        now = now.tz_localize("UTC")
+
+    tg = target_games.copy()
+    tg["scheduled_kickoff_utc"] = pd.to_datetime(tg["scheduled_kickoff_utc"], utc=True, errors="coerce")
+    if tg["game_id"].duplicated().any():
+        raise ValueError("duplicate target game_id rows")
+    if (tg["scheduled_kickoff_utc"] <= now).any():
+        raise ValueError("target game kickoff is at or before as_of_utc")
+
+    # A game is ELIGIBLE only if it is FINAL before as_of: a final score exists AND its
+    # kickoff is before now. This excludes an in-progress early game (kicked off, not final).
+    hg_all = historical_games.copy()
+    hg_all["scheduled_kickoff_utc"] = pd.to_datetime(hg_all["scheduled_kickoff_utc"], utc=True, errors="coerce")
+    home_score = pd.to_numeric(hg_all.get("home_score"), errors="coerce")
+    away_score = pd.to_numeric(hg_all.get("away_score"), errors="coerce")
+    is_final = home_score.notna() & away_score.notna()
+    kicked_off = hg_all["scheduled_kickoff_utc"] <= now
+    excluded_nonfinal = int((kicked_off & ~is_final).sum())  # in-progress games excluded
+    hg = hg_all[kicked_off & is_final].copy()
+    eligible_ids = set(hg["game_id"].astype(str))
+
+    # Play-by-play: only from eligible (final-before-as_of) games; additionally enforce a
+    # per-play timestamp cutoff when a play/game date column is available.
+    pbp = play_by_play.copy()
+    pbp_ids = pbp["game_id"].astype(str)
+    excluded_post_asof_plays = int((~pbp_ids.isin(eligible_ids)).sum())
+    pbp = pbp[pbp_ids.isin(eligible_ids)].copy()
+    ts_col = next((c for c in ("time_of_day", "start_time", "game_date") if c in pbp.columns), None)
+    max_play_ts = None
+    if ts_col is not None:
+        play_ts = pd.to_datetime(pbp[ts_col], utc=True, errors="coerce")
+        after = play_ts > now
+        excluded_post_asof_plays += int(after.sum())
+        pbp = pbp[~after]
+        max_play_ts = str(pd.to_datetime(pbp[ts_col], utc=True, errors="coerce").max()) if len(pbp) else None
+
+    team_game = aggregate_advanced_team_game(pbp)
+    metric_cols = [c for c in team_game.columns if c not in _ID_COLS]
+
+    # placeholder team-game rows for each target (identifiers only; metrics NaN)
+    has_home = "home_team" in team_game.columns
+    has_away = "away_team" in team_game.columns
+    placeholders = []
+    for _, r in tg.iterrows():
+        for team, opp in ((r["home_team_id"], r["away_team_id"]), (r["away_team_id"], r["home_team_id"])):
+            row = {c: np.nan for c in metric_cols}
+            row.update({"game_id": str(r["game_id"]), "team_id": team, "opponent_id": opp,
+                        "season": int(r["season"]), "week": r["week"]})
+            if has_home:
+                row["home_team"] = r["home_team_id"]
+            if has_away:
+                row["away_team"] = r["away_team_id"]
+            placeholders.append(row)
+    team_game_all = pd.concat([team_game, pd.DataFrame(placeholders)], ignore_index=True)
+
+    # combined schedule for ordering + rest features
+    keep = ["game_id", "season", "week", "home_team_id", "away_team_id", "scheduled_kickoff_utc"]
+    all_games = pd.concat([hg[keep], tg[keep]], ignore_index=True)
+    all_games["game_id"] = all_games["game_id"].astype(str)
+    team_game_all["game_id"] = team_game_all["game_id"].astype(str)
+
+    team_pregame = build_team_pregame_features(team_game_all, all_games, config=cfg)
+    pivot = build_game_pregame_matrix(tg.assign(game_id=tg["game_id"].astype(str)), team_pregame)
+
+    diffs, epa_cols = _diff_features(pivot)
+    rest, rest_cols = _rest_features(all_games)
+    rest = rest.reset_index(drop=True)
+    rest["game_id"] = all_games["game_id"].to_numpy()
+
+    # pivot carries game_id; diffs align to pivot rows by position. Drop any market/rest
+    # columns the pivot may already carry so the authoritative merges do not collide.
+    combined = pd.concat([pivot.reset_index(drop=True), diffs.reset_index(drop=True)], axis=1)
+    combined["game_id"] = combined["game_id"].astype(str)
+    collide = [c for c in (list(MARKET_FEATURES) + rest_cols) if c in combined.columns]
+    combined = combined.drop(columns=collide)
+
+    out = combined.merge(rest[["game_id"] + rest_cols], on="game_id", how="left", validate="one_to_one")
+    lines = tg.assign(game_id=tg["game_id"].astype(str))[["game_id", "home_spread", "total_line"]]
+    out = out.merge(lines, on="game_id", how="left", validate="one_to_one")
+
+    # exactly one and only one feature row per target game (hard assertion, no dedup)
+    out = out.set_index("game_id").reindex(tg["game_id"].astype(str)).reset_index()
+    counts = out["game_id"].value_counts()
+    if len(out) != len(tg) or (counts != 1).any():
+        raise ValueError("live feature assembly did not produce exactly one row per target game")
+    missing_columns = [c for c in FROZEN_FEATURES if c not in out.columns]  # captured BEFORE fill
+    for col in missing_columns:
+        out[col] = np.nan
+    features = out[["game_id"] + FROZEN_FEATURES].copy()
+
+    nan_by_feature = {c: int(features[c].isna().sum()) for c in FROZEN_FEATURES}
+    # deterministic hash: sort by game_id; include ids, ordered columns, dtypes, values, missingness
+    fsorted = features.sort_values("game_id").reset_index(drop=True)
+    payload = {
+        "game_ids": fsorted["game_id"].astype(str).tolist(),
+        "columns": FROZEN_FEATURES,
+        "dtypes": [str(fsorted[c].dtype) for c in FROZEN_FEATURES],
+        "values": [[None if pd.isna(v) else round(float(v), 10) for v in fsorted[c]] for c in FROZEN_FEATURES],
+        "missing": [[bool(m) for m in fsorted[c].isna()] for c in FROZEN_FEATURES],
+    }
+    snap_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    status = {
+        "as_of_utc": str(now),
+        "target_game_count": int(len(tg)),
+        "feature_row_count": int(len(features)),
+        "required_columns": FROZEN_FEATURES,
+        "missing_columns": missing_columns,
+        "nan_count_by_feature": nan_by_feature,
+        "max_eligible_completed_kickoff": str(hg["scheduled_kickoff_utc"].max()) if len(hg) else None,
+        "max_eligible_play_timestamp": max_play_ts,
+        "excluded_nonfinal_game_count": excluded_nonfinal,
+        "excluded_post_asof_play_count": excluded_post_asof_plays,
+        "feature_snapshot_hash": snap_hash,
+    }
+    return features, status
+
+
 def build_augmented_feature_matrix(
     games: pd.DataFrame,
     play_by_play: pd.DataFrame,

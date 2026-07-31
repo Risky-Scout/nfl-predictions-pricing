@@ -1,7 +1,7 @@
 {
   "artifact": "shadow_fundamental_2026.v1",
   "calibration_season": 2024,
-  "code_commit": "6c944b543d148fc4ba6512bf3616ee233d599c83",
+  "code_commit": "61ae932e799cccb6d371c0294d3c4d0e5499eed6",
   "features": [
     "home_spread",
     "total_line",
