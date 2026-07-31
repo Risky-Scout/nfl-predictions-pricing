@@ -58,14 +58,34 @@ def validate_starter_sums(starters: pd.DataFrame, *, atol: float = 1e-6) -> None
 
 
 def validate_probability_identity(card: pd.DataFrame, *, atol: float = 1e-6) -> None:
-    """cover + push + fail must equal 1 for ATS rows that carry the components."""
-    ats = card[card["market"] == "ats"]
-    if {"calibrated_probability", "push_probability"}.issubset(ats.columns) and len(ats):
-        total = ats["calibrated_probability"] + ats["push_probability"] + (
-            1.0 - ats["calibrated_probability"] - ats["push_probability"]
-        )
-        if not np.allclose(total.to_numpy(float), 1.0, atol=atol):
-            raise WeeklyRunError("probability identity failed (cover+push+fail != 1)")
+    """Genuine identity check on the three INDEPENDENT source components.
+
+    win + push + complement must equal 1, where ``complement`` is an *independent*
+    surface output (``independent_complement_probability``), NOT ``1 - win - push``.
+    A derived complement could never detect an incoherent source distribution; this
+    can. Also verifies every component lies in [0, 1] and half-point ATS/total lines
+    carry zero push.
+    """
+    for market in ("ats", "total"):
+        sub = card[card["market"] == market]
+        if not len(sub):
+            continue
+        need = {"source_win_probability", "push_probability", "independent_complement_probability"}
+        if not need.issubset(sub.columns):
+            raise WeeklyRunError(f"{market}: missing independent components for identity check")
+        win = sub["source_win_probability"].to_numpy(float)
+        push = sub["push_probability"].to_numpy(float)
+        comp = sub["independent_complement_probability"].to_numpy(float)
+        for name, v in (("win", win), ("push", push), ("complement", comp)):
+            if not np.all((v >= -atol) & (v <= 1 + atol)):
+                raise WeeklyRunError(f"{market}: {name} probability outside [0,1]")
+        if not np.allclose(win + push + comp, 1.0, atol=1e-4):
+            raise WeeklyRunError(f"{market}: independent identity failed (win+push+complement != 1)")
+        # half-point lines must have zero push
+        line = sub["closing_or_reference_line"].to_numpy(float) if market == "ats" else sub["total_line"].to_numpy(float)
+        half = np.isfinite(line) & ~np.isclose(line, np.round(line))
+        if half.any() and not np.allclose(push[half], 0.0, atol=1e-9):
+            raise WeeklyRunError(f"{market}: half-point line has nonzero push")
 
 
 def assemble_audit(

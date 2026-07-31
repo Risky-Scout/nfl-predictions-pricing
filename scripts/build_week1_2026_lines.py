@@ -24,6 +24,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--week", default="1")
+    ap.add_argument("--as-of-utc", default=None, help="Freshness reference / replay timestamp.")
     ap.add_argument("--output", default=None)
     ap.add_argument("--no-fetch", action="store_true", help="Skip the paid API call (all UNPRICED).")
     args = ap.parse_args()
@@ -38,6 +39,12 @@ def main() -> None:
     priced = pd.DataFrame()
     credits = 0
     if not args.no_fetch:
+        from nfl_hybrid.data.provenance import utc_now_iso
+        from nfl_hybrid.pricing.artifact import load_pricing_artifact
+        from nfl_hybrid.pricing.market_pricing import price_game_markets
+
+        artifact = load_pricing_artifact()  # methods come from the frozen artifact
+        as_of = args.as_of_utc or utc_now_iso()
         result = TheOddsAPIAdapter(OddsAPIConfig()).current_odds()
         credits = int(result.metadata.get("x-requests-last") or 0)
         odds = result.data
@@ -46,26 +53,35 @@ def main() -> None:
         odds["provider_event_id"] = odds["provider_event_id"].astype(str)
         matched = match_odds_to_games(odds, wk1)
         matched = matched[matched["game_match_status"].isin(["matched", "matched_nearest_ambiguous"])].copy()
-        if len(matched):
-            matched = devig_two_way_groups(matched)
 
-            def cons(market, side, col):
-                s = matched[(matched["market_type"] == market) & (matched["outcome_side"] == side)]
-                return s.groupby("game_id")[col].median()
-
-            from nfl_hybrid.data.provenance import utc_now_iso
-            now = pd.Timestamp(utc_now_iso())
-            qts = matched.groupby("game_id")["bookmaker_last_update_utc"].max()
-            priced = pd.DataFrame({
-                "home_spread": cons("spread", "home", "line_value"),
-                "total_line": cons("total", "over", "line_value"),
-                "market_ml_home_probability": cons("moneyline", "home", "devig_probability"),
-                "market_cover_probability": cons("spread", "home", "devig_probability"),
-                "market_over_probability": cons("total", "over", "devig_probability"),
-                "n_books": matched.groupby("game_id")["bookmaker_id"].nunique(),
-                "quote_timestamp_utc": qts,
-                "quote_age_minutes": (now - pd.to_datetime(qts, utc=True)).dt.total_seconds() / 60.0,
+        rows_priced = []
+        for gid, g in matched.groupby("game_id"):
+            prices = price_game_markets(g, as_of_utc=as_of, artifact=artifact)
+            ml, sp, tot = prices["moneyline"], prices["spread"], prices["total"]
+            # signed reference lines at the selected reference point (deterministic)
+            def signed_line(mkt, side):
+                p = prices[mkt].reference_point
+                if p is None:
+                    return np.nan
+                s = g[(g["market_type"] == mkt) & (g["outcome_side"] == side)
+                      & np.isclose(pd.to_numeric(g["line_value"], errors="coerce").abs(), p, atol=1e-6)]
+                return float(s["line_value"].median()) if len(s) else np.nan
+            rows_priced.append({
+                "game_id": str(gid),
+                "home_spread": signed_line("spread", "home"),
+                "total_line": signed_line("total", "over"),
+                "market_ml_home_probability": ml.fair_probability,
+                "market_cover_probability": sp.fair_probability,
+                "market_over_probability": tot.fair_probability,
+                "n_books": sp.audit.get("books_retained", 0),
+                "books_rejected_stale": sp.audit.get("books_rejected_stale", 0),
+                "quote_age_minutes": sp.audit.get("median_quote_age_min"),
+                "consensus_dispersion": sp.audit.get("consensus_dispersion"),
+                "market_status": sp.status,
+                "devig_method": sp.audit.get("devig_method"),
+                "consensus_method": sp.audit.get("consensus_method"),
             })
+        priced = pd.DataFrame(rows_priced).set_index("game_id") if rows_priced else pd.DataFrame()
 
     rows = []
     for _, g in wk1.iterrows():
@@ -83,12 +99,17 @@ def main() -> None:
                              "market_over_probability": float(p.get("market_over_probability", np.nan)),
                              "market_source": "LIVE-CURRENT", "status": "PRICED",
                              "n_books": int(p["n_books"]),
-                             "quote_timestamp_utc": p.get("quote_timestamp_utc"),
-                             "quote_age_minutes": float(p.get("quote_age_minutes", np.nan))})
+                             "books_rejected_stale": int(p.get("books_rejected_stale", 0)),
+                             "quote_age_minutes": float(p.get("quote_age_minutes", np.nan)) if pd.notna(p.get("quote_age_minutes")) else np.nan,
+                             "consensus_dispersion": float(p.get("consensus_dispersion", np.nan)),
+                             "market_status": p.get("market_status"),
+                             "devig_method": p.get("devig_method"),
+                             "consensus_method": p.get("consensus_method")})
                 continue
         rows.append({**base, "home_spread": np.nan, "total_line": np.nan,
                      "market_source": "UNPRICED-AWAITING-LINES", "status": "UNPRICED-AWAITING-LINES", "n_books": 0,
-                     "quote_timestamp_utc": None, "quote_age_minutes": np.nan})
+                     "books_rejected_stale": 0, "quote_age_minutes": np.nan, "consensus_dispersion": np.nan,
+                     "market_status": "NO_PRICE", "devig_method": None, "consensus_method": None})
 
     frame = pd.DataFrame(rows)
     frame.to_csv(output, index=False)

@@ -1,0 +1,33 @@
+{
+  "artifact": "shadow_fundamental_2026.v1",
+  "calibration_season": 2024,
+  "code_commit": "61ae932e799cccb6d371c0294d3c4d0e5499eed6",
+  "features": [
+    "home_spread",
+    "total_line",
+    "epa_matchup_home_last4_mean",
+    "epa_matchup_away_last4_mean",
+    "epa_net_edge_last4_mean",
+    "success_rate_net_last4_mean",
+    "dropback_epa_net_last4_mean",
+    "rush_epa_net_last4_mean",
+    "epa_matchup_home_season_mean",
+    "epa_matchup_away_season_mean",
+    "epa_net_edge_season_mean",
+    "success_rate_net_season_mean",
+    "dropback_epa_net_season_mean",
+    "rush_epa_net_season_mean",
+    "home_rest_days",
+    "away_rest_days",
+    "rest_diff",
+    "home_short_week",
+    "away_short_week"
+  ],
+  "holdout_excluded": 2025,
+  "model_sha256": "69848cde4713700d44e9f95e8bec9016f4029fc17062c6721362736264211d1f",
+  "n_features": 19,
+  "random_seed": 42,
+  "spec": "JointScoreModel + EPA (frozen C4 challenger)",
+  "train_seasons": "2020-2023",
+  "training_cutoff_season": 2024
+}

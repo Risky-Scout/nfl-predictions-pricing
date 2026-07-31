@@ -90,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preliminary", action="store_true", help="Label the card PRELIMINARY.")
     parser.add_argument("--injury-data-utc", default=None, help="Timestamp of the injury/roster refresh.")
     parser.add_argument("--require-priced", action="store_true", help="Fail if no game has posted lines.")
+    parser.add_argument("--canonical-games", default=None, help="Canonical games parquet (schedule + history) for live fundamental features.")
+    parser.add_argument("--play-by-play", default=None, help="Play-by-play parquet for live fundamental features.")
+    parser.add_argument("--require-full-card", action="store_true", help="Fail if a fundamental probability cannot be produced.")
     return parser
 
 
@@ -144,9 +147,97 @@ def main() -> None:
         injury_data_utc=args.injury_data_utc, preliminary=args.preliminary,
     )
 
+    # fundamental SHADOW columns (NULL when its EPA inputs are not in the live path;
+    # never the market probability). Production stays the market baseline.
+    from nfl_hybrid.pricing.fundamental_shadow import attach_shadow_columns, load_shadow, score_shadow
+
+    try:
+        _, _, shadow_meta = load_shadow()
+    except Exception:
+        shadow_meta = None
+    fundamental = None
+    fstatus = "NO_PREGAME_EPA_STATE_IN_LIVE_PATH"
+    feature_snapshot_hash = None
+    live_features = None
+    finality_summary = {}
+    if args.canonical_games and args.play_by_play and shadow_meta is not None:
+        from nfl_hybrid.features.augmented_matrix import build_live_augmented_features
+
+        canonical = pd.read_parquet(args.canonical_games)
+        pbp = pd.read_parquet(args.play_by_play)
+        # build target games from the schedule for (season, week), attaching current lines
+        sched = canonical[
+            (pd.to_numeric(canonical["season"], errors="coerce") == args.season)
+            & (canonical["week"].astype(str) == str(args.week))
+        ].copy()
+        line_map = priceable.set_index(priceable["game_id"].astype(str))
+        sched["game_id"] = sched["game_id"].astype(str)
+        sched = sched[sched["game_id"].isin(line_map.index)]
+        sched["home_spread"] = sched["game_id"].map(pd.to_numeric(line_map["home_spread"], errors="coerce"))
+        sched["total_line"] = sched["game_id"].map(pd.to_numeric(line_map["total_line"], errors="coerce"))
+        feats, fstat = build_live_augmented_features(canonical, sched, pbp, as_of_utc=as_of)
+        fundamental = score_shadow(feats)
+        fstatus = "AVAILABLE" if fundamental is not None else "SCORING_FAILED"
+        feature_snapshot_hash = fstat.get("feature_snapshot_hash")
+        live_features = feats
+        finality_summary = {
+            k: fstat.get(k) for k in (
+                "eligible_final_game_count", "excluded_in_progress_game_count",
+                "excluded_unknown_finality_game_count", "excluded_post_asof_game_count",
+                "excluded_post_asof_play_count", "maximum_eligible_completion_timestamp",
+                "finality_source_counts", "finality_exclusion_reason_counts",
+            )
+        }
+    if args.require_full_card and fundamental is None:
+        from nfl_hybrid.pricing.weekly import WeeklyRunError
+        raise WeeklyRunError("full-card mode requires a fundamental probability, which is unavailable")
+    card = attach_shadow_columns(
+        card, fundamental, status=fstatus,
+        artifact_version=(shadow_meta or {}).get("artifact"),
+        features=live_features, feature_snapshot_hash=feature_snapshot_hash,
+    )
+
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     card.to_csv(out, index=False)
+
+    # immutable run manifest for replay/audit
+    import hashlib as _hashlib
+    import json as _json
+    import subprocess as _sp
+
+    try:
+        runtime_head = _sp.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        runtime_head = "unknown"
+    manifest = {
+        "season": args.season, "week": str(args.week), "as_of_utc": as_of,
+        "horizon": "preliminary" if args.preliminary else "live",
+        # the CURRENT repo HEAD, distinct from the artifacts' training commits
+        "runtime_code_commit": runtime_head,
+        "calibration_artifact_training_commit": getattr(artifact, "code_commit", "unknown"),
+        "calibration_artifact_hash": getattr(artifact, "artifact_sha256", "none"),
+        "fundamental_artifact": (shadow_meta or {}).get("artifact", "NO_FROZEN_FUNDAMENTAL_ARTIFACT"),
+        "fundamental_artifact_training_commit": (shadow_meta or {}).get("code_commit", "none"),
+        "fundamental_artifact_hash": (shadow_meta or {}).get("model_sha256", "none"),
+        "fundamental_input_status": fstatus,
+        "feature_snapshot_hash": feature_snapshot_hash or "NONE",
+        "finality_summary": finality_summary,
+        "finality_decision_hash": _hashlib.sha256(
+            _json.dumps(finality_summary, sort_keys=True, default=str).encode()
+        ).hexdigest() if finality_summary else "NONE",
+        "fundamental_non_null_rows": int(card["fundamental_probability"].notna().sum()) if "fundamental_probability" in card else 0,
+        "injury_data_utc": args.injury_data_utc or "MISSING",
+        "games": int(priceable["game_id"].nunique()),
+        "card_rows": int(len(card)),
+        "card_status_counts": card["card_status"].value_counts().to_dict() if "card_status" in card else {},
+        "market_status_counts": (games["market_status"].value_counts().to_dict() if "market_status" in games else {}),
+        "fundamental_input_status_counts": card["fundamental_input_status"].value_counts().to_dict() if "fundamental_input_status" in card else {},
+        "production_source_counts": card["production_source"].value_counts().to_dict() if "production_source" in card else {},
+        "production_source": "MARKET_BASELINE",
+        "card_sha256": _hashlib.sha256(out.read_bytes()).hexdigest(),
+    }
+    (out.parent / f"run_manifest_wk{args.week}.json").write_text(_json.dumps(manifest, indent=2, sort_keys=True, default=str))
 
     bets = int(card["should_bet"].sum())
     n_no_price = int((card["card_status"] == "NO_PRICE").sum()) if "card_status" in card else 0

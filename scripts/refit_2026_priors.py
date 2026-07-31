@@ -15,6 +15,7 @@ from nfl_hybrid.priors.coach import HierarchicalCoachPrior
 from nfl_hybrid.priors.quarterback import QuarterbackPriorBuilder, starter_mixture
 from nfl_hybrid.priors.roster import RosterAdjustmentModel
 from nfl_hybrid.priors.starter_overrides import (
+    apply_availability_exclusions,
     apply_overrides,
     flag_review,
     league_centered_fallback,
@@ -31,6 +32,7 @@ def main() -> None:
     ap.add_argument("--season", type=int, default=2026)
     ap.add_argument("--as-of-utc", default="2026-08-01T00:00:00Z")
     ap.add_argument("--overrides", default="data/templates/starter_overrides.csv")
+    ap.add_argument("--injury-file", default=None, help="Current injury/availability CSV (optional).")
     args = ap.parse_args()
     SEASON, ASOF = args.season, args.as_of_utc
 
@@ -71,7 +73,9 @@ def main() -> None:
     proj_all = starters[starters["season"] == SEASON].copy()
     overrides = load_overrides(args.overrides)
     proj_applied = apply_overrides(proj_all, overrides, as_of_utc=ASOF)
-    proj_applied = flag_review(proj_applied, availability=None)
+    availability = pd.read_csv(args.injury_file) if args.injury_file else None
+    proj_applied = apply_availability_exclusions(proj_applied, availability)
+    proj_applied = flag_review(proj_applied, availability=availability)
 
     # never drop a candidate for lacking a prior: add a league-centered fallback
     missing = sorted(set(proj_applied["player_id"]) - set(players_unique["player_id"]))

@@ -51,3 +51,6 @@ logs/
 *odds_api_response*
 *the_odds_api_export*
 data/workbook_games_1989_2019.csv
+
+# approved fundamental shadow artifact (small, no secrets) — narrow exception
+!config/shadow_fundamental_2026/jointscore_epa.joblib
