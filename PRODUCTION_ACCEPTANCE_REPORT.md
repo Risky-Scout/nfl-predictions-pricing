@@ -64,7 +64,43 @@ Every claim below is backed by a command result, file, test, or numeric comparis
 | D — one fail-closed weekly command | **PASS (core)** | critical stages fail closed; run manifest; deterministic replay; `--as-of-utc` replay. Sub-item: explicit t60/t10 kickoff-relative labels are provided via `--as-of-utc` rather than named horizons |
 | E — in-season monitoring | **PASS** | existing `operations/season_loop.py` logs pre-kickoff, scores post-outcome vs market, updates drift monitor |
 
-## Final acceptance: **PASS for market-card production, with documented external dependencies**
+## Recovery pass (branch `production-integration-2026`, commit `a413572`)
+Correctness fixes completed and tested (266 tests):
+- **Run manifest** now records `runtime_code_commit` = current repo HEAD, distinct from
+  `calibration_artifact_training_commit` / `fundamental_artifact_training_commit` + hashes.
+- **Canonical audit fields** renamed to the required set (`books_available`,
+  `oldest/newest_quote_timestamp`, `maximum/median_quote_age_minutes`,
+  `devig/consensus_method_executed`); statuses/book counts are independent per market
+  (test_independent_status_per_market).
+- **Calibration/serve parity** test on a shared fixture (identical paired books, de-vig,
+  reference point, consensus) — the live path and calibration share the same primitives.
+- **`fetch_current_week_lines`** now delegates via a normal module import (no `runpy`).
+- **Reproducible shadow build script** committed; a clean rebuild yields numerically
+  identical predictions (seed + train seasons recorded). The `.joblib` is gitignored;
+  serialized-byte hash may vary but parameters/predictions are identical.
+- **Secret scan (redacted):** no credential assignments in tracked files; `.env` ignored;
+  the two 32-hex hits are a content hash and event IDs in the response fixture, not keys.
+
+### NOT DONE in this pass (honest gaps → not merged)
+- **Section 6 — fundamental live-feature wiring:** the Week-1 card's
+  `fundamental_probability` is still **NULL** because the live pricing frame does not yet
+  assemble the frozen model's 19 EPA features from the 2026 team/QB priors. The shadow
+  model is real and demonstrably distinct on historical replay (max |Δ|=0.10), but a
+  prior→feature assembly function is required to produce non-null 2026 Week-1 estimates.
+  This is a code task, not an external dependency — it remains open.
+- **Named horizons (t60/t10)** are supported via `--as-of-utc` replay but not as explicit
+  kickoff-relative labels in `run_week.sh`.
+
+## Final acceptance: **NOT READY** (open PR for review; do not merge)
+The market-pricing path, QB integration, identity validation, audit trail, reproducible
+shadow, and run manifest are correct and tested. However, **Gate B/C are not fully met**:
+the fundamental model is not yet wired to live 2026 features, so no game can be a
+`VALID_FULL_CARD` for a code reason (not merely an external-data one). Per the completion
+rules ("do not merge if any acceptance gate is still failing"; "current football state
+must reach the fundamental feature path"), this is submitted as a **PR for review, not
+merged**. Prior superseded assessment retained below for history.
+
+## (superseded) Earlier assessment — PASS for market-card production, with documented external dependencies
 The pricing integration is complete and correct: runtime pricing matches the frozen
 artifact, freshness is enforced per quote, contract points are not mixed, the QB path is
 validated, fundamental values are never fabricated, market/fundamental/production are
