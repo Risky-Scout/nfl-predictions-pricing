@@ -90,6 +90,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preliminary", action="store_true", help="Label the card PRELIMINARY.")
     parser.add_argument("--injury-data-utc", default=None, help="Timestamp of the injury/roster refresh.")
     parser.add_argument("--require-priced", action="store_true", help="Fail if no game has posted lines.")
+    parser.add_argument("--canonical-games", default=None, help="Canonical games parquet (schedule + history) for live fundamental features.")
+    parser.add_argument("--play-by-play", default=None, help="Play-by-play parquet for live fundamental features.")
+    parser.add_argument("--require-full-card", action="store_true", help="Fail if a fundamental probability cannot be produced.")
     return parser
 
 
@@ -148,12 +151,41 @@ def main() -> None:
     # never the market probability). Production stays the market baseline.
     from nfl_hybrid.pricing.fundamental_shadow import attach_shadow_columns, load_shadow, score_shadow
 
-    _, _, shadow_meta = load_shadow()
-    fundamental = score_shadow(priceable)  # None unless EPA features are present
-    fstatus = "AVAILABLE" if fundamental is not None else "NO_PREGAME_EPA_STATE_IN_LIVE_PATH"
+    try:
+        _, _, shadow_meta = load_shadow()
+    except Exception:
+        shadow_meta = None
+    fundamental = None
+    fstatus = "NO_PREGAME_EPA_STATE_IN_LIVE_PATH"
+    feature_snapshot_hash = None
+    live_features = None
+    if args.canonical_games and args.play_by_play and shadow_meta is not None:
+        from nfl_hybrid.features.augmented_matrix import build_live_augmented_features
+
+        canonical = pd.read_parquet(args.canonical_games)
+        pbp = pd.read_parquet(args.play_by_play)
+        # build target games from the schedule for (season, week), attaching current lines
+        sched = canonical[
+            (pd.to_numeric(canonical["season"], errors="coerce") == args.season)
+            & (canonical["week"].astype(str) == str(args.week))
+        ].copy()
+        line_map = priceable.set_index(priceable["game_id"].astype(str))
+        sched["game_id"] = sched["game_id"].astype(str)
+        sched = sched[sched["game_id"].isin(line_map.index)]
+        sched["home_spread"] = sched["game_id"].map(pd.to_numeric(line_map["home_spread"], errors="coerce"))
+        sched["total_line"] = sched["game_id"].map(pd.to_numeric(line_map["total_line"], errors="coerce"))
+        feats, fstat = build_live_augmented_features(canonical, sched, pbp, as_of_utc=as_of)
+        fundamental = score_shadow(feats)
+        fstatus = "AVAILABLE" if fundamental is not None else "SCORING_FAILED"
+        feature_snapshot_hash = fstat.get("feature_snapshot_hash")
+        live_features = feats
+    if args.require_full_card and fundamental is None:
+        from nfl_hybrid.pricing.weekly import WeeklyRunError
+        raise WeeklyRunError("full-card mode requires a fundamental probability, which is unavailable")
     card = attach_shadow_columns(
         card, fundamental, status=fstatus,
         artifact_version=(shadow_meta or {}).get("artifact"),
+        features=live_features, feature_snapshot_hash=feature_snapshot_hash,
     )
 
     out = Path(args.output)
@@ -180,6 +212,8 @@ def main() -> None:
         "fundamental_artifact_training_commit": (shadow_meta or {}).get("code_commit", "none"),
         "fundamental_artifact_hash": (shadow_meta or {}).get("model_sha256", "none"),
         "fundamental_input_status": fstatus,
+        "feature_snapshot_hash": feature_snapshot_hash or "NONE",
+        "fundamental_non_null_rows": int(card["fundamental_probability"].notna().sum()) if "fundamental_probability" in card else 0,
         "injury_data_utc": args.injury_data_utc or "MISSING",
         "games": int(priceable["game_id"].nunique()),
         "card_rows": int(len(card)),

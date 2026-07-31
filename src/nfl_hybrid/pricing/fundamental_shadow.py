@@ -91,7 +91,9 @@ def score_shadow(features_frame: pd.DataFrame) -> pd.DataFrame | None:
     })
 
 
-def attach_shadow_columns(card: pd.DataFrame, fundamental: pd.DataFrame | None, *, status: str, artifact_version: str | None) -> pd.DataFrame:
+def attach_shadow_columns(card: pd.DataFrame, fundamental: pd.DataFrame | None, *, status: str,
+                          artifact_version: str | None, features: pd.DataFrame | None = None,
+                          feature_snapshot_hash: str | None = None) -> pd.DataFrame:
     """Attach distinct fundamental / production columns. When unavailable, the
     fundamental column stays NULL (never the market probability)."""
     out = card.copy()
@@ -108,6 +110,27 @@ def attach_shadow_columns(card: pd.DataFrame, fundamental: pd.DataFrame | None, 
         out["fundamental_probability"] = np.nan  # NULL, not market
     out["fundamental_input_status"] = status
     out["fundamental_artifact_version"] = artifact_version or "NO_FROZEN_FUNDAMENTAL_ARTIFACT"
+    out["feature_snapshot_hash"] = feature_snapshot_hash or "NONE"
+    # per-game missing/imputed feature accounting (imputation is the fitted pipeline's job)
+    from nfl_hybrid.features.augmented_matrix import FROZEN_FEATURES
+
+    if features is not None and "game_id" in features.columns:
+        fidx = features.set_index(features["game_id"].astype(str))
+        miss_names, miss_ct = [], []
+        for gid in out["game_id"].astype(str):
+            if gid in fidx.index:
+                row = fidx.loc[gid, FROZEN_FEATURES]
+                missing = [c for c in FROZEN_FEATURES if pd.isna(row[c])]
+            else:
+                missing = FROZEN_FEATURES
+            miss_names.append(";".join(missing)); miss_ct.append(len(missing))
+        out["fundamental_missing_features"] = miss_names
+        out["fundamental_missing_feature_count"] = miss_ct
+        out["fundamental_imputed_feature_count"] = miss_ct  # NaNs are median-imputed by the pipeline
+    else:
+        out["fundamental_missing_features"] = ""
+        out["fundamental_missing_feature_count"] = 0 if fundamental is not None else len(FROZEN_FEATURES)
+        out["fundamental_imputed_feature_count"] = 0
     # production stays the market baseline (governance); never the shadow
     out["production_probability"] = out["market_fair_probability"]
     out["production_source"] = "MARKET_BASELINE"

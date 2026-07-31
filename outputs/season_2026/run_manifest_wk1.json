@@ -3,16 +3,16 @@
   "calibration_artifact_hash": "d5c7b5b9cea3bc3931f59a6fae751447b3c4b9938258932dd50d02dc2c27a6db",
   "calibration_artifact_training_commit": "c99be7b33bc7b07f755bef921b4fbfecc7d7d752",
   "card_rows": 48,
-  "card_sha256": "5db25f8bc4b24fb1c4f76ab3b5641c6cf22722f2e86bb40a6b906440026385f5",
+  "card_sha256": "7d55329d8127784862157c71051ee778ec11b5faf6b66a7295ebee3fbf21eeed",
   "card_status_counts": {
     "PRELIMINARY": 48
   },
   "fundamental_artifact": "shadow_fundamental_2026.v1",
   "fundamental_artifact_hash": "69848cde4713700d44e9f95e8bec9016f4029fc17062c6721362736264211d1f",
-  "fundamental_artifact_training_commit": "6c944b543d148fc4ba6512bf3616ee233d599c83",
-  "fundamental_input_status": "NO_PREGAME_EPA_STATE_IN_LIVE_PATH",
+  "fundamental_artifact_training_commit": "61ae932e799cccb6d371c0294d3c4d0e5499eed6",
+  "fundamental_input_status": "AVAILABLE",
   "fundamental_input_status_counts": {
-    "NO_PREGAME_EPA_STATE_IN_LIVE_PATH": 48
+    "AVAILABLE": 48
   },
   "games": 16,
   "horizon": "preliminary",
@@ -24,7 +24,7 @@
   "production_source_counts": {
     "MARKET_BASELINE": 48
   },
-  "runtime_code_commit": "6c944b543d148fc4ba6512bf3616ee233d599c83",
+  "runtime_code_commit": "236f3959ee2ef8bbe30a1baec3e1be9130a2849d",
   "season": 2026,
   "week": "1"
 }
