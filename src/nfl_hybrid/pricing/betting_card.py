@@ -85,13 +85,15 @@ def _reference_distribution(
     if surface is not None:
         n = len(home_spread)
         tie = np.empty(n); home_win = np.empty(n); ats_push = np.empty(n); cover = np.empty(n)
+        away_cover = np.empty(n)  # INDEPENDENT third component (not 1-cover-push)
         for i in range(n):
             hs = home_spread[i]
             hw, ti, _ = surface.moneyline_probabilities(hs, m_sd)
             home_win[i], tie[i] = hw, ti
-            hc, pu, _ = surface.cover_probabilities(hs, hs, m_sd)  # cover the closing line
-            cover[i], ats_push[i] = hc, pu
+            hc, pu, ac = surface.cover_probabilities(hs, hs, m_sd)  # cover the closing line
+            cover[i], ats_push[i], away_cover[i] = hc, pu, ac
     else:
+        away_cover = None
         tie = norm.cdf((0.5 - margin_mean) / m_sd) - norm.cdf((-0.5 - margin_mean) / m_sd)
         home_win = np.clip(1.0 - norm.cdf((0.5 - margin_mean) / m_sd), 0.0, 1.0)
         ats_edge = margin_mean + home_spread
@@ -119,6 +121,16 @@ def _reference_distribution(
         1.0 - norm.cdf((0.5 - total_edge) / t_sd),
         norm.cdf(total_edge / t_sd),
     )
+    if surface is None:
+        # independent away-cover component (not derived from cover/push)
+        away_cover = np.where(
+            ats_integer, norm.cdf((-0.5 - ats_edge) / m_sd), 1.0 - norm.cdf(ats_edge / m_sd)
+        )
+        under = np.where(
+            total_integer, norm.cdf((-0.5 - total_edge) / t_sd), 1.0 - norm.cdf(total_edge / t_sd)
+        )
+    else:
+        under = np.clip(1.0 - np.clip(over, 0, 1) - np.clip(total_push, 0, 1), 0.0, 1.0)
 
     return pd.DataFrame(
         {
@@ -126,8 +138,10 @@ def _reference_distribution(
             "reference_home_win_probability": home_win,
             "tie_probability": np.clip(tie, 0.0, 1.0),
             "reference_cover_probability": np.clip(cover, 0.0, 1.0),
+            "reference_away_cover_probability": np.clip(away_cover, 0.0, 1.0),
             "ats_push_probability": np.clip(ats_push, 0.0, 1.0),
             "reference_over_probability": np.clip(over, 0.0, 1.0),
+            "reference_under_probability": np.clip(under, 0.0, 1.0),
             "total_push_probability": np.clip(total_push, 0.0, 1.0),
         }
     )
@@ -225,31 +239,26 @@ def build_betting_card(
     }
 
     per_market = []
+    # each spec: market, win_prob, market_prob, push_prob, INDEPENDENT complement, odds
     specs = [
         (
-            "moneyline",
-            model_ml,
-            market_ml,
-            np.zeros(len(g)),  # moneyline push handled as tie separately
+            "moneyline", model_ml, market_ml, np.zeros(len(g)),
+            np.clip(1.0 - ref["reference_home_win_probability"].to_numpy() - ref["tie_probability"].to_numpy(), 0, 1),
             _odds("offered_decimal_moneyline"),
         ),
         (
-            "ats",
-            model_cover,
-            market_cover,
-            ref["ats_push_probability"].to_numpy(),
+            "ats", model_cover, market_cover, ref["ats_push_probability"].to_numpy(),
+            ref["reference_away_cover_probability"].to_numpy(),  # independent, not 1-cover-push
             _odds("offered_decimal_ats"),
         ),
         (
-            "total",
-            model_over,
-            market_over,
-            ref["total_push_probability"].to_numpy(),
+            "total", model_over, market_over, ref["total_push_probability"].to_numpy(),
+            ref["reference_under_probability"].to_numpy(),  # independent
             _odds("offered_decimal_total"),
         ),
     ]
 
-    for market, model_p, market_p, push_p, odds in specs:
+    for market, model_p, market_p, push_p, complement_p, odds in specs:
         block = pd.DataFrame(
             {
                 **base,
@@ -259,6 +268,7 @@ def build_betting_card(
                 "model_probability": model_p,
                 "market_fair_probability": market_p,
                 "push_probability": push_p,
+                "independent_complement_probability": complement_p,
                 "tie_probability": ref["tie_probability"].to_numpy(),
                 "p_cover": model_cover,
                 "p_over": model_over,

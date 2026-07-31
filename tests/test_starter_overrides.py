@@ -4,12 +4,49 @@ import pytest
 
 from nfl_hybrid.priors.populate_templates import build_projected_starters, _rank_from_depth
 from nfl_hybrid.priors.starter_overrides import (
+    OverrideError,
+    apply_availability_exclusions,
     apply_overrides,
     flag_review,
     league_centered_fallback,
     load_overrides,
     empty_override_frame,
 )
+
+
+def _gen(team="KC", players=("mahomes", "wentz", "white"), probs=(0.85, 0.12, 0.03)):
+    return pd.DataFrame({"team_id": [team] * len(players), "player_id": list(players),
+                         "starter_probability": list(probs), "season": [2026] * len(players)})
+
+
+def test_override_preserves_exact_probability():
+    ov = empty_override_frame()
+    ov.loc[0] = ["KC", "wentz", 0.95, "beat_writer", "2026-08-20T00:00:00Z",
+                 "2026-08-20T00:00:00Z", "2026-12-01T00:00:00Z", "Mahomes IR (test)"]
+    out = apply_overrides(_gen(), ov, as_of_utc="2026-08-21T00:00:00Z")
+    wentz = out[out["player_id"] == "wentz"].iloc[0]
+    assert wentz["starter_probability"] == pytest.approx(0.95)  # EXACTLY preserved
+    assert np.isclose(out.groupby("team_id")["starter_probability"].sum().iloc[0], 1.0)
+    # residual 0.05 distributed across mahomes+white in proportion to their generated mass
+    assert out[out["player_id"] == "mahomes"].iloc[0]["starter_probability"] == pytest.approx(0.05 * 0.85 / 0.88)
+
+
+def test_override_sum_over_one_fails():
+    ov = empty_override_frame()
+    ov.loc[0] = ["KC", "mahomes", 0.7, "x", "2026-08-20T00:00:00Z", "2026-08-20T00:00:00Z", None, "r"]
+    ov.loc[1] = ["KC", "wentz", 0.6, "x", "2026-08-20T00:00:00Z", "2026-08-20T00:00:00Z", None, "r"]
+    with pytest.raises(OverrideError, match="sum to"):
+        apply_overrides(_gen(), ov, as_of_utc="2026-08-21T00:00:00Z")
+
+
+def test_unavailable_qb_zeroed_and_renormalized():
+    starters = _gen()
+    avail = pd.DataFrame({"gsis_id": ["mahomes"], "report_status": ["IR"]})
+    out = apply_availability_exclusions(starters, avail)
+    assert out[out["player_id"] == "mahomes"].iloc[0]["starter_probability"] == 0.0
+    assert np.isclose(out.groupby("team_id")["starter_probability"].sum().iloc[0], 1.0)
+    # backups absorb the mass proportionally
+    assert out[out["player_id"] == "wentz"].iloc[0]["starter_probability"] == pytest.approx(0.12 / 0.15)
 
 
 def _depth():

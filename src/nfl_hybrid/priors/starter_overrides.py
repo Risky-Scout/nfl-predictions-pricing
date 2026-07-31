@@ -40,43 +40,79 @@ def load_overrides(path: str | Path) -> pd.DataFrame:
     return df[OVERRIDE_COLUMNS]
 
 
-def apply_overrides(generated: pd.DataFrame, overrides: pd.DataFrame, *, as_of_utc: str) -> pd.DataFrame:
-    """Apply unexpired overrides on top of generated rows, renormalize per team.
+class OverrideError(ValueError):
+    """Explicit overrides for a team sum to more than 1.0."""
 
-    Rows carry ``origin`` in {"generated", "override"} so the two are always
-    distinguishable downstream.
+
+def apply_overrides(generated: pd.DataFrame, overrides: pd.DataFrame, *, as_of_utc: str) -> pd.DataFrame:
+    """Apply unexpired overrides, **preserving each override's exact probability**.
+
+    Explicit override probabilities are summed first (fail if > 1); only the
+    residual mass is distributed among non-overridden eligible candidates, in
+    proportion to their generated probability. If a team's overrides already sum
+    to 1, no residual is distributed. Rows carry ``origin`` in
+    {"generated", "override"}.
     """
     now = pd.Timestamp(as_of_utc)
     gen = generated.copy()
+    gen["starter_probability"] = pd.to_numeric(gen["starter_probability"], errors="coerce").fillna(0.0)
     gen["origin"] = "generated"
 
     ov = overrides.copy()
     if len(ov):
         exp = pd.to_datetime(ov["expires_at_utc"], utc=True, errors="coerce")
-        ov = ov[exp.isna() | (exp >= now)].copy()  # keep unexpired (or no-expiry)
-    if len(ov):
-        ov["origin"] = "override"
-        ov["season"] = gen["season"].iloc[0] if len(gen) else np.nan
-        # a team touched by any override is rebuilt from override rows for that team's
-        # named players, with remaining mass left to the generated backups.
-        out_parts = []
-        override_teams = set(ov["team_id"])
-        for team, tg in gen.groupby("team_id"):
-            if team not in override_teams:
-                out_parts.append(tg)
-                continue
-            team_ov = ov[ov["team_id"] == team]
-            named = set(team_ov["player_id"])
-            keep_gen = tg[~tg["player_id"].isin(named)]
-            merged = pd.concat([team_ov, keep_gen], ignore_index=True)
-            out_parts.append(merged)
-        gen = pd.concat(out_parts, ignore_index=True)
+        ov = ov[exp.isna() | (exp >= now)].copy()  # unexpired only
+    if len(ov) == 0:
+        return gen.reset_index(drop=True)
 
-    # renormalize each team to sum to 1.0
-    gen["starter_probability"] = pd.to_numeric(gen["starter_probability"], errors="coerce").fillna(0.0)
-    totals = gen.groupby("team_id")["starter_probability"].transform("sum")
-    gen["starter_probability"] = np.where(totals > 0, gen["starter_probability"] / totals, gen["starter_probability"])
-    return gen.reset_index(drop=True)
+    ov["origin"] = "override"
+    ov["starter_probability"] = pd.to_numeric(ov["starter_probability"], errors="coerce")
+    season_val = gen["season"].iloc[0] if len(gen) and "season" in gen.columns else np.nan
+    ov["season"] = season_val
+
+    out_parts = []
+    override_teams = set(ov["team_id"])
+    for team, tg in gen.groupby("team_id"):
+        if team not in override_teams:
+            out_parts.append(tg)
+            continue
+        team_ov = ov[ov["team_id"] == team].copy()
+        override_sum = float(team_ov["starter_probability"].sum())
+        if override_sum > 1.0 + 1e-9:
+            raise OverrideError(f"{team}: explicit overrides sum to {override_sum:.3f} > 1.0")
+        named = set(team_ov["player_id"])
+        backups = tg[~tg["player_id"].isin(named)].copy()
+        residual = max(1.0 - override_sum, 0.0)
+        bsum = float(backups["starter_probability"].sum())
+        if bsum > 0 and residual > 0:
+            backups["starter_probability"] = backups["starter_probability"] / bsum * residual
+        else:
+            backups["starter_probability"] = 0.0  # overrides consume all mass
+        out_parts.append(pd.concat([team_ov, backups], ignore_index=True))
+    return pd.concat(out_parts, ignore_index=True).reset_index(drop=True)
+
+
+def apply_availability_exclusions(starters: pd.DataFrame, availability: pd.DataFrame | None) -> pd.DataFrame:
+    """Zero any definitively-unavailable QB and renormalize the eligible candidates.
+
+    Uncertain designations (Questionable, camp battles) are left untouched here;
+    they are surfaced by :func:`flag_review` instead.
+    """
+    out = starters.copy()
+    out["starter_probability"] = pd.to_numeric(out["starter_probability"], errors="coerce").fillna(0.0)
+    if availability is None or len(availability) == 0:
+        return out
+    st_col = next((c for c in ("report_status", "status", "game_status") if c in availability.columns), None)
+    pid_col = next((c for c in ("gsis_id", "player_id") if c in availability.columns), None)
+    if not (st_col and pid_col):
+        return out
+    unavailable = set(
+        availability[availability[st_col].astype(str).str.upper().str.strip().isin(UNAVAILABLE_STATES)][pid_col]
+    )
+    out.loc[out["player_id"].isin(unavailable), "starter_probability"] = 0.0
+    totals = out.groupby("team_id")["starter_probability"].transform("sum")
+    out["starter_probability"] = np.where(totals > 0, out["starter_probability"] / totals, out["starter_probability"])
+    return out
 
 
 def league_centered_fallback(
