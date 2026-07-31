@@ -2,37 +2,47 @@
 
 Every claim below is backed by a command result, file, test, or numeric comparison.
 
-## Step 1 — final-before-as-of and in-progress handling: **PASS**
-**Old defect:** the live assembler treated a prior game as completed when
-`kickoff <= as_of AND final scores are non-null`. Historical rows already contain
-eventual results, so at a reconstructed as-of an early game could still have been in
-progress (e.g. 1:00 pm game ending 4:08 pm, prediction at 3:55 pm) yet be counted.
+## Step 1 — final-before-as-of and in-progress handling: **PASS (after remediation)**
+**Old defect:** the assembler treated a prior game as completed when
+`kickoff <= as_of AND final scores are non-null`, and a first remediation replaced that
+with a **synthetic** completion timestamp (`kickoff + 4 h/5 h`) + `game_status = "FINAL"`,
+which *fabricated finality evidence* and mislabelled UNKNOWN games as `FINAL_BEFORE_ASOF`.
 
-**Fix:** one canonical `resolve_finality_before_asof(games, pbp, *, as_of_utc)` returns
-`is_final_before_asof, finality_status, completion_timestamp_utc, finality_source,
-exclusion_reason`. Evidence hierarchy: (1) explicit final status + completion timestamp
-≤ as_of; (2) final status + verified terminal-play timestamp ≤ as_of; (3) a schema
-completion timestamp ≤ as_of; (4) otherwise **UNKNOWN_FINALITY → excluded (fail closed)**.
-Non-null scores or kickoff time alone are never sufficient. The repo data lack a
-wall-clock completion timestamp, so the live assembler attaches a **documented
-conservative fallback** (`completion = kickoff + overtime-aware max-duration bound`,
-4 h regulation / 5 h OT) — an upper bound used only to *confirm* finality, never to
-estimate the exact end; in-progress games are excluded. A game must pass **both**
-"confirmed final before as_of" **and** "no included play after as_of". Partial-game
-play-by-play is never aggregated (in-progress games are dropped before team-game
-aggregation). Audit fields added: eligible/excluded-in-progress/excluded-unknown/
-excluded-post-as-of counts, max eligible completion timestamp, finality source and
-exclusion-reason counts; the run manifest records these plus a finality decision hash.
+**Remediation (this pass):** the synthetic completion timestamp and synthetic FINAL status
+are **removed**. `resolve_finality_before_asof(games, pbp, *, as_of_utc, mode)` now separates
+two concepts and never conflates them:
+- **`verified_final_before_asof`** — set True only by real evidence at/before `as_of`:
+  explicit final status + completion timestamp; explicit final status + verified terminal-
+  play timestamp; a schema completion/terminal timestamp; or an official final snapshot.
+  Non-null scores or kickoff time alone are never evidence.
+- **`historically_available_before_asof`** — set only in `mode="historical_replay"` via the
+  repository's documented postgame-availability policy (`data.availability`, kickoff + 5 h),
+  labelled `HISTORICAL_AVAILABILITY_ASSUMPTION` with `availability_source =
+  documented_training_policy`. It is **never** verified finality and is **never** used in
+  `live` mode.
 
-**Evidence:** `tests/test_finality.py` (9, CI-safe synthetic): in-progress-with-final-
-score excluded, same game after completion eligible, unknown-finality excluded, explicit
-non-final excluded, final-but-completion-after-as-of excluded, late-window Sunday,
-post-as-of kickoff, determinism. Historical live/training parity **unchanged**
-(max |Δ| = 0.0, identical NaN pattern for 2024 wk10 / 2022 wk14) because same-day
-in-progress games never feed a target's once-per-week rolling sequence.
+**`live` mode fails closed:** absent verified evidence → `UNKNOWN_FINALITY` → excluded; with
+this repository's data (no game status/completion timestamp, no per-play UTC timestamp or
+terminal marker — limitation recorded), a live run produces **no** eligible prior games and
+the fundamental is honestly **NULL** (`fundamental_input_status = NO_VERIFIED_FINAL_GAMES`),
+never a fabricated value. Status values: `FINAL_BEFORE_ASOF`, `EXPLICIT_NON_FINAL`,
+`IN_PROGRESS_AT_ASOF`, `POST_ASOF_KICKOFF`, `UNKNOWN_FINALITY`,
+`HISTORICAL_AVAILABILITY_ASSUMPTION`. Recorded per game: `finality_source`,
+`finality_evidence_timestamp`, `availability_source`, `availability_timestamp`,
+`exclusion_reason`. Partial-game play-by-play is never aggregated (non-eligible games are
+dropped before `aggregate_advanced_team_game`).
 
-**Overall model acceptance: NOT READY.** Next pending stage: Step 2 — make core
-parity/leakage tests execute in CI.
+**Evidence:** `tests/test_finality.py` (11, CI-safe): in-progress-with-final-score excluded;
+same game after completion eligible; **synthetic-duration rejection** (>5 h elapsed, no
+evidence → UNKNOWN in live); **suspended** game excluded regardless of duration;
+completion-after-as_of excluded; post-as_of kickoff; **historical-mode separation**
+(availability True, verified False, source labelled); live mode never uses the assumption;
+determinism; invalid-mode rejected. End-to-end no-partial-aggregation and live-mode-null
+integration tests in `tests/test_live_features.py`. Historical live/training parity in
+`historical_replay` mode is **unchanged** (max |Δ| = 0.0, identical NaN, 2024 wk10 / 2022
+wk14). Live mode is not made less strict to preserve parity.
+
+**Overall model acceptance: NOT READY.** Next pending stage: Step 2.
 
 ---
 
