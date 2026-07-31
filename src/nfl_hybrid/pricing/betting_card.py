@@ -258,6 +258,12 @@ def build_betting_card(
         ),
     ]
 
+    # surface source distributions (each an independent, coherent 3-way summing to 1)
+    source_win = {
+        "moneyline": ref["reference_home_win_probability"].to_numpy(),
+        "ats": ref["reference_cover_probability"].to_numpy(),
+        "total": ref["reference_over_probability"].to_numpy(),
+    }
     for market, model_p, market_p, push_p, complement_p, odds in specs:
         block = pd.DataFrame(
             {
@@ -268,6 +274,8 @@ def build_betting_card(
                 "model_probability": model_p,
                 "market_fair_probability": market_p,
                 "push_probability": push_p,
+                # independent surface source triple (win + push + complement == 1)
+                "source_win_probability": source_win[market],
                 "independent_complement_probability": complement_p,
                 "tie_probability": ref["tie_probability"].to_numpy(),
                 "p_cover": model_cover,

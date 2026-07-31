@@ -70,10 +70,10 @@ def validate_probability_identity(card: pd.DataFrame, *, atol: float = 1e-6) -> 
         sub = card[card["market"] == market]
         if not len(sub):
             continue
-        need = {"calibrated_probability", "push_probability", "independent_complement_probability"}
+        need = {"source_win_probability", "push_probability", "independent_complement_probability"}
         if not need.issubset(sub.columns):
             raise WeeklyRunError(f"{market}: missing independent components for identity check")
-        win = sub["calibrated_probability"].to_numpy(float)
+        win = sub["source_win_probability"].to_numpy(float)
         push = sub["push_probability"].to_numpy(float)
         comp = sub["independent_complement_probability"].to_numpy(float)
         for name, v in (("win", win), ("push", push), ("complement", comp)):
