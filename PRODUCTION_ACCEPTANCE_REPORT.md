@@ -2,6 +2,42 @@
 
 Every claim below is backed by a command result, file, test, or numeric comparison.
 
+## KEYSTONE COMPLETED (final completion pass, commit `fd5a308`)
+The item that previously gated acceptance — the live fundamental feature path — is now
+implemented, proven, and tested.
+- **Live/training feature parity:** `build_live_augmented_features` reproduces the
+  historical matrix **exactly** for 3 games across different seasons/weeks (2023 wk6,
+  2024 wk10, 2022 wk14): max |Δ| = 0.0 on all 19 features **and** identical NaN pattern.
+- **No leakage (tested):** corrupting a target's own final score or its own play-by-play
+  does not change its features; a later completed game does not change an earlier
+  prediction; a metrics-NaN placeholder inserts the upcoming game into the rolling
+  sequence while the shift-then-roll builder uses only prior FINAL-before-`as_of` games.
+  "Completed" = final score before `as_of` (in-progress early games excluded); per-play
+  timestamp cutoff enforced; deterministic feature-snapshot hash; hard one-row-per-target
+  assertion; kickoff≤as_of and duplicate-target both fail. (tests/test_live_features.py, 9)
+- **Non-null fundamental:** wired into `predict_week` via `--canonical-games/--play-by-play`.
+  2024 wk10 replay: **42/42** fundamental probabilities non-null, finite, in [0,1], and
+  **distinct** from market. 2026 Week-1 card: **48/48** fundamental AVAILABLE (6 season-to-date
+  features NaN by design → median-imputed by the fitted pipeline). Production stays
+  MARKET_BASELINE; `fundamental_probability` is never a market copy.
+  (tests/test_live_fundamental.py, 4)
+- **Single authoritative contract:** `FROZEN_FEATURES` (19) shared by training, artifact,
+  live assembly, and load (validated at `load_shadow`).
+- **Clean-checkout artifact:** the shadow `.joblib` (1 MB, no secrets) is committed via a
+  narrow `.gitignore` exception; `load_shadow()` returns a model with exactly 19 features
+  from a clean checkout.
+
+### Still open (honest → not merged)
+Operational sections not completed in this pass: fixed-spec weekly refit script (§16),
+sample-gated recalibration (§17), `close_week.sh` (§18), explicit per-game T-60/T-10
+scheduler labels (§15), full snapshot→card→manifest cached-pipeline benchmark (§20),
+Week-2 generic smoke via CLI (§22), and live licensed injury/roster feeds (§11, external).
+Final acceptance remains **NOT READY** pending these; the critical fundamental blocker is
+resolved. Earlier sections of this report remain accurate.
+
+---
+
+
 - **Starting commit:** `6e28f2c` (origin/main verified) · **Branch:** `production-integration-2026`
 - **Accepted calibration artifact:** `config/pricing_calibration_2026.json`
   (`pricing_calibration_2026.v1`, sha `d5c7b5b9cea3…`, cutoff 2024) — **frozen, unchanged.**
