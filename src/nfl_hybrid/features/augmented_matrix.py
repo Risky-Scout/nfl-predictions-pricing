@@ -152,24 +152,20 @@ FROZEN_FEATURES = [
 _ID_COLS = {"game_id", "team_id", "opponent_id", "season", "week"}
 
 
-# Conservative maximum plausible game durations (fail-closed fallback when the data
-# lack an explicit completion timestamp). These are UPPER bounds: a game is only ever
-# declared final once as_of exceeds kickoff + bound, so an in-progress game is never
-# included. They are NOT used to estimate exactly when a game ended.
-_REG_MAX_MINUTES = 240.0   # 4h covers a long regulation game + broadcast delays
-_OT_MAX_MINUTES = 300.0    # 5h covers overtime + delays
 _NONFINAL_STATUSES = {"IN_PROGRESS", "INPROGRESS", "LIVE", "HALFTIME", "DELAYED",
                       "SCHEDULED", "PREGAME", "SUSPENDED", "POSTPONED"}
 _FINAL_STATUSES = {"FINAL", "COMPLETED", "CLOSED", "FINAL_OT", "F"}
+# The repository's documented postgame-availability policy (data.availability). Used ONLY
+# in historical_replay mode as a labelled availability convention -- never as verified
+# finality. The value is the existing default (kickoff + 5h).
+_HISTORICAL_AVAILABILITY_HOURS = 5.0
 
 
-def _conservative_completion(kickoff: pd.Series, overtime: pd.Series | None) -> pd.Series:
-    """Documented conservative completion estimate = kickoff + max-duration bound."""
-    minutes = pd.Series(_REG_MAX_MINUTES, index=kickoff.index)
-    if overtime is not None:
-        ot = overtime.fillna(False).astype(bool)
-        minutes = minutes.where(~ot, _OT_MAX_MINUTES)
-    return kickoff + pd.to_timedelta(minutes, unit="m")
+def _terminal_play_timestamp(play_by_play, gid):
+    """Return a genuine terminal-play UTC timestamp only if the schema clearly proves the
+    game ended. This repository's play-by-play has no per-play UTC event time and no
+    terminal-game marker, so this returns None (limitation recorded)."""
+    return None
 
 
 def resolve_finality_before_asof(
@@ -177,28 +173,32 @@ def resolve_finality_before_asof(
     play_by_play: pd.DataFrame | None,
     *,
     as_of_utc: str,
+    mode: str = "live",
 ) -> pd.DataFrame:
-    """Establish, per game, whether it was verifiably FINAL before ``as_of_utc``.
+    """Resolve, per game, VERIFIED finality vs a historical availability assumption.
 
-    Evidence hierarchy (strongest first):
-      1. explicit final status + completion timestamp <= as_of;
-      2. explicit final status + verified terminal-play timestamp <= as_of;
-      3. a completion/terminal timestamp <= as_of that the schema marks as final;
-      4. otherwise UNKNOWN_FINALITY (fail closed -> excluded).
+    Two distinct concepts are returned and never conflated:
+      - ``verified_final_before_asof`` — True only with real evidence observed at/before
+        ``as_of``: explicit final status + completion timestamp; explicit final status +
+        verified terminal-play timestamp; a schema completion/terminal timestamp; or an
+        official final snapshot. Non-null scores or kickoff time alone are NOT evidence.
+      - ``historically_available_before_asof`` — set only in ``mode="historical_replay"``
+        via the repository's documented postgame-availability policy (kickoff + 5h),
+        labelled ``HISTORICAL_AVAILABILITY_ASSUMPTION``. It NEVER sets verified finality
+        and is never used in ``live`` mode.
 
-    Non-null final scores and kickoff time alone are NOT sufficient (historical rows
-    already contain eventual results). Returns one row per game_id with
-    is_final_before_asof, finality_status, completion_timestamp_utc, finality_source,
-    exclusion_reason.
+    ``live`` mode fails closed: absent verified evidence -> ``UNKNOWN_FINALITY`` (excluded).
     """
+    if mode not in ("live", "historical_replay"):
+        raise ValueError("mode must be 'live' or 'historical_replay'")
     now = pd.Timestamp(as_of_utc)
     if now.tzinfo is None:
         now = now.tz_localize("UTC")
     g = games.copy()
     kickoff = pd.to_datetime(g["scheduled_kickoff_utc"], utc=True, errors="coerce")
 
-    status_col = next((c for c in ("game_status", "status", "finality_status_source") if c in g.columns), None)
-    status = g[status_col].astype(str).str.upper().str.strip() if status_col else pd.Series([None] * len(g), index=g.index)
+    status_col = next((c for c in ("game_status", "status") if c in g.columns), None)
+    status = g[status_col].astype(str).str.upper().str.strip() if status_col else None
     comp_col = next((c for c in ("completion_timestamp_utc", "game_end_utc", "end_time_utc") if c in g.columns), None)
     completion = pd.to_datetime(g[comp_col], utc=True, errors="coerce") if comp_col else pd.Series(pd.NaT, index=g.index)
 
@@ -208,26 +208,50 @@ def resolve_finality_before_asof(
         ko = kickoff.loc[i]
         st = status.loc[i] if status_col else None
         comp = completion.loc[i]
-        is_final, fstatus, source, reason = False, "UNKNOWN_FINALITY", "none", "no_finality_evidence"
+        verified = False
+        fstatus, fsource, fevidence_ts, reason = "UNKNOWN_FINALITY", "none", pd.NaT, "no_finality_evidence"
 
         if pd.notna(ko) and ko > now:
-            is_final, fstatus, source, reason = False, "POST_ASOF_KICKOFF", "kickoff", "kickoff_after_asof"
+            fstatus, fsource, reason = "POST_ASOF_KICKOFF", "kickoff", "kickoff_after_asof"
         elif st is not None and st in _NONFINAL_STATUSES:
-            is_final, fstatus, source, reason = False, "EXPLICIT_NON_FINAL", "explicit_status", f"status={st}"
+            fstatus, fsource, reason = "EXPLICIT_NON_FINAL", "explicit_status", f"status={st}"
         elif st is not None and st in _FINAL_STATUSES and pd.notna(comp):
             if comp <= now:
-                is_final, fstatus, source, reason = True, "FINAL_BEFORE_ASOF", "explicit_status_and_completion_timestamp", ""
+                verified, fstatus, fsource, fevidence_ts, reason = True, "FINAL_BEFORE_ASOF", "explicit_status_and_completion_timestamp", comp, ""
             else:
-                is_final, fstatus, source, reason = False, "IN_PROGRESS_AT_ASOF", "explicit_status_and_completion_timestamp", "completion_after_asof"
-        elif pd.notna(comp):  # hierarchy 3: a completion timestamp the schema provides
+                fstatus, fsource, reason = "IN_PROGRESS_AT_ASOF", "explicit_status_and_completion_timestamp", "completion_after_asof"
+        elif pd.notna(comp):
             if comp <= now:
-                is_final, fstatus, source, reason = True, "FINAL_BEFORE_ASOF", "completion_timestamp", ""
+                verified, fstatus, fsource, fevidence_ts, reason = True, "FINAL_BEFORE_ASOF", "completion_timestamp", comp, ""
             else:
-                is_final, fstatus, source, reason = False, "IN_PROGRESS_AT_ASOF", "completion_timestamp", "completion_after_asof"
-        # else: UNKNOWN_FINALITY (fail closed)
+                fstatus, fsource, reason = "IN_PROGRESS_AT_ASOF", "completion_timestamp", "completion_after_asof"
+        else:
+            tp = _terminal_play_timestamp(play_by_play, gid)
+            if tp is not None and pd.Timestamp(tp) <= now:
+                verified, fstatus, fsource, fevidence_ts, reason = True, "FINAL_BEFORE_ASOF", "verified_terminal_play", pd.Timestamp(tp), ""
+
+        # historical availability assumption (replay mode only; never verified finality)
+        available = False
+        avail_status, avail_source, avail_ts = "", "none", pd.NaT
+        if mode == "historical_replay" and not verified and pd.notna(ko) and ko <= now:
+            postgame = ko + pd.Timedelta(hours=_HISTORICAL_AVAILABILITY_HOURS)
+            if postgame <= now:
+                available, avail_status, avail_source, avail_ts = (
+                    True, "HISTORICAL_AVAILABILITY_ASSUMPTION", "documented_training_policy", postgame)
+                if fstatus == "UNKNOWN_FINALITY":
+                    fstatus = "HISTORICAL_AVAILABILITY_ASSUMPTION"
+
         rows.append({
-            "game_id": gid, "is_final_before_asof": is_final, "finality_status": fstatus,
-            "completion_timestamp_utc": comp, "finality_source": source, "exclusion_reason": reason,
+            "game_id": gid,
+            "verified_final_before_asof": verified,
+            "historically_available_before_asof": available,
+            "finality_status": fstatus,
+            "availability_status": avail_status,
+            "finality_source": fsource,
+            "finality_evidence_timestamp": fevidence_ts,
+            "availability_source": avail_source,
+            "availability_timestamp": avail_ts,
+            "exclusion_reason": reason,
             "scheduled_kickoff_utc": ko,
         })
     return pd.DataFrame(rows)
@@ -239,6 +263,7 @@ def build_live_augmented_features(
     play_by_play: pd.DataFrame,
     *,
     as_of_utc: str,
+    mode: str = "live",
     rolling_config: PregameRollingConfig | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     """Assemble the frozen 19 pregame features for upcoming ``target_games``.
@@ -264,30 +289,59 @@ def build_live_augmented_features(
     if (tg["scheduled_kickoff_utc"] <= now).any():
         raise ValueError("target game kickoff is at or before as_of_utc")
 
-    # A game is ELIGIBLE only if VERIFIABLY FINAL before as_of (not merely "has a stored
-    # final score and kicked off"). We attach a documented conservative completion estimate
-    # (kickoff + overtime-aware max-duration bound) unless the schema already carries an
-    # explicit status/completion timestamp, then resolve finality strictly.
+    # Resolve finality WITHOUT fabricating evidence. In live mode a game contributes only
+    # when VERIFIED final before as_of; in historical_replay mode it may instead be included
+    # under the documented postgame-availability assumption (labelled, never "verified").
     hg_all = historical_games.copy()
     hg_all["scheduled_kickoff_utc"] = pd.to_datetime(hg_all["scheduled_kickoff_utc"], utc=True, errors="coerce")
-    if not any(c in hg_all.columns for c in ("completion_timestamp_utc", "game_end_utc", "end_time_utc")):
-        overtime = hg_all["overtime"] if "overtime" in hg_all.columns else None
-        hg_all["completion_timestamp_utc"] = _conservative_completion(hg_all["scheduled_kickoff_utc"], overtime)
-        if "game_status" not in hg_all.columns and "status" not in hg_all.columns:
-            hg_all["game_status"] = "FINAL"  # documented conservative fallback source
-    finality = resolve_finality_before_asof(hg_all, play_by_play, as_of_utc=str(now))
+    finality = resolve_finality_before_asof(hg_all, play_by_play, as_of_utc=str(now), mode=mode)
     fin_map = finality.set_index(finality["game_id"].astype(str))
-    kicked_off = hg_all["scheduled_kickoff_utc"] <= now
+    if mode == "historical_replay":
+        eligible_mask = fin_map["verified_final_before_asof"] | fin_map["historically_available_before_asof"]
+    else:
+        eligible_mask = fin_map["verified_final_before_asof"]
     fstat = hg_all["game_id"].astype(str).map(fin_map["finality_status"])
     excluded_in_progress = int((fstat == "IN_PROGRESS_AT_ASOF").sum())
     excluded_unknown = int((fstat == "UNKNOWN_FINALITY").sum())
     excluded_post_asof_games = int((fstat == "POST_ASOF_KICKOFF").sum())
     finality_source_counts = finality["finality_source"].value_counts().to_dict()
-    finality_exclusion_reason_counts = finality[~finality["is_final_before_asof"]]["exclusion_reason"].value_counts().to_dict()
-    eligible_ids = set(fin_map[fin_map["is_final_before_asof"]].index.astype(str))
+    availability_status_counts = finality["availability_status"].replace("", "NONE").value_counts().to_dict()
+    finality_exclusion_reason_counts = finality[~eligible_mask.reindex(finality["game_id"].astype(str)).to_numpy()]["exclusion_reason"].value_counts().to_dict()
+    eligible_ids = set(fin_map[eligible_mask].index.astype(str))
     hg = hg_all[hg_all["game_id"].astype(str).isin(eligible_ids)].copy()
     excluded_nonfinal = excluded_in_progress + excluded_unknown  # backward-compat aggregate
-    max_completion = str(fin_map.loc[list(eligible_ids), "completion_timestamp_utc"].max()) if eligible_ids else None
+    max_completion = str(hg["scheduled_kickoff_utc"].max()) if len(hg) else None
+
+    if len(hg) == 0:
+        # Fail closed: no eligible prior games -> no EPA/rest features. Market lines still
+        # attach; the fundamental scorer will treat the all-NaN EPA rows accordingly.
+        import hashlib as _hl
+        import json as _js
+        lm = tg.assign(game_id=tg["game_id"].astype(str)).set_index("game_id")
+        feats = pd.DataFrame({"game_id": tg["game_id"].astype(str).to_numpy()})
+        for c in FROZEN_FEATURES:
+            feats[c] = np.nan
+        feats["home_spread"] = feats["game_id"].map(lm["home_spread"])
+        feats["total_line"] = feats["game_id"].map(lm["total_line"])
+        feats = feats[["game_id"] + FROZEN_FEATURES]
+        fs = feats.sort_values("game_id").reset_index(drop=True)
+        payload = {"game_ids": fs["game_id"].tolist(), "columns": FROZEN_FEATURES,
+                   "values": [[None if pd.isna(v) else round(float(v), 10) for v in fs[c]] for c in FROZEN_FEATURES]}
+        status = {
+            "as_of_utc": str(now), "mode": mode, "target_game_count": int(len(tg)),
+            "feature_row_count": int(len(feats)), "required_columns": FROZEN_FEATURES,
+            "missing_columns": [], "eligible_final_game_count": 0,
+            "verified_final_game_count": int(fin_map["verified_final_before_asof"].sum()),
+            "historically_available_game_count": int(fin_map["historically_available_before_asof"].sum()),
+            "excluded_in_progress_game_count": excluded_in_progress,
+            "excluded_unknown_finality_game_count": excluded_unknown,
+            "excluded_post_asof_game_count": excluded_post_asof_games,
+            "finality_source_counts": finality_source_counts,
+            "availability_status_counts": availability_status_counts,
+            "feature_snapshot_hash": _hl.sha256(_js.dumps(payload, sort_keys=True).encode()).hexdigest(),
+            "no_eligible_completed_games": True,
+        }
+        return feats, status
 
     # Play-by-play: only from eligible (final-before-as_of) games; additionally enforce a
     # per-play timestamp cutoff when a play/game date column is available.
@@ -378,7 +432,10 @@ def build_live_augmented_features(
         "nan_count_by_feature": nan_by_feature,
         "max_eligible_completed_kickoff": str(hg["scheduled_kickoff_utc"].max()) if len(hg) else None,
         "max_eligible_play_timestamp": max_play_ts,
+        "mode": mode,
         "eligible_final_game_count": int(len(eligible_ids)),
+        "verified_final_game_count": int(fin_map["verified_final_before_asof"].sum()),
+        "historically_available_game_count": int(fin_map["historically_available_before_asof"].sum()),
         "excluded_in_progress_game_count": excluded_in_progress,
         "excluded_unknown_finality_game_count": excluded_unknown,
         "excluded_post_asof_game_count": excluded_post_asof_games,
@@ -387,6 +444,7 @@ def build_live_augmented_features(
         "maximum_eligible_completion_timestamp": max_completion,
         "maximum_eligible_play_timestamp": max_play_ts,
         "finality_source_counts": finality_source_counts,
+        "availability_status_counts": availability_status_counts,
         "finality_exclusion_reason_counts": finality_exclusion_reason_counts,
         "feature_snapshot_hash": snap_hash,
     }

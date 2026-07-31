@@ -26,7 +26,7 @@ def test_complete_features_produce_nonnull_finite_fundamental():
     wk["total_line"] = pd.to_numeric(wk["total_line_reference"], errors="coerce")
     wk = wk.dropna(subset=["home_spread", "total_line"])
     asof = "2024-11-07T12:00:00Z"
-    feats, _ = build_live_augmented_features(g, wk, pbp, as_of_utc=asof)
+    feats, _ = build_live_augmented_features(g, wk, pbp, mode="historical_replay", as_of_utc=asof)
     fund = score_shadow(feats)
     assert fund is not None
     for col in ("fundamental_home_win", "fundamental_home_cover", "fundamental_over"):

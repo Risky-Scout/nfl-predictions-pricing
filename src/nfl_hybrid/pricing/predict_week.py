@@ -93,6 +93,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--canonical-games", default=None, help="Canonical games parquet (schedule + history) for live fundamental features.")
     parser.add_argument("--play-by-play", default=None, help="Play-by-play parquet for live fundamental features.")
     parser.add_argument("--require-full-card", action="store_true", help="Fail if a fundamental probability cannot be produced.")
+    parser.add_argument("--feature-mode", choices=["live", "historical_replay"], default="live",
+                        help="live (verified finality only, fail closed) or historical_replay (documented availability assumption).")
     return parser
 
 
@@ -175,9 +177,16 @@ def main() -> None:
         sched = sched[sched["game_id"].isin(line_map.index)]
         sched["home_spread"] = sched["game_id"].map(pd.to_numeric(line_map["home_spread"], errors="coerce"))
         sched["total_line"] = sched["game_id"].map(pd.to_numeric(line_map["total_line"], errors="coerce"))
-        feats, fstat = build_live_augmented_features(canonical, sched, pbp, as_of_utc=as_of)
-        fundamental = score_shadow(feats)
-        fstatus = "AVAILABLE" if fundamental is not None else "SCORING_FAILED"
+        feats, fstat = build_live_augmented_features(
+            canonical, sched, pbp, as_of_utc=as_of, mode=args.feature_mode
+        )
+        if fstat.get("no_eligible_completed_games"):
+            # live mode fail-closed: no VERIFIED-final prior games -> no fundamental
+            fundamental = None
+            fstatus = "NO_VERIFIED_FINAL_GAMES"
+        else:
+            fundamental = score_shadow(feats)
+            fstatus = "AVAILABLE" if fundamental is not None else "SCORING_FAILED"
         feature_snapshot_hash = fstat.get("feature_snapshot_hash")
         live_features = feats
         finality_summary = {

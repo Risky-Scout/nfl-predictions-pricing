@@ -33,14 +33,22 @@ priors), `injury_data_utc`, `data_quality_status`, and `card_status`
 (`PRELIMINARY` / `VALID_LIVE_CARD` / `NO_PRICE`). July cards are `PRELIMINARY`.
 
 ## Finality / in-progress-game safety (live fundamental features)
-A prior game feeds a target's rolling EPA features only when it was **verifiably final
-before `as_of_utc`** — established by explicit final status + a completion timestamp
-(or, absent that in the data, a documented conservative bound of kickoff + 4 h
-regulation / 5 h OT). A game that has kicked off but is not yet confirmed final
-(e.g. an early Sunday game still running when a late game is priced) is **excluded**;
-its partial play-by-play is never aggregated, and its stored final score is ignored.
-Games with no finality evidence are `UNKNOWN_FINALITY` and excluded (fail closed).
-The run manifest records finality counts and a finality decision hash.
+Two modes control which prior games feed a target's rolling EPA features:
+- **`live` (default, production):** a prior game contributes only when **verified final
+  before `as_of_utc`** by real evidence (explicit final status + completion timestamp,
+  a verified terminal-play timestamp, a schema completion timestamp, or an official final
+  snapshot). Non-null scores or elapsed time are **not** evidence. Absent evidence →
+  `UNKNOWN_FINALITY` → excluded (fail closed). With no finality feed configured, live
+  fundamental probabilities are honestly **NULL** (`NO_VERIFIED_FINAL_GAMES`).
+- **`historical_replay` (backtests/research only):** additionally admits games under the
+  repository's documented postgame-availability convention (kickoff + 5 h), clearly
+  labelled `HISTORICAL_AVAILABILITY_ASSUMPTION` — this is an availability assumption, **not**
+  verified finality, and must never be used in production.
+
+An in-progress or unknown game is excluded and its partial play-by-play is never
+aggregated. The run manifest records finality counts and a finality decision hash.
+There is no assumed "4 h/5 h verified upper bound" — elapsed duration is not finality
+evidence.
 
 ## 0. One-time setup
 ```bash
