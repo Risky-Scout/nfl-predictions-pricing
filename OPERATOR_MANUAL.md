@@ -32,6 +32,16 @@ proportional de-vig + equal-mean consensus for all three markets.
 priors), `injury_data_utc`, `data_quality_status`, and `card_status`
 (`PRELIMINARY` / `VALID_LIVE_CARD` / `NO_PRICE`). July cards are `PRELIMINARY`.
 
+## Finality / in-progress-game safety (live fundamental features)
+A prior game feeds a target's rolling EPA features only when it was **verifiably final
+before `as_of_utc`** — established by explicit final status + a completion timestamp
+(or, absent that in the data, a documented conservative bound of kickoff + 4 h
+regulation / 5 h OT). A game that has kicked off but is not yet confirmed final
+(e.g. an early Sunday game still running when a late game is priced) is **excluded**;
+its partial play-by-play is never aggregated, and its stored final score is ignored.
+Games with no finality evidence are `UNKNOWN_FINALITY` and excluded (fail closed).
+The run manifest records finality counts and a finality decision hash.
+
 ## 0. One-time setup
 ```bash
 cd nfl-predictions-pricing

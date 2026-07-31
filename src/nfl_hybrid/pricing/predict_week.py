@@ -159,6 +159,7 @@ def main() -> None:
     fstatus = "NO_PREGAME_EPA_STATE_IN_LIVE_PATH"
     feature_snapshot_hash = None
     live_features = None
+    finality_summary = {}
     if args.canonical_games and args.play_by_play and shadow_meta is not None:
         from nfl_hybrid.features.augmented_matrix import build_live_augmented_features
 
@@ -179,6 +180,14 @@ def main() -> None:
         fstatus = "AVAILABLE" if fundamental is not None else "SCORING_FAILED"
         feature_snapshot_hash = fstat.get("feature_snapshot_hash")
         live_features = feats
+        finality_summary = {
+            k: fstat.get(k) for k in (
+                "eligible_final_game_count", "excluded_in_progress_game_count",
+                "excluded_unknown_finality_game_count", "excluded_post_asof_game_count",
+                "excluded_post_asof_play_count", "maximum_eligible_completion_timestamp",
+                "finality_source_counts", "finality_exclusion_reason_counts",
+            )
+        }
     if args.require_full_card and fundamental is None:
         from nfl_hybrid.pricing.weekly import WeeklyRunError
         raise WeeklyRunError("full-card mode requires a fundamental probability, which is unavailable")
@@ -213,6 +222,10 @@ def main() -> None:
         "fundamental_artifact_hash": (shadow_meta or {}).get("model_sha256", "none"),
         "fundamental_input_status": fstatus,
         "feature_snapshot_hash": feature_snapshot_hash or "NONE",
+        "finality_summary": finality_summary,
+        "finality_decision_hash": _hashlib.sha256(
+            _json.dumps(finality_summary, sort_keys=True, default=str).encode()
+        ).hexdigest() if finality_summary else "NONE",
         "fundamental_non_null_rows": int(card["fundamental_probability"].notna().sum()) if "fundamental_probability" in card else 0,
         "injury_data_utc": args.injury_data_utc or "MISSING",
         "games": int(priceable["game_id"].nunique()),

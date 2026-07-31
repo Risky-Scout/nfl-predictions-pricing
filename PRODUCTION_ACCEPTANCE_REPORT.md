@@ -2,6 +2,41 @@
 
 Every claim below is backed by a command result, file, test, or numeric comparison.
 
+## Step 1 — final-before-as-of and in-progress handling: **PASS**
+**Old defect:** the live assembler treated a prior game as completed when
+`kickoff <= as_of AND final scores are non-null`. Historical rows already contain
+eventual results, so at a reconstructed as-of an early game could still have been in
+progress (e.g. 1:00 pm game ending 4:08 pm, prediction at 3:55 pm) yet be counted.
+
+**Fix:** one canonical `resolve_finality_before_asof(games, pbp, *, as_of_utc)` returns
+`is_final_before_asof, finality_status, completion_timestamp_utc, finality_source,
+exclusion_reason`. Evidence hierarchy: (1) explicit final status + completion timestamp
+≤ as_of; (2) final status + verified terminal-play timestamp ≤ as_of; (3) a schema
+completion timestamp ≤ as_of; (4) otherwise **UNKNOWN_FINALITY → excluded (fail closed)**.
+Non-null scores or kickoff time alone are never sufficient. The repo data lack a
+wall-clock completion timestamp, so the live assembler attaches a **documented
+conservative fallback** (`completion = kickoff + overtime-aware max-duration bound`,
+4 h regulation / 5 h OT) — an upper bound used only to *confirm* finality, never to
+estimate the exact end; in-progress games are excluded. A game must pass **both**
+"confirmed final before as_of" **and** "no included play after as_of". Partial-game
+play-by-play is never aggregated (in-progress games are dropped before team-game
+aggregation). Audit fields added: eligible/excluded-in-progress/excluded-unknown/
+excluded-post-as-of counts, max eligible completion timestamp, finality source and
+exclusion-reason counts; the run manifest records these plus a finality decision hash.
+
+**Evidence:** `tests/test_finality.py` (9, CI-safe synthetic): in-progress-with-final-
+score excluded, same game after completion eligible, unknown-finality excluded, explicit
+non-final excluded, final-but-completion-after-as-of excluded, late-window Sunday,
+post-as-of kickoff, determinism. Historical live/training parity **unchanged**
+(max |Δ| = 0.0, identical NaN pattern for 2024 wk10 / 2022 wk14) because same-day
+in-progress games never feed a target's once-per-week rolling sequence.
+
+**Overall model acceptance: NOT READY.** Next pending stage: Step 2 — make core
+parity/leakage tests execute in CI.
+
+---
+
+
 ## KEYSTONE COMPLETED (final completion pass, commit `fd5a308`)
 The item that previously gated acceptance — the live fundamental feature path — is now
 implemented, proven, and tested.
