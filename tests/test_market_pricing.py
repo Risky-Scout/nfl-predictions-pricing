@@ -97,6 +97,46 @@ def test_post_kickoff_and_future_quotes_rejected():
     assert mp.audit["books_retained"] == 3
 
 
+def test_calibration_serve_parity_on_fixture():
+    # The canonical serve path and a calibration-style replay must compute the same
+    # de-vigged, equal-mean consensus from the SAME quote fixture (shared primitives).
+    from nfl_hybrid.pricing.devig import devig_pair
+    quotes = pd.DataFrame(
+        _spread_book("b1", p_home=0.53, p_away=0.51)
+        + _spread_book("b2", p_home=0.52, p_away=0.52)
+        + _spread_book("b3", p_home=0.54, p_away=0.50)
+    )
+    serve = price_one_market(quotes, market="spread", as_of_utc=AS_OF,
+                             devig_method="proportional", consensus_method="equal_mean")
+    # calibration-style: de-vig each book's pair, equal-mean the home fair probs
+    fair = []
+    for _, bg in quotes.groupby("bookmaker_id"):
+        a = bg[bg["outcome_side"] == "home"]["raw_implied_probability"].iloc[0]
+        b = bg[bg["outcome_side"] == "away"]["raw_implied_probability"].iloc[0]
+        fair.append(devig_pair(float(a), float(b), "proportional")[0])
+    calib = float(np.mean(fair))
+    assert serve.fair_probability == pytest.approx(calib, abs=1e-12)
+    assert serve.reference_point == 3.0
+    assert serve.audit["devig_method_executed"] == "proportional"
+
+
+def test_independent_status_per_market():
+    # spread has 3 books; total has only 1 -> statuses/counts must be independent
+    quotes = pd.DataFrame(
+        sum((_spread_book(b) for b in ("b1", "b2", "b3")), [])
+        + [_quote("b1", "over", 45.0, 0.52, market="total"),
+           _quote("b1", "under", 45.0, 0.52, market="total")]
+    )
+    prices = price_game_markets(quotes, as_of_utc=AS_OF, artifact=_Artifact())
+    assert prices["spread"].status == "VALID_MARKET"
+    assert prices["spread"].audit["books_retained"] == 3
+    assert prices["total"].status == "INDICATIVE_ONLY"  # only 1 book
+    assert prices["total"].audit["books_retained"] == 1
+    assert prices["moneyline"].status == "INCOMPLETE_MARKET"
+    # spread's book count is NOT reused for total/moneyline
+    assert prices["total"].audit["books_retained"] != prices["spread"].audit["books_retained"]
+
+
 def test_price_game_markets_uses_artifact_methods():
     quotes = pd.DataFrame(
         sum((_spread_book(b) for b in ("b1", "b2", "b3")), [])

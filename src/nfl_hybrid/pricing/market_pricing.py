@@ -120,21 +120,28 @@ def price_one_market(
 
     fair = np.array(fair, float)
     n_books = len(fair)
-    ages = q[q["bookmaker_id"].isin(kept_books)]["age_min"].to_numpy()
+    kept = q[q["bookmaker_id"].isin(kept_books)]
+    ages = kept["age_min"].to_numpy()
+    ts = kept["book_ts"]
     audit = {
         "reference_point": ref,
-        "books_total": int(total_books),
+        "books_available": int(total_books),
+        "books_total": int(total_books),  # legacy alias
         "books_retained": n_books,
         "books_rejected_stale": stale_books,
-        "newest_quote_age_min": float(np.min(ages)) if len(ages) else None,
-        "oldest_quote_age_min": float(np.max(ages)) if len(ages) else None,
-        "median_quote_age_min": float(np.median(ages)) if len(ages) else None,
+        "oldest_quote_timestamp": str(ts.max()) if len(ts) else None,
+        "newest_quote_timestamp": str(ts.min()) if len(ts) else None,
+        "maximum_quote_age_minutes": float(np.max(ages)) if len(ages) else None,
+        "median_quote_age_minutes": float(np.median(ages)) if len(ages) else None,
+        "median_quote_age_min": float(np.median(ages)) if len(ages) else None,  # legacy alias
         "consensus_dispersion": float(np.std(fair)) if n_books > 1 else 0.0,
         "freshness_max_age_min": (cfg.max_age_near_minutes
                                   if (len(q) and (q["mtk_min"].min() <= cfg.near_kickoff_hours * 60))
                                   else cfg.max_age_far_minutes),
-        "devig_method": devig_method,
-        "consensus_method": consensus_method,
+        "devig_method_executed": devig_method,
+        "consensus_method_executed": consensus_method,
+        "devig_method": devig_method,  # legacy alias
+        "consensus_method": consensus_method,  # legacy alias
     }
 
     if n_books == 0:

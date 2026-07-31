@@ -48,6 +48,9 @@ def build_shadow_artifact(matrix: pd.DataFrame, features: list[str], *, code_com
         "training_cutoff_season": 2024,
         "holdout_excluded": 2025,
         "n_features": len(features),
+        "features": features,
+        "random_seed": int(model.config.random_state),
+        "train_seasons": "2020-2023", "calibration_season": 2024,
         "code_commit": code_commit,
         "model_sha256": hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest(),
     }
