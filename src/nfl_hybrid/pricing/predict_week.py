@@ -144,9 +144,41 @@ def main() -> None:
         injury_data_utc=args.injury_data_utc, preliminary=args.preliminary,
     )
 
+    # fundamental SHADOW columns (NULL when its EPA inputs are not in the live path;
+    # never the market probability). Production stays the market baseline.
+    from nfl_hybrid.pricing.fundamental_shadow import attach_shadow_columns, load_shadow, score_shadow
+
+    _, _, shadow_meta = load_shadow()
+    fundamental = score_shadow(priceable)  # None unless EPA features are present
+    fstatus = "AVAILABLE" if fundamental is not None else "NO_PREGAME_EPA_STATE_IN_LIVE_PATH"
+    card = attach_shadow_columns(
+        card, fundamental, status=fstatus,
+        artifact_version=(shadow_meta or {}).get("artifact"),
+    )
+
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     card.to_csv(out, index=False)
+
+    # immutable run manifest for replay/audit
+    import hashlib as _hashlib
+    import json as _json
+    manifest = {
+        "season": args.season, "week": str(args.week), "as_of_utc": as_of,
+        "horizon": "preliminary" if args.preliminary else "live",
+        "code_commit": getattr(artifact, "code_commit", "unknown"),
+        "calibration_artifact_sha256": getattr(artifact, "artifact_sha256", "none"),
+        "fundamental_artifact": (shadow_meta or {}).get("artifact", "NO_FROZEN_FUNDAMENTAL_ARTIFACT"),
+        "fundamental_input_status": fstatus,
+        "injury_data_utc": args.injury_data_utc or "MISSING",
+        "games": int(priceable["game_id"].nunique()),
+        "card_rows": int(len(card)),
+        "card_status_counts": card["card_status"].value_counts().to_dict() if "card_status" in card else {},
+        "market_status_counts": (games["market_status"].value_counts().to_dict() if "market_status" in games else {}),
+        "production_source": "MARKET_BASELINE",
+        "card_sha256": _hashlib.sha256(out.read_bytes()).hexdigest(),
+    }
+    (out.parent / f"run_manifest_wk{args.week}.json").write_text(_json.dumps(manifest, indent=2, sort_keys=True, default=str))
 
     bets = int(card["should_bet"].sum())
     n_no_price = int((card["card_status"] == "NO_PRICE").sum()) if "card_status" in card else 0

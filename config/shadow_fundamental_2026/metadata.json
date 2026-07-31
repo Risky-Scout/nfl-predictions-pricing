@@ -1,0 +1,9 @@
+{
+  "artifact": "shadow_fundamental_2026.v1",
+  "code_commit": "43705fea94f1a042c588c7ba126621835401a087",
+  "holdout_excluded": 2025,
+  "model_sha256": "69848cde4713700d44e9f95e8bec9016f4029fc17062c6721362736264211d1f",
+  "n_features": 19,
+  "spec": "JointScoreModel + EPA (frozen C4 challenger)",
+  "training_cutoff_season": 2024
+}

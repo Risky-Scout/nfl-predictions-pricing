@@ -1,0 +1,21 @@
+{
+  "as_of_utc": "2026-07-30T18:00:00Z",
+  "calibration_artifact_sha256": "d5c7b5b9cea3bc3931f59a6fae751447b3c4b9938258932dd50d02dc2c27a6db",
+  "card_rows": 48,
+  "card_sha256": "f730de2562caf2e7e6b91bf6300c9ded42b9edac53ba45208c4610937c11aad1",
+  "card_status_counts": {
+    "PRELIMINARY": 48
+  },
+  "code_commit": "c99be7b33bc7b07f755bef921b4fbfecc7d7d752",
+  "fundamental_artifact": "shadow_fundamental_2026.v1",
+  "fundamental_input_status": "NO_PREGAME_EPA_STATE_IN_LIVE_PATH",
+  "games": 16,
+  "horizon": "preliminary",
+  "injury_data_utc": "MISSING_NO_FEED",
+  "market_status_counts": {
+    "VALID_MARKET": 16
+  },
+  "production_source": "MARKET_BASELINE",
+  "season": 2026,
+  "week": "1"
+}
