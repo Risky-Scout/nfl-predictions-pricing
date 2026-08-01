@@ -164,8 +164,8 @@ separately, never scored as win/loss. **Production recommendation:
 
 **Artifacts.** `WEEK1_SHADOW_RELIABILITY_REPORT.md`,
 `reports/week1_shadow_reliability_2026.json` (source of truth; sha256
-`0cc04d3b…`), deterministic ledger `reports/week1_shadow_reliability_ledger.csv`
-(sha256 `07553283…`, 3657 rows). CI-safe evaluator tests
+`e2975230…`), deterministic ledger `reports/week1_shadow_reliability_ledger.csv`
+(deterministic frame sha256 `07553283…`, 3657 rows; unchanged). CI-safe evaluator tests
 (`tests/test_week1_shadow_reliability.py`, 37 tests, zero skips) run on Python
 3.11 and 3.14. The evaluator is byte-reproducible across runs.
 
