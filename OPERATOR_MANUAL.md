@@ -196,6 +196,33 @@ market and stake nothing. That is a successful sharp book, not a failure.
 
 ---
 
+## 6b. Model acceptance status (as of Stage 3)
+- **Step 1 — final-before-as-of / in-progress handling:** PASS.
+- **Step 2 — core live/training parity & leakage tests in CI:** PASS.
+- **Step 3 — Week 1 shadow reliability evaluation:** PASS (evaluation merged & verified).
+- **Overall model status: NOT READY.**
+- **Next pending stage: 4 — make `run_week` fail closed and correct injury timestamp semantics.**
+
+What Step 3 does and does **not** mean:
+- Stage 3 **evaluates historical reliability** of the frozen
+  `market_augmented_epa_rest_shadow` model. `fundamental_probability` is generated
+  by that market-augmented shadow model and is **not independent of the market**.
+- It **does not establish betting edge** and **does not promote the shadow model**.
+  Production stays `MARKET_BASELINE` (`production_probability == market_probability`).
+- The market comparison is **closing-line / schedule-reference** historical
+  reliability; it **does not establish T-60 or T-10 reliability**.
+- **Production live shadow availability still depends on a verified finality
+  source.** Historical evaluation used the documented
+  `HISTORICAL_AVAILABILITY_ASSUMPTION` (replay), never verified finality.
+- Pooled Week 1 OOF (n = 64 < 100) → all markets `INCONCLUSIVE_SMALL_SAMPLE`;
+  recommendation `RETAIN_MARKET_BASELINE_AND_MONITOR_SHADOW`. See
+  `WEEK1_SHADOW_RELIABILITY_REPORT.md` and `reports/week1_shadow_reliability_2026.json`.
+- Reproduce locally (needs the private backfill):
+  `PYTHONPATH=src python3 scripts/evaluate_week1_shadow_reliability.py`. Evaluator
+  correctness is enforced in CI by `tests/test_week1_shadow_reliability.py` (no skips).
+
+---
+
 ## 7. If something breaks
 - **Card won't generate:** check `lines_wkNN.csv` exists and has `PRICED` rows.
 - **`FileExistsError` on logging:** the week's record already exists and is immutable
