@@ -195,9 +195,10 @@ the shadow consumed:
 Contract match is **exact by construction** (same game, market, side, point;
 coherent two-way pair). Consensus is trivial (single reference source →
 equal-mean of one). **Timing:** `line_reference_type = nflverse_schedule_reference`,
-`line_timestamp_known = false`, no timestamp. This is labeled a
-**schedule-reference closing-line proxy**. This is the market baseline for the
-headline shadow-vs-market comparison, giving **identical paired games across all
+`line_timestamp_known = false`, no timestamp. This is labeled
+**schedule-reference historical reliability with unknown quote timestamp**
+(see the 2026-08-01 terminology amendment in the Amendments section). This is the market baseline for
+the headline shadow-vs-market comparison, giving **identical paired games across all
 folds including 2025**.
 
 **SECONDARY market cross-check — real multi-book `CLOSING` (2022–2024 only).**
@@ -209,9 +210,11 @@ equals the shadow's reference contract point (spread/total); otherwise it is
 excluded as `CONTRACT_MISMATCH`. Coverage losses and exclusion reasons are
 reported. This is a robustness cross-check, not the primary comparison.
 
-**Labels & prohibitions.** The analysis is labeled **closing-line historical
-reliability**. Closing-line (and schedule-reference) evaluation does **not**
-prove T-60 or T-10 reliability; those horizons are not fabricated. No
+**Labels & prohibitions.** The analysis is labeled **schedule-reference historical
+reliability with unknown quote timestamp** (see the 2026-08-01 terminology
+amendment in the Amendments section). Because the primary reference market has
+`line_timestamp_known = false`, this evaluation does **not** prove closing-line,
+T-60, or T-10 reliability; those horizons are not fabricated. No
 post-kickoff quote is used. No mixing of different spread points (e.g. −2.5 vs
 −3) or different total points. Market-vs-shadow comparisons use only paired rows
 whose probabilities refer to the identical contract.
@@ -374,5 +377,39 @@ hash, JSON report hash, and Markdown numerical content. Fixed seeds: model
 
 ## Amendments
 
-*(none yet — any post-hoc correction is appended here, dated, describing the
-implementation defect fixed without changing a substantive decision rule.)*
+### 2026-08-01 — Terminology correction (market-timing label)
+
+**Scope: terminology only.** No evaluation population, metric definition,
+threshold, classification, sample, ledger row, production artifact, or production
+decision changes.
+
+The primary reference market has `line_timestamp_known = false` and carries no
+known quote timestamp. Earlier phrasings that labeled the analysis
+"closing-line historical reliability" (or a "schedule-reference closing-line
+proxy") are corrected to **"schedule-reference historical reliability with
+unknown quote timestamp."** Exact game/side/point contracts are matched;
+proportional de-vig and equal-mean consensus (single reference source) are used
+where applicable. Because quote timing is unknown, this evaluation does **not**
+establish closing-line, T-60, or T-10 reliability.
+
+### 2026-08-01 — Provenance semantics
+
+**Scope: provenance/reporting only.** No evaluation population, metric,
+threshold, classification, sample, or result changes; the deterministic ledger
+hash is unchanged.
+
+The report records provenance as:
+- `registry_commit = a7d48a3d246d4e2f2da0706ae98aab16338eea42` — the frozen
+  pre-registration commit.
+- `generated_from_commit` — the committed evaluator-source snapshot that
+  generated the reports (the first forward-fix commit). It is **not** the
+  pre-registration commit and **not** the result commit that stores the report
+  (embedding the latter would be circular).
+- Deterministic source/config content hashes: `registry_file_sha256`,
+  `evaluator_module_sha256`, `evaluator_script_sha256`,
+  `test_fixture_manifest_sha256`, `production_shadow_artifact_sha256`,
+  `pricing_artifact_sha256`, and `feature_contract_sha256`
+  (= `sha256(json.dumps(FROZEN_FEATURES))`, matching §2).
+
+These identify evaluator-code, fixture, and artifact identity by content hash
+rather than a live Git HEAD, so the report remains byte-reproducible.

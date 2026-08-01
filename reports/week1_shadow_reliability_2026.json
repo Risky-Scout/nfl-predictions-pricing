@@ -220,7 +220,7 @@
       "train_max_season": 2023
     }
   ],
-  "generated_from_commit": "a7d48a3d246d4e2f2da0706ae98aab16338eea42",
+  "generated_from_commit": "11daeef7f0bc88fcd6ee8e864b74a8465cbca2e9",
   "holdout_2025_integrity": {
     "2025_used_in_calibration": false,
     "2025_used_in_fitting": false,
@@ -820,13 +820,18 @@
   },
   "market_timing": {
     "consensus": "equal_mean (single reference source)",
+    "contract_matching": "exact game/side/point contracts matched",
     "devig": "proportional",
+    "interpretation": "Exact game/side/point contracts were matched; proportional de-vig and equal-mean consensus were used where applicable; quote timing is unknown. These results do NOT prove closing-line, T-60, or T-10 reliability.",
+    "line_timestamp_known": false,
     "not_proven": [
+      "closing-line",
       "T-60",
       "T-10"
     ],
     "primary_horizon": "SCHEDULE_REFERENCE (line_timestamp_known=false)",
-    "primary_label": "closing-line historical reliability (schedule-reference proxy)"
+    "primary_label": "schedule-reference historical reliability with unknown quote timestamp",
+    "quote_timing": "unknown"
   },
   "metrics": {
     "moneyline": {
@@ -1461,12 +1466,23 @@
     }
   },
   "production": {
-    "historical_live_availability_limitation": "Production live shadow availability still depends on a verified finality source; closing-line/schedule-reference evaluation does not prove T-60 or T-10 reliability.",
+    "historical_live_availability_limitation": "Production live shadow availability still depends on a verified finality source; schedule-reference evaluation with unknown quote timestamp does not prove closing-line, T-60, or T-10 reliability.",
     "overall_model_status": "NOT_READY",
     "production_probability_equals_market": true,
     "production_probability_source": "MARKET_BASELINE",
     "recommendation": "RETAIN_MARKET_BASELINE_AND_MONITOR_SHADOW",
     "shadow_promoted": false
+  },
+  "provenance": {
+    "evaluator_module_sha256": "58f7a155e93283fe9ad22cfaf4cacb34ffa2b1667590409a35d6cef55d43f3be",
+    "evaluator_script_sha256": "f8948c9f58bcdc8b2888c214923520f775a4111c8bd4e64676b6f36444ff00eb",
+    "feature_contract_sha256": "a39674d9863dad47b111b42bf9745abedb7ca7441f6ef3c6545cc9a3322eae5f",
+    "generated_from_commit": "11daeef7f0bc88fcd6ee8e864b74a8465cbca2e9",
+    "pricing_artifact_sha256": "1bf49b8db1927124d090ccee33633d35843fa6d7a5f58c7fa1d79809b00cf3d0",
+    "production_shadow_artifact_sha256": "69848cde4713700d44e9f95e8bec9016f4029fc17062c6721362736264211d1f",
+    "registry_commit": "a7d48a3d246d4e2f2da0706ae98aab16338eea42",
+    "registry_file_sha256": "26d225a0e8a26009f3a19ac97edeb7a81293c8aca7f5d73006e839807e3bbfee",
+    "test_fixture_manifest_sha256": "42863d837a8d3aabc6bbe688f03f33ca858453dbc679dd2832fa087674fac4a2"
   },
   "registry_commit": "a7d48a3d246d4e2f2da0706ae98aab16338eea42",
   "reliability_status": {

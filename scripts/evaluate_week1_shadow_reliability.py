@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -323,16 +324,76 @@ def determinism_check(matrix, games, market_ref):
 
 REGISTRY_COMMIT = "a7d48a3d246d4e2f2da0706ae98aab16338eea42"
 
+# Repository root, resolved from this file's location so provenance hashing is
+# independent of the working directory.
+ROOT = Path(__file__).resolve().parents[1]
+REGISTRY_FILE = "docs/model-selection/week1-shadow-reliability-2026/registry.md"
+EVALUATOR_MODULE = "src/nfl_hybrid/evaluation/week1_reliability.py"
+EVALUATOR_SCRIPT = "scripts/evaluate_week1_shadow_reliability.py"
+FIXTURE_DIR = "tests/fixtures/week1_reliability"
+PRODUCTION_SHADOW_ARTIFACT = "config/shadow_fundamental_2026/jointscore_epa.joblib"
+PRICING_ARTIFACT = "config/pricing_calibration_2026.json"
+
+
+def _sha256_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _fixture_manifest_sha256(fixture_dir: Path) -> str:
+    """Deterministic hash over the {relpath: content sha256} manifest of a directory."""
+    manifest = {
+        str(p.relative_to(fixture_dir)).replace("\\", "/"): _sha256_file(p)
+        for p in sorted(fixture_dir.rglob("*")) if p.is_file()
+    }
+    return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
+
+
+UNCOMMITTED_SOURCE_SNAPSHOT = "UNCOMMITTED_SOURCE_SNAPSHOT"
+
+
+def build_provenance(generated_from_commit: str) -> dict:
+    """Deterministic source provenance.
+
+    ``registry_commit`` records the pre-registration commit (the frozen protocol).
+    ``generated_from_commit`` records the committed evaluator-source snapshot that
+    produced this report (NOT the pre-registration commit and NOT the result commit
+    that stores this report — that would be circular). Evaluator-code, fixture, and
+    artifact identity are additionally captured by content hashes of the actual
+    source/config files, so the report is byte-reproducible and does not depend on
+    the live Git HEAD. ``feature_contract_sha256`` is ``sha256(json.dumps(FROZEN_FEATURES))``,
+    the value pre-registered in the registry.
+    """
+    return {
+        "registry_commit": REGISTRY_COMMIT,
+        "generated_from_commit": generated_from_commit,
+        "registry_file_sha256": _sha256_file(ROOT / REGISTRY_FILE),
+        "evaluator_module_sha256": _sha256_file(ROOT / EVALUATOR_MODULE),
+        "evaluator_script_sha256": _sha256_file(ROOT / EVALUATOR_SCRIPT),
+        "test_fixture_manifest_sha256": _fixture_manifest_sha256(ROOT / FIXTURE_DIR),
+        "production_shadow_artifact_sha256": _sha256_file(ROOT / PRODUCTION_SHADOW_ARTIFACT),
+        "pricing_artifact_sha256": _sha256_file(ROOT / PRICING_ARTIFACT),
+        "feature_contract_sha256": hashlib.sha256(
+            json.dumps(FROZEN_FEATURES).encode()).hexdigest(),
+    }
+
 
 def run_evaluation(matrix: pd.DataFrame, games: pd.DataFrame,
-                   market_ref: pd.DataFrame) -> tuple[dict, pd.DataFrame]:
-    """Assemble the full report + ledger from injected frames (no file I/O).
+                   market_ref: pd.DataFrame,
+                   generated_from_commit: str | None = None) -> tuple[dict, pd.DataFrame]:
+    """Assemble the full report + ledger from injected frames.
 
     Used by ``main()`` (real backfill data) and by the CI test (synthetic fixture).
+    Reads only frozen source/config files for deterministic provenance hashing;
+    never writes to or mutates any production artifact.
+
+    ``generated_from_commit`` identifies the committed evaluator-source snapshot
+    used to generate the report. It is resolved from the ``GENERATED_FROM_COMMIT``
+    environment variable when not passed explicitly, and defaults to a sentinel
+    for uncommitted/test runs. It is never the result commit that stores the report.
     """
-    # Provenance is pinned to the pre-registration commit (not the live git HEAD) so the
-    # report is byte-reproducible across commits and machines.
-    commit = REGISTRY_COMMIT
+    if generated_from_commit is None:
+        generated_from_commit = os.environ.get(
+            "GENERATED_FROM_COMMIT", UNCOMMITTED_SOURCE_SNAPSHOT)
 
     ledger, fold_meta = build_ledger(matrix, games, market_ref)
     ledger_hash = wr.deterministic_frame_hash(ledger, LEDGER_COLUMNS)
@@ -383,8 +444,12 @@ def run_evaluation(matrix: pd.DataFrame, games: pd.DataFrame,
 
     report = {
         "schema_version": SCHEMA_VERSION,
-        "generated_from_commit": commit,
-        "registry_commit": "a7d48a3d246d4e2f2da0706ae98aab16338eea42",
+        # registry_commit = frozen pre-registration commit; generated_from_commit =
+        # the committed evaluator-source snapshot that produced this report (not the
+        # pre-registration commit, not the result commit). See `provenance`.
+        "generated_from_commit": generated_from_commit,
+        "registry_commit": REGISTRY_COMMIT,
+        "provenance": build_provenance(generated_from_commit),
         "evaluation_only": True,
         "terminology": {
             "model_name": "market_augmented_epa_rest_shadow",
@@ -414,10 +479,17 @@ def run_evaluation(matrix: pd.DataFrame, games: pd.DataFrame,
                           "until a verified finality source is connected."),
         },
         "market_timing": {
-            "primary_label": "closing-line historical reliability (schedule-reference proxy)",
+            "primary_label": "schedule-reference historical reliability with unknown quote timestamp",
             "primary_horizon": "SCHEDULE_REFERENCE (line_timestamp_known=false)",
-            "not_proven": ["T-60", "T-10"],
+            "line_timestamp_known": False,
+            "contract_matching": "exact game/side/point contracts matched",
             "devig": "proportional", "consensus": "equal_mean (single reference source)",
+            "quote_timing": "unknown",
+            "not_proven": ["closing-line", "T-60", "T-10"],
+            "interpretation": (
+                "Exact game/side/point contracts were matched; proportional de-vig and "
+                "equal-mean consensus were used where applicable; quote timing is unknown. "
+                "These results do NOT prove closing-line, T-60, or T-10 reliability."),
         },
         "samples_and_coverage": samples,
         "metrics": metrics,
@@ -454,7 +526,8 @@ def run_evaluation(matrix: pd.DataFrame, games: pd.DataFrame,
             "overall_model_status": "NOT_READY",
             "historical_live_availability_limitation": (
                 "Production live shadow availability still depends on a verified finality "
-                "source; closing-line/schedule-reference evaluation does not prove T-60 or T-10 reliability."),
+                "source; schedule-reference evaluation with unknown quote timestamp does not "
+                "prove closing-line, T-60, or T-10 reliability."),
         },
         "ledger": {
             "path": str(LEDGER_CSV), "schema": LEDGER_COLUMNS,
@@ -551,9 +624,20 @@ def render_markdown(r: dict) -> str:
     L.append(f"- Model joblib sha256: `{a['model_sha256']}`.")
     L.append(f"- **{r['terminology']['statement']}**")
     L.append(f"- Market-augmenting features: {', '.join(r['terminology']['market_augmented_features'])}.\n")
-    L.append("## 3. Pre-registration & data\n")
-    L.append(f"- Registry commit: `{r['registry_commit']}` (committed & pushed before any outcome metric).")
-    L.append(f"- Generated from commit: `{r['generated_from_commit']}`.")
+    L.append("## 3. Pre-registration, provenance & data\n")
+    p = r["provenance"]
+    L.append(f"- Registry commit (pre-registration, frozen before any outcome metric): `{r['registry_commit']}`.")
+    L.append("- Generated-from commit (committed evaluator-source snapshot that produced this "
+             f"report; not the pre-registration commit, not the result commit): `{r['generated_from_commit']}`.")
+    L.append("- Evaluator-code and artifact identity are recorded as deterministic source-file "
+             "sha256 hashes (not a Git HEAD):")
+    L.append(f"  - registry file: `{p['registry_file_sha256']}`")
+    L.append(f"  - evaluator module: `{p['evaluator_module_sha256']}`")
+    L.append(f"  - evaluator script: `{p['evaluator_script_sha256']}`")
+    L.append(f"  - test fixture manifest: `{p['test_fixture_manifest_sha256']}`")
+    L.append(f"  - production shadow artifact: `{p['production_shadow_artifact_sha256']}`")
+    L.append(f"  - pricing artifact: `{p['pricing_artifact_sha256']}`")
+    L.append(f"  - feature contract: `{p['feature_contract_sha256']}`")
     L.append(f"- Available seasons: {r['data_sources']['available_seasons']}; reference-market seasons: "
              f"{r['data_sources']['reference_market_seasons']}; timestamped closing-odds seasons: "
              f"{r['data_sources']['timestamped_closing_odds_seasons']}.\n")
@@ -571,11 +655,13 @@ def render_markdown(r: dict) -> str:
     L.append("")
     L.append("## 6. As-of & market timing\n")
     L.append(f"- {r['as_of_semantics']['statement']}")
-    L.append(f"- Market timing: {r['market_timing']['primary_label']}; horizon "
-             f"`{r['market_timing']['primary_horizon']}`; de-vig={r['market_timing']['devig']}, "
-             f"consensus={r['market_timing']['consensus']}.")
-    L.append(f"- **Not proven:** {', '.join(r['market_timing']['not_proven'])} reliability "
-             "(closing-line/schedule-reference evaluation does not establish these horizons).\n")
+    mt = r["market_timing"]
+    L.append(f"- Market timing: {mt['primary_label']}; horizon "
+             f"`{mt['primary_horizon']}`; contract matching = {mt['contract_matching']}; "
+             f"de-vig={mt['devig']}, consensus={mt['consensus']}; quote timing = {mt['quote_timing']}.")
+    L.append(f"- **Not proven:** {', '.join(mt['not_proven'])} reliability "
+             "(schedule-reference evaluation with unknown quote timestamp does not establish these horizons).")
+    L.append(f"- {mt['interpretation']}\n")
     L.append("## 7. Sample & coverage\n")
     L.append("| Population | Games | ML graded (ties) | Spread graded (push) | Total graded (push) |")
     L.append("|---|---|---|---|---|")
@@ -633,7 +719,7 @@ def render_markdown(r: dict) -> str:
     L.append("## 15. Limitations\n")
     L.append("- Stage 3 evaluates **historical reliability only**; it does not establish betting edge and does not promote the shadow model.")
     L.append("- Pooled Week 1 OOF sample (64 games) is below the 100-game conclusive threshold; per-market statuses are `INCONCLUSIVE_SMALL_SAMPLE` by pre-registration.")
-    L.append("- The market baseline is a **schedule-reference closing-line proxy** (`line_timestamp_known=false`); closing-line evaluation does **not** prove T-60 or T-10 reliability.")
+    L.append("- The market baseline is a **schedule-reference** market with **unknown quote timestamp** (`line_timestamp_known=false`); it does **not** prove closing-line, T-60, or T-10 reliability.")
     L.append("- `fundamental_probability` is the market-augmented shadow output and is **not** independent of the market.")
     L.append("- Production live shadow availability still depends on a verified finality source.\n")
     L.append("## 16. Reproducibility\n")
