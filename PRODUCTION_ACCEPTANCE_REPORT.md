@@ -121,7 +121,10 @@ shadow reliability evaluation.
 
 ---
 
-## Step 3 — Week 1 shadow reliability evaluation: **PASS (evaluation-only; merged & verified)**
+## Step 3 — Week 1 shadow reliability evaluation: **Stage 3 evaluation result: COMPLETE (evaluation-only)**
+
+**Repository acceptance** requires PR + CI (Python 3.11 and 3.14) + clean-main
+verification; the final merged status is recorded in git history once those pass.
 
 **Scope.** A pre-registered, leakage-safe, reproducible historical-reliability
 evaluation of the frozen `market_augmented_epa_rest_shadow` model
@@ -148,8 +151,8 @@ row enters any fold's imputation, preprocessing, calibration, or fitting.
 **Market comparison.** Primary baseline = exact-contract proportional-de-vigged
 **schedule-reference** market (`line_timestamp_known=false`), matched at the same
 `home_spread`/`total_line` the shadow consumes; identical paired games across all
-folds. This is **closing-line historical reliability** and does **not** prove
-T-60 or T-10 reliability.
+folds. This is **schedule-reference historical reliability with unknown quote
+timestamp** and does **not** establish closing-line, T-60, or T-10 reliability.
 
 **Result (population B, pooled Week 1 OOF).** All three markets:
 `INCONCLUSIVE_SMALL_SAMPLE` (n = 64 < 100 conclusive threshold). Shadow−market

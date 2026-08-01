@@ -199,7 +199,7 @@ market and stake nothing. That is a successful sharp book, not a failure.
 ## 6b. Model acceptance status (as of Stage 3)
 - **Step 1 — final-before-as-of / in-progress handling:** PASS.
 - **Step 2 — core live/training parity & leakage tests in CI:** PASS.
-- **Step 3 — Week 1 shadow reliability evaluation:** PASS (evaluation merged & verified).
+- **Step 3 — Week 1 shadow reliability evaluation:** Stage 3 evaluation result: COMPLETE (evaluation-only). Repository acceptance requires PR + CI (Python 3.11/3.14) + clean-main verification.
 - **Overall model status: NOT READY.**
 - **Next pending stage: 4 — make `run_week` fail closed and correct injury timestamp semantics.**
 
@@ -209,8 +209,9 @@ What Step 3 does and does **not** mean:
   by that market-augmented shadow model and is **not independent of the market**.
 - It **does not establish betting edge** and **does not promote the shadow model**.
   Production stays `MARKET_BASELINE` (`production_probability == market_probability`).
-- The market comparison is **closing-line / schedule-reference** historical
-  reliability; it **does not establish T-60 or T-10 reliability**.
+- The market comparison is **schedule-reference historical reliability with
+  unknown quote timestamp** (`line_timestamp_known=false`); it **does not
+  establish closing-line, T-60, or T-10 reliability**.
 - **Production live shadow availability still depends on a verified finality
   source.** Historical evaluation used the documented
   `HISTORICAL_AVAILABILITY_ASSUMPTION` (replay), never verified finality.
