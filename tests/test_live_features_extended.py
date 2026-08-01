@@ -1,7 +1,11 @@
-"""Live/training feature parity + leakage tests for build_live_augmented_features.
+"""EXTENDED full-data live/training parity + leakage tests.
 
-These exercise the real feature pipeline, so they require the 2020-2025 backfill
-parquets; the module skips cleanly when those are absent (e.g. minimal CI).
+These exercise the real feature pipeline against the private 2020-2025 backfill
+parquets, so they are marked ``extended_data`` and skip cleanly when that large
+local data is unavailable (e.g. GitHub CI). They complement — they do NOT replace
+— the committed-fixture core suite in :mod:`tests.test_live_features_ci`, which
+runs on every push with zero skips. Do not rely on this module as the sole
+regression gate.
 """
 
 import os
@@ -18,10 +22,13 @@ from nfl_hybrid.features.augmented_matrix import (
 
 GAMES = "data/backfill_2020_2025/canonical/games.parquet"
 PBP = "data/backfill_2020_2025/raw/pbp.parquet"
-pytestmark = pytest.mark.skipif(
-    not (os.path.exists(GAMES) and os.path.exists(PBP)),
-    reason="backfill parquets not present",
-)
+pytestmark = [
+    pytest.mark.extended_data,
+    pytest.mark.skipif(
+        not (os.path.exists(GAMES) and os.path.exists(PBP)),
+        reason="backfill parquets not present (extended_data)",
+    ),
+]
 
 
 @pytest.fixture(scope="module")

@@ -38,11 +38,86 @@ evidence → UNKNOWN in live); **suspended** game excluded regardless of duratio
 completion-after-as_of excluded; post-as_of kickoff; **historical-mode separation**
 (availability True, verified False, source labelled); live mode never uses the assumption;
 determinism; invalid-mode rejected. End-to-end no-partial-aggregation and live-mode-null
-integration tests in `tests/test_live_features.py`. Historical live/training parity in
+integration tests in `tests/test_live_features_extended.py` (full-data, `extended_data`)
+and `tests/test_live_features_ci.py` (committed fixtures). Historical live/training parity in
 `historical_replay` mode is **unchanged** (max |Δ| = 0.0, identical NaN, 2024 wk10 / 2022
 wk14). Live mode is not made less strict to preserve parity.
 
 **Overall model acceptance: NOT READY.** Next pending stage: Step 2.
+
+---
+
+## Step 2 — core live/training parity & leakage tests execute in normal CI: **PASS (after merge)**
+
+**Previous CI coverage gap.** The core parity/leakage module
+(then `tests/test_live_features.py`, now split into the CI/extended pair below) carried a module-level
+`pytest.mark.skipif(not backfill_files_exist, …)` on the private, git-ignored
+`data/backfill_2020_2025/` parquets. Those parquets are never present on the GitHub
+runner, so **every** one of the module's live-feature guarantees (all-19-feature
+train/live parity, identical NaN patterns, target-score / target-play-by-play /
+future-game invariance, post-as-of and in-progress exclusion, duplicate-target
+rejection, deterministic hashing) **silently skipped in CI**. Local full-data
+validation was real but could not be the sole regression gate.
+
+**Compact committed fixture.** A small, fully synthetic, deterministic fixture now
+lives under `tests/fixtures/live_features/` (`games.csv`, `pbp.csv`,
+`expected_features.csv`, `fixture_manifest.json`) — synthetic NFL-like teams
+(BUF/MIA/NYJ/NE) across two seasons, no private backfill, no purchased odds, no
+provider payloads, no credentials. It drives the **real** production pipeline
+(`aggregate_advanced_team_game → build_team_pregame_features →
+build_game_pregame_matrix → _diff_features/_rest_features →
+build_augmented_feature_matrix / build_live_augmented_features →
+resolve_finality_before_asof`). A deterministic factory
+(`tests/fixtures/live_features/factory.py`) is setup-only; the golden expected
+outputs are **committed fixed data**, not regenerated during the test.
+
+**Three target regimes** (different weeks/seasons):
+- **A** `2021_05_BUF_NYJ` — complete last-four + valid season-to-date history.
+- **B** `2022_01_MIA_BUF` — early-season / season-boundary missingness (2022
+  season-to-date features NaN by design; last-four present across the boundary).
+- **C** `2022_03_NE_BUF` — mid-season, Thursday kickoff exercising the short-week flag.
+Plus `2022_04_MIA_BUF` (upcoming target with no outcome and no play-by-play) and
+`2021_04_BUF_MIA` (explicit non-final `IN_PROGRESS`, retrospective scores, partial
+play-by-play — excluded in live mode, available only under the replay availability
+assumption).
+
+**Golden-output protection.** Both the historical training path and the live path
+are compared **independently** to the committed `expected_features.csv` (tol
+`1e-10`, exact missingness), and training is compared to live — so a *joint* drift
+of both paths is caught. Golden values are never recomputed-and-self-compared, and
+never rewritten during a test. Changing them requires the manual, `--overwrite`-gated
+`scripts/regenerate_live_feature_ci_fixture.py`, which prints old/new hashes.
+
+**Core vs extended separation.**
+- `tests/test_live_features_ci.py` — committed fixtures only, **no skip markers**,
+  runs on every supported Python version. A guard test asserts the exact collected
+  count (26) and that none of the module's tests carry `skip`/`skipif`.
+- `tests/test_live_features_extended.py` — the pre-existing full-data suite (11
+  tests), now marked `extended_data`, skipping only when the large local backfill is
+  absent. The `extended_data` marker is registered in `pyproject.toml`.
+
+**CI enforcement.** `.github/workflows/tests.yml` runs an explicit named step —
+*"Core live-feature parity/leakage tests (must not skip)"* — before the full suite
+on **Python 3.11 and 3.14**; it fails if the module reports any `skipped`/`no tests
+ran` and requires `26 passed`. Extended-data skips are **not** counted as failures.
+
+**Counts / runtime (this environment).**
+- Core CI module: **26 collected, 26 passed, 0 skipped**, ~7.4 s (< 10 s target).
+- Extended module: **11 collected, 11 passed** locally (backfill present); would skip in CI.
+- Full suite: **318 passed** locally.
+- Fixture total size ≈ 36 KB (37,207 bytes: `pbp.csv` 32,402 · `games.csv` 1,894 ·
+  `expected_features.csv` 1,125 · `fixture_manifest.json` 1,786).
+- `games.csv` sha256 `5276293e…`, `pbp.csv` sha256 `84225cb1…`,
+  `expected_features.csv` sha256 `58a8115c…` (full values in `fixture_manifest.json`).
+
+**No model/calibration changes.** No frozen feature definition, formula, coefficient,
+imputation, calibration, pricing surface, de-vig, consensus, selection rule, weekly
+orchestration, injury handling, or Step-1 finality policy was touched — Step 2 is
+tests + fixtures + CI wiring only. Passing these feature tests proves parity and
+leakage-safety of the feature assembly; it does **not** prove predictive calibration.
+
+**Overall model acceptance: NOT READY.** Next pending stage: Step 3 — Week-1-specific
+shadow reliability evaluation.
 
 ---
 
@@ -59,7 +134,7 @@ implemented, proven, and tested.
   sequence while the shift-then-roll builder uses only prior FINAL-before-`as_of` games.
   "Completed" = final score before `as_of` (in-progress early games excluded); per-play
   timestamp cutoff enforced; deterministic feature-snapshot hash; hard one-row-per-target
-  assertion; kickoff≤as_of and duplicate-target both fail. (tests/test_live_features.py, 9)
+  assertion; kickoff≤as_of and duplicate-target both fail. (tests/test_live_features_extended.py, 9)
 - **Non-null fundamental:** wired into `predict_week` via `--canonical-games/--play-by-play`.
   2024 wk10 replay: **42/42** fundamental probabilities non-null, finite, in [0,1], and
   **distinct** from market. 2026 Week-1 card: **48/48** fundamental AVAILABLE (6 season-to-date

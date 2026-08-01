@@ -46,6 +46,7 @@ checkpoints/
 
 logs/
 *.log
+core_ci_result.txt
 
 *sportradar_response*
 *odds_api_response*

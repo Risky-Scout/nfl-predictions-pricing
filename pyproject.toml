@@ -38,3 +38,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    "extended_data: full-data tests requiring the private local backfill (skipped in CI)",
+]

@@ -65,6 +65,19 @@ jobs:
         run: |
           "$PYTHON_BIN" -m compileall -q src examples
 
+      - name: Core live-feature parity/leakage tests (must not skip)
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pytest -q -W error::FutureWarning \
+            tests/test_live_features_ci.py | tee core_ci_result.txt
+          if grep -Eqi "skipped|no tests ran" core_ci_result.txt; then
+            echo "CORE LIVE-FEATURE PARITY/LEAKAGE TESTS SKIPPED — FAILING"
+            exit 1
+          fi
+          grep -Eq "26 passed" core_ci_result.txt
+          echo "core live-feature parity/leakage tests: PASS"
+          echo "skipped: 0"
+
       - name: Run tests
         shell: bash
         run: |
@@ -117,6 +130,19 @@ jobs:
         shell: bash
         run: |
           "$PYTHON_BIN" -m compileall -q src examples
+
+      - name: Core live-feature parity/leakage tests (must not skip)
+        shell: bash
+        run: |
+          "$PYTHON_BIN" -m pytest -q -W error::FutureWarning \
+            tests/test_live_features_ci.py | tee core_ci_result.txt
+          if grep -Eqi "skipped|no tests ran" core_ci_result.txt; then
+            echo "CORE LIVE-FEATURE PARITY/LEAKAGE TESTS SKIPPED — FAILING"
+            exit 1
+          fi
+          grep -Eq "26 passed" core_ci_result.txt
+          echo "core live-feature parity/leakage tests: PASS"
+          echo "skipped: 0"
 
       - name: Run tests
         shell: bash
