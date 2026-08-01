@@ -63,6 +63,25 @@ export THE_ODDS_API_KEY="<your key>"      # optional but needed for live lines/c
 (On Python 3.14 the editable import hook can fail silently — use 3.11/3.12, which
 this manual assumes. `PYTHONPATH=src` is the reliable path for scripts.)
 
+### Core vs extended live-feature tests
+The live/training feature-parity and leakage guarantees run in **two tiers**:
+- **Core (always in CI):** `tests/test_live_features_ci.py` uses only the small
+  committed synthetic fixtures under `tests/fixtures/live_features/` and **never
+  skips** (26 tests, ~7 s). GitHub CI runs it as its own named step on Python 3.11
+  and 3.14 and fails if it reports any `skipped`. Run it directly with
+  `PYTHONPATH=src pytest -q tests/test_live_features_ci.py`.
+- **Extended (local only):** `tests/test_live_features_extended.py` (marked
+  `extended_data`) replays the full private `data/backfill_2020_2025/` parquets and
+  **skips** wherever that data is absent. Run it when the backfill is present with
+  `PYTHONPATH=src pytest -q tests/test_live_features_extended.py`.
+
+The golden expected outputs (`expected_features.csv`) are committed fixed data. To
+intentionally change them, run the manual, `--overwrite`-gated generator and review
+the printed old/new hashes and the resulting diff — it never runs in CI:
+```bash
+PYTHONPATH=src python scripts/regenerate_live_feature_ci_fixture.py --overwrite
+```
+
 ---
 
 ## 1. The weekly sequence

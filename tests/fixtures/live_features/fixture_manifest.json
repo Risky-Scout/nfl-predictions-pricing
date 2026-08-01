@@ -1,0 +1,44 @@
+{
+  "creation_reason": "Step 2: run core live/training feature-parity and leakage tests in normal CI on committed synthetic fixtures instead of skipping when the private 2020-2025 backfill parquets are absent.",
+  "expected_features_csv_sha256": "58a8115cf45d0ebd7bfd63a75f263895054064307f0d81b6007dc4db3cce31f4",
+  "expected_snapshot_hashes": {
+    "2021_05_BUF_NYJ": "7c83345b78a5aab69b229d16ac26522e9ee70aa1a370b66f2d51cc401455ee3e",
+    "2022_01_MIA_BUF": "2067c8a2e9d4eb8d919bbabdb9ea8ec52622e647c9b0ad1bef1ed4d81cc2bc3f",
+    "2022_03_NE_BUF": "81bba81087144cab5a69e23b9b15feae1b2a78ae8eb9a41593ae4f51fad049ee"
+  },
+  "fixture_version": "1.0.0",
+  "frozen_features": [
+    "home_spread",
+    "total_line",
+    "epa_matchup_home_last4_mean",
+    "epa_matchup_away_last4_mean",
+    "epa_net_edge_last4_mean",
+    "success_rate_net_last4_mean",
+    "dropback_epa_net_last4_mean",
+    "rush_epa_net_last4_mean",
+    "epa_matchup_home_season_mean",
+    "epa_matchup_away_season_mean",
+    "epa_net_edge_season_mean",
+    "success_rate_net_season_mean",
+    "dropback_epa_net_season_mean",
+    "rush_epa_net_season_mean",
+    "home_rest_days",
+    "away_rest_days",
+    "rest_diff",
+    "home_short_week",
+    "away_short_week"
+  ],
+  "frozen_features_sha256": "a39674d9863dad47b111b42bf9745abedb7ca7441f6ef3c6545cc9a3322eae5f",
+  "games_csv_sha256": "5276293e27f7534bd49ce94656e7aa929b3a8a9185fc875a9008cc9db1ab29fa",
+  "pbp_csv_sha256": "84225cb18de20e0728ca71575c8513e56228460b28f706da33b8ae76809d35df",
+  "target_as_of_utc": {
+    "2021_05_BUF_NYJ": "2021-10-10T16:50:00+00:00",
+    "2022_01_MIA_BUF": "2022-09-11T16:50:00+00:00",
+    "2022_03_NE_BUF": "2022-09-22T16:50:00+00:00"
+  },
+  "target_game_ids": [
+    "2021_05_BUF_NYJ",
+    "2022_01_MIA_BUF",
+    "2022_03_NE_BUF"
+  ]
+}
