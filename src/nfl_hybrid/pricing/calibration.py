@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.metrics import brier_score_loss, log_loss
 
 from nfl_hybrid.data.team_ids import try_canonical_team_id
+from nfl_hybrid.labels import edge_to_nullable_binary
 from nfl_hybrid.pricing.devig import devig_pair
 from nfl_hybrid.pricing.margin_surface import (
     MarginSurface,
@@ -95,37 +96,75 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
     def moneyline_probs(surface: MarginSurface, test: pd.DataFrame) -> np.ndarray:
         return np.array([surface.moneyline_probabilities(s, baseline_sigma)[0] for s in test["closing_home_spread"]])
 
-    results = {}
-    # normal baseline
-    normal_losses, normal_y = [], []
+    # --- Build each fold's grading mask exactly once (shared by every surface) --- #
+    # For each test season the canonical no-tie moneyline target is derived a single
+    # time; `valid` selects only resolved (class 0/1) rows. Ties, missing and
+    # non-finite margins are pd.NA and are excluded IDENTICALLY from the normal
+    # surface, every empirical surface, the probability vectors, and every metric.
+    # A season with zero resolved outcomes is skipped entirely -- never producing an
+    # empty array that would reach np.concatenate or a metric function.
+    folds = []  # each: {"season", "test", "y", "valid"}
     for ts in TEST_SEASONS:
         test = margins[margins["season"] == ts]
-        surf = MarginSurface(method="normal")
-        p = moneyline_probs(surf, test)
-        y = (test["home_margin"] > 0).astype(int).to_numpy()
-        normal_losses.append(_pointwise_logloss(y, p)); normal_y.append((y, p))
-    normal_loss = np.concatenate(normal_losses)
-    yv = np.concatenate([a for a, _ in normal_y]); pv = np.concatenate([b for _, b in normal_y])
+        target = edge_to_nullable_binary(test["home_margin"])
+        valid = target.isin([0, 1]).to_numpy()
+        if not valid.any():
+            continue  # empty fold: no valid no-tie outcomes -> do not grade it at all
+        y = target.to_numpy(dtype="float64")[valid].astype(int)
+        folds.append({"season": ts, "test": test, "y": y, "valid": valid})
+
+    total_valid = int(sum(fold["y"].shape[0] for fold in folds))
+    if total_valid == 0:
+        # All configured folds were empty. Raise BEFORE any concatenate / metric /
+        # bootstrap / surface-selection so we never grade a tie as class zero or
+        # return NaN metrics as a spurious success.
+        raise ValueError(
+            "select_margin_surface: no valid non-tied moneyline outcomes "
+            "remain across the configured test seasons"
+        )
+
+    def grade(build_surface) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Score one surface across all non-empty folds using each fold's shared mask.
+
+        `build_surface(fold)` returns the surface to evaluate for that fold. The
+        probability vector is masked by the SAME `fold["valid"]` used to build
+        `fold["y"]`, so the normal and every empirical surface score identical rows
+        in identical order.
+        """
+        losses, ys = [], []
+        for fold in folds:
+            surf = build_surface(fold)
+            p = moneyline_probs(surf, fold["test"])[fold["valid"]]
+            y = fold["y"]
+            assert p.shape[0] == y.shape[0], "target/probability length mismatch"
+            losses.append(_pointwise_logloss(y, p))
+            ys.append((y, p))
+        loss = np.concatenate(losses)
+        yv = np.concatenate([a for a, _ in ys])
+        pv = np.concatenate([b for _, b in ys])
+        assert yv.shape[0] == pv.shape[0] == total_valid, "pooled grading length mismatch"
+        return loss, yv, pv
+
+    def _empirical_builder(bw):
+        def build(fold):
+            train = margins[margins["season"] < fold["season"]]
+            tbl = build_empirical_pmf_table(train, bucket_width=bw, baseline_sigma=baseline_sigma)
+            return MarginSurface(method="empirical", pmf_table=tbl, bucket_width=bw)
+        return build
+
+    results = {}
+    # normal baseline
+    normal_loss, yv, pv = grade(lambda fold: MarginSurface(method="normal"))
     results["normal_baseline"] = {
         "log_loss": float(normal_loss.mean()), "brier": float(brier_score_loss(yv, np.clip(pv, _EPS, 1 - _EPS))),
-        "ece": _equal_mass_ece(yv, pv), "pointwise": normal_loss,
+        "ece": _equal_mass_ece(yv, pv), "pointwise": normal_loss, "n": int(yv.shape[0]),
     }
     # empirical, per bucket width
     for bw in buckets:
-        losses, ys = [], []
-        for ts in TEST_SEASONS:
-            train = margins[margins["season"] < ts]
-            test = margins[margins["season"] == ts]
-            tbl = build_empirical_pmf_table(train, bucket_width=bw, baseline_sigma=baseline_sigma)
-            surf = MarginSurface(method="empirical", pmf_table=tbl, bucket_width=bw)
-            p = moneyline_probs(surf, test)
-            y = (test["home_margin"] > 0).astype(int).to_numpy()
-            losses.append(_pointwise_logloss(y, p)); ys.append((y, p))
-        loss = np.concatenate(losses)
-        yv = np.concatenate([a for a, _ in ys]); pv = np.concatenate([b for _, b in ys])
+        loss, yv, pv = grade(_empirical_builder(bw))
         results[f"empirical_bw{bw}"] = {
             "log_loss": float(loss.mean()), "brier": float(brier_score_loss(yv, np.clip(pv, _EPS, 1 - _EPS))),
-            "ece": _equal_mass_ece(yv, pv), "pointwise": loss, "bucket_width": bw,
+            "ece": _equal_mass_ece(yv, pv), "pointwise": loss, "bucket_width": bw, "n": int(yv.shape[0]),
         }
 
     # selection: best empirical vs normal, with complexity tie-break toward normal
@@ -135,7 +174,7 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
     selected = best_emp if empirical_wins else "normal_baseline"
     return {
         "selected": selected,
-        "candidates": {k: {m: v[m] for m in ("log_loss", "brier", "ece")} for k, v in results.items()},
+        "candidates": {k: {m: v[m] for m in ("log_loss", "brier", "ece", "n")} for k, v in results.items()},
         "normal_minus_best_empirical_logloss": {"mean": mean_d, "ci_lower": lo, "ci_upper": hi},
         "best_empirical_bucket_width": results[best_emp].get("bucket_width"),
     }

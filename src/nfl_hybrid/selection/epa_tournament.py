@@ -32,6 +32,42 @@ def _clip(p):
     return np.clip(np.asarray(p, dtype=float), _EPS, 1.0 - _EPS)
 
 
+def _market_baseline_probs(test: pd.DataFrame, mkt_col, *, market: str) -> np.ndarray:
+    """Validated per-test-row market-baseline fallback for a degenerate target.
+
+    When a market's nullable target (pd.NA for ties/pushes) leaves zero valid
+    fitting rows or a single observed class, no discriminative classifier can be
+    fit. The candidate then returns the reference-market probability column for
+    that market — one value per test row, in test-row order. Never silently
+    substitutes 0.50: a missing, wrong-length, non-finite, or out-of-bounds
+    baseline raises a clear market-specific error instead.
+    """
+    if mkt_col is None:
+        raise ValueError(
+            f"{market}: nullable-target fallback needs a market-baseline column, "
+            "but no market_prob_col_map was supplied."
+        )
+    if mkt_col not in test.columns:
+        raise ValueError(
+            f"{market}: market-baseline column '{mkt_col}' is missing from the test frame."
+        )
+    p = test[mkt_col].to_numpy(dtype=float)
+    if p.shape[0] != len(test):
+        raise ValueError(
+            f"{market}: market-baseline column '{mkt_col}' length {p.shape[0]} "
+            f"!= len(test) {len(test)}."
+        )
+    if not np.isfinite(p).all():
+        raise ValueError(
+            f"{market}: market-baseline column '{mkt_col}' contains non-finite values."
+        )
+    if not ((p >= 0.0) & (p <= 1.0)).all():
+        raise ValueError(
+            f"{market}: market-baseline column '{mkt_col}' has values outside [0, 1]."
+        )
+    return _clip(p)
+
+
 def _margin_to_probs(pred_margin, pred_total, home_spread, total_line, margin_sd, total_sd):
     home_win = 1.0 - norm.cdf((0.0 - pred_margin) / margin_sd)
     ats_edge = pred_margin + home_spread
@@ -77,35 +113,79 @@ def _isotonic_gbm(xtr, ytr, xcal, ycal, xte):
         l2_regularization=1.0, random_state=42,
     )
     clf.fit(xtr, ytr)
-    raw_cal = clf.predict_proba(xcal)[:, 1]
+    raw_te = clf.predict_proba(xte)[:, 1]
+    # Cases C/D: zero valid calibration rows or a single calibration class leave
+    # isotonic undefined -> return clipped *uncalibrated* GBM probabilities. Guard
+    # BEFORE predict_proba(xcal), which raises on an empty calibration array.
+    if len(ycal) == 0 or np.unique(ycal).size < 2:
+        return _clip(raw_te)
     iso = IsotonicRegression(out_of_bounds="clip")
-    if np.unique(ycal).size > 1:
-        iso.fit(raw_cal, ycal)
-        return _clip(iso.predict(clf.predict_proba(xte)[:, 1]))
-    return _clip(clf.predict_proba(xte)[:, 1])
+    iso.fit(clf.predict_proba(xcal)[:, 1], ycal)
+    return _clip(iso.predict(raw_te))
 
 
-def candidate_gbm(train, test, features, calibration_season):
-    """C2: GBM per market, isotonic-calibrated on the prior season only."""
+def candidate_gbm(train, test, features, calibration_season, market_prob_col_map=None):
+    """C2: GBM per market, isotonic-calibrated on the prior season only.
+
+    Targets are nullable (pd.NA for ties/pushes). Each market independently
+    filters its own valid (0/1) fit and calibration rows; predictions are still
+    produced for every test row. Degenerate-target fallbacks (per market):
+
+      * zero valid fit rows OR one fit class -> validated market baseline;
+      * both fit classes but zero/one-class calibration -> uncalibrated GBM
+        (handled inside ``_isotonic_gbm``, which then skips isotonic);
+      * both fit and calibration classes -> GBM + isotonic (unchanged).
+
+    ``market_prob_col_map`` names the [ml, ats, total] reference-probability
+    columns used only as the degenerate-target fallback baseline.
+    """
     cal = train[train["season"] == calibration_season]
     fit = train[train["season"] != calibration_season]
     if len(cal) < 30 or len(fit) < 50:
         cal, fit = train, train
     xfit, xcal, xte = _prep(fit, features), _prep(cal, features), _prep(test, features)
+    baselines = market_prob_col_map if market_prob_col_map is not None else [None, None, None]
     out = {}
-    for col, target in zip(PROB_COLS, ["home_win", "home_cover", "over"]):
-        out[col] = _isotonic_gbm(xfit, fit[target].to_numpy(int), xcal, cal[target].to_numpy(int), xte)
+    for col, target, mkt_col in zip(PROB_COLS, ["home_win", "home_cover", "over"], baselines):
+        fit_valid = fit[target].isin([0, 1]).to_numpy()
+        yfit = fit.loc[fit_valid, target]
+        # Cases A/B: no valid fit rows or a single observed class -> cannot fit a
+        # discriminative GBM; fall back to the validated market baseline.
+        if fit_valid.sum() == 0 or yfit.nunique() < 2:
+            out[col] = _market_baseline_probs(test, mkt_col, market=target)
+            continue
+        cal_valid = cal[target].isin([0, 1]).to_numpy()
+        out[col] = _isotonic_gbm(
+            xfit[fit_valid], yfit.to_numpy(int),
+            xcal[cal_valid], cal.loc[cal_valid, target].to_numpy(int),
+            xte,
+        )
     return pd.DataFrame(out, index=test.index)
 
 
-def candidate_logistic(train, test, features):
-    """C3: standardized per-market logistic regression (interpretable floor)."""
-    scaler = StandardScaler().fit(_prep(train, features))
-    xtr, xte = scaler.transform(_prep(train, features)), scaler.transform(_prep(test, features))
+def candidate_logistic(train, test, features, market_prob_col_map=None):
+    """C3: standardized per-market logistic regression (interpretable floor).
+
+    Each market drops its own nullable (tie/push) label rows before fitting
+    preprocessing + classifier, but scores every test row. With zero valid fit
+    rows or a single observed class the classifier is undefined, so the market
+    returns its validated baseline instead. ``market_prob_col_map`` names the
+    [ml, ats, total] reference-probability fallback columns.
+    """
+    xtr, xte = _prep(train, features), _prep(test, features)
+    baselines = market_prob_col_map if market_prob_col_map is not None else [None, None, None]
     out = {}
-    for col, target in zip(PROB_COLS, ["home_win", "home_cover", "over"]):
-        clf = LogisticRegression(C=1.0, max_iter=1000).fit(xtr, train[target].to_numpy(int))
-        out[col] = _clip(clf.predict_proba(xte)[:, 1])
+    for col, target, mkt_col in zip(PROB_COLS, ["home_win", "home_cover", "over"], baselines):
+        valid = train[target].isin([0, 1]).to_numpy()
+        ytr = train.loc[valid, target]
+        if valid.sum() == 0 or ytr.nunique() < 2:
+            out[col] = _market_baseline_probs(test, mkt_col, market=target)
+            continue
+        scaler = StandardScaler().fit(xtr[valid])
+        clf = LogisticRegression(C=1.0, max_iter=1000).fit(
+            scaler.transform(xtr[valid]), ytr.to_numpy(int)
+        )
+        out[col] = _clip(clf.predict_proba(scaler.transform(xte))[:, 1])
     return pd.DataFrame(out, index=test.index)
 
 
@@ -145,8 +225,8 @@ def candidate_stacked(train, test, features, calibration_season, market_prob_col
 
     def base_probs(tr, te, cal_season):
         c1 = candidate_market_residual(tr, te, features)
-        c2 = candidate_gbm(tr, te, features, cal_season)
-        c3 = candidate_logistic(tr, te, features)
+        c2 = candidate_gbm(tr, te, features, cal_season, market_prob_col_map)
+        c3 = candidate_logistic(tr, te, features, market_prob_col_map)
         c4 = candidate_jointscore_epa(tr, te, features, cal_season)
         return c1, c2, c3, c4
 
@@ -159,11 +239,19 @@ def candidate_stacked(train, test, features, calibration_season, market_prob_col
             mc1[col].to_numpy(), mc2[col].to_numpy(), mc3[col].to_numpy(), mc4[col].to_numpy(),
             meta_train[mkt_col].to_numpy(float),
         ])
-        meta_y = meta_train[target].to_numpy(int)
-        if np.unique(meta_y).size < 2:
-            out[col] = meta_train[mkt_col].to_numpy(float)[:0]
+        # Exclude this meta-target's nullable (tie/push) rows before fitting; never
+        # cast the nullable target to int before filtering.
+        meta_valid = meta_train[target].isin([0, 1]).to_numpy()
+        meta_y = meta_train.loc[meta_valid, target].to_numpy(int)
+        # Zero valid meta rows or a single meta class -> the meta-learner is
+        # undefined. Return one validated market-baseline probability per TEST row
+        # (never the previous [:0] empty / training-frame array).
+        if meta_valid.sum() == 0 or np.unique(meta_y).size < 2:
+            out[col] = _market_baseline_probs(test, mkt_col, market=target)
             continue
-        meta = LogisticRegression(C=1.0, max_iter=1000).fit(np.nan_to_num(meta_x), meta_y)
+        meta = LogisticRegression(C=1.0, max_iter=1000).fit(
+            np.nan_to_num(meta_x[meta_valid]), meta_y
+        )
         # test features from base models refit on all train
         tc1, tc2, tc3, tc4 = base_probs(train, test, calibration_season)
         test_x = np.column_stack([
@@ -193,8 +281,8 @@ def run_walk_forward(matrix, features, *, test_seasons, market_prob_cols):
 
         preds = {
             "C1_market_residual": candidate_market_residual(train, test, features),
-            "C2_gbm": candidate_gbm(train, test, features, cal_season),
-            "C3_logistic": candidate_logistic(train, test, features),
+            "C2_gbm": candidate_gbm(train, test, features, cal_season, market_prob_cols),
+            "C3_logistic": candidate_logistic(train, test, features, market_prob_cols),
             "C4_jointscore_epa": candidate_jointscore_epa(train, test, features, cal_season),
             "C5_stacked": candidate_stacked(train, test, features, cal_season, market_prob_cols),
         }

@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from nfl_hybrid.labels import edge_to_nullable_binary
 from nfl_hybrid.pricing.calibration import (
     load_spreadspoke_margins,
     select_devig_consensus,
@@ -76,11 +77,15 @@ def build_outcomes() -> pd.DataFrame:
     hs = pd.to_numeric(dev["home_spread_reference"], errors="coerce")
     tl = pd.to_numeric(dev["total_line_reference"], errors="coerce")
     cov, ov = hm + hs, tp - tl
+    # Canonical single-source label policy: ties (moneyline), ATS pushes and total
+    # pushes -> pd.NA (excluded by select_devig_consensus's isin([0,1]) mask), never
+    # class zero. Missing/non-finite edges -> pd.NA too. These are nullable Int8
+    # Series that keep `dev`'s row index, so DataFrame construction aligns cleanly.
     out = pd.DataFrame({
         "game_id": dev["game_id"].astype(str), "season": dev["season"],
-        "home_win": (hm > 0).astype(float),
-        "home_cover": np.where(cov > 0, 1.0, np.where(cov < 0, 0.0, np.nan)),
-        "over": np.where(ov > 0, 1.0, np.where(ov < 0, 0.0, np.nan)),
+        "home_win": edge_to_nullable_binary(hm),
+        "home_cover": edge_to_nullable_binary(cov),
+        "over": edge_to_nullable_binary(ov),
     })
     return out
 

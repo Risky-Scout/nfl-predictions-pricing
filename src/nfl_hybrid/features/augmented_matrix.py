@@ -24,6 +24,11 @@ import numpy as np
 import pandas as pd
 
 from nfl_hybrid.data.availability import add_postgame_available_at, assert_available_before
+# Canonical single-source label policy. Ties/pushes -> pd.NA (never class zero).
+# This is an import ALIAS, not a re-implementation: the sole function body lives in
+# ``nfl_hybrid.labels``. Internal call sites keep the private ``_edge_to_nullable_binary``
+# name for backward compatibility.
+from nfl_hybrid.labels import edge_to_nullable_binary as _edge_to_nullable_binary
 from nfl_hybrid.features.pbp_advanced import aggregate_advanced_team_game
 from nfl_hybrid.features.pregame_rolling import (
     PregameRollingConfig,
@@ -131,9 +136,10 @@ def _outcome_columns(games: pd.DataFrame) -> pd.DataFrame:
     g["away_score"] = pd.to_numeric(g["away_score"], errors="coerce")
     g["home_margin"] = g["home_score"] - g["away_score"]
     g["total_points"] = g["home_score"] + g["away_score"]
-    g["home_win"] = (g["home_margin"] > 0).astype("Int64")
-    g["home_cover"] = (g["home_margin"] + g["home_spread"] > 0).astype("Int64")
-    g["over"] = (g["total_points"] > g["total_line"]).astype("Int64")
+    # Ties/pushes -> pd.NA (excluded), never class zero. See the label policy above.
+    g["home_win"] = _edge_to_nullable_binary(g["home_margin"])
+    g["home_cover"] = _edge_to_nullable_binary(g["home_margin"] + g["home_spread"])
+    g["over"] = _edge_to_nullable_binary(g["total_points"] - g["total_line"])
     g["legacy_expected_margin"] = -g["home_spread"]
     g["legacy_expected_total"] = g["total_line"]
     g["legacy_home_win_probability"] = 1.0 - norm.cdf((0.0 - (-g["home_spread"])) / 13.5)
@@ -480,7 +486,13 @@ def build_augmented_feature_matrix(
     matrix = pd.concat(
         [base, diffs.reset_index(drop=True), rest.reset_index(drop=True)], axis=1
     )
-    matrix = matrix.dropna(subset=["home_win", "home_cover", "over", "home_spread", "total_line"])
+    # Keep every completed, priced game for continuous margin/total regression. A
+    # tie or push only nulls the affected binary target (home_win/home_cover/over
+    # stay nullable Int8); it must NOT drop the whole game. Binary consumers filter
+    # each target's valid (0/1) rows independently at their own fit/grade sites.
+    matrix = matrix.dropna(
+        subset=["home_margin", "total_points", "home_spread", "total_line"]
+    )
 
     # explicit integer week ordering (never string-sort)
     week_order = {str(w): w for w in range(1, 19)}
@@ -488,8 +500,8 @@ def build_augmented_feature_matrix(
     matrix["week"] = matrix["week"].astype(str).map(week_order).fillna(23).astype(int)
     matrix = matrix.sort_values(["season", "week"], kind="stable").reset_index(drop=True)
     matrix["game_index"] = np.arange(len(matrix))
-    for c in ("home_win", "home_cover", "over"):
-        matrix[c] = matrix[c].astype(int)
+    # home_win/home_cover/over remain nullable Int8 (pd.NA marks ties/pushes); do
+    # not cast to ordinary int here — that would reintroduce the R1 mislabelling.
 
     manifest = {
         "market_features": list(MARKET_FEATURES),
