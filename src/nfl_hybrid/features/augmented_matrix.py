@@ -24,6 +24,11 @@ import numpy as np
 import pandas as pd
 
 from nfl_hybrid.data.availability import add_postgame_available_at, assert_available_before
+# Canonical single-source label policy. Ties/pushes -> pd.NA (never class zero).
+# This is an import ALIAS, not a re-implementation: the sole function body lives in
+# ``nfl_hybrid.labels``. Internal call sites keep the private ``_edge_to_nullable_binary``
+# name for backward compatibility.
+from nfl_hybrid.labels import edge_to_nullable_binary as _edge_to_nullable_binary
 from nfl_hybrid.features.pbp_advanced import aggregate_advanced_team_game
 from nfl_hybrid.features.pregame_rolling import (
     PregameRollingConfig,
@@ -119,33 +124,6 @@ def _rest_features(games: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
         "home_short_week",
         "away_short_week",
     ]
-
-
-# --- Canonical label policy (single source of truth) ------------------------- #
-# Ties and betting pushes are EXCLUDED binary outcomes, never class zero:
-#   * a tied game is null for the no-tie moneyline classifier;
-#   * an ATS/total push is null for the no-push cover/over classifier.
-# The same rows remain valid for continuous margin/total regression, which has no
-# tie/push concept. Do NOT re-derive this tie/push handling in other modules;
-# reuse ``_edge_to_nullable_binary`` (via ``_outcome_columns``) instead.
-_EDGE_TOLERANCE = 1e-9
-
-
-def _edge_to_nullable_binary(edge: object) -> pd.Series:
-    """Convert a numeric decision edge into a nullable binary target (``Int8``).
-
-    ``edge > +tol -> 1``; ``edge < -tol -> 0``; ``|edge| <= tol`` (a tie / push)
-    or a non-finite / missing edge -> ``pd.NA``, with ``tol = _EDGE_TOLERANCE``.
-    Deliberately NOT a Boolean comparison cast to int: a zero edge must be null,
-    not class zero (that is exactly the tie/push mislabelling this repairs).
-    """
-    s = pd.to_numeric(pd.Series(edge), errors="coerce")
-    values = s.to_numpy(dtype="float64")
-    out = pd.array([pd.NA] * len(values), dtype="Int8")
-    finite = np.isfinite(values)
-    out[finite & (values > _EDGE_TOLERANCE)] = 1
-    out[finite & (values < -_EDGE_TOLERANCE)] = 0
-    return pd.Series(out, index=s.index)
 
 
 def _outcome_columns(games: pd.DataFrame) -> pd.DataFrame:
