@@ -235,9 +235,11 @@ class JointScoreModel:
 
     def fit_calibrators(self, calibration: pd.DataFrame) -> "JointScoreModel":
         raw = self.raw_probabilities(calibration)
-        ml_mask = calibration["home_win"].isin([0.0, 1.0])
-        ats_mask = calibration["home_cover"].isin([0.0, 1.0])
-        ou_mask = calibration["over"].isin([0.0, 1.0])
+        # Nullable labels: ties/pushes are pd.NA and must never enter a calibrator.
+        # ``isin([0, 1])`` excludes them for both Int8 and float label columns.
+        ml_mask = calibration["home_win"].isin([0, 1])
+        ats_mask = calibration["home_cover"].isin([0, 1])
+        ou_mask = calibration["over"].isin([0, 1])
 
         self.ml_calibrator.fit(
             raw.loc[ml_mask, "raw_home_win_probability_no_tie"].to_numpy(),

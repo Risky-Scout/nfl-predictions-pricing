@@ -15,6 +15,7 @@ import pandas as pd
 from sklearn.metrics import brier_score_loss, log_loss
 
 from nfl_hybrid.data.team_ids import try_canonical_team_id
+from nfl_hybrid.features.augmented_matrix import _edge_to_nullable_binary
 from nfl_hybrid.pricing.devig import devig_pair
 from nfl_hybrid.pricing.margin_surface import (
     MarginSurface,
@@ -95,6 +96,20 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
     def moneyline_probs(surface: MarginSurface, test: pd.DataFrame) -> np.ndarray:
         return np.array([surface.moneyline_probabilities(s, baseline_sigma)[0] for s in test["closing_home_spread"]])
 
+    def graded_moneyline(test: pd.DataFrame, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Align a moneyline probability vector to its nullable target.
+
+        Ties (home_margin == 0), missing, and non-finite margins are pd.NA in the
+        canonical label and must be excluded from BOTH the target and the
+        probability vector by the SAME mask before any metric is computed. A tie
+        is never graded as a class-zero away win.
+        """
+        target = _edge_to_nullable_binary(test["home_margin"])
+        valid = target.isin([0, 1]).to_numpy()
+        y = target.to_numpy(dtype="float64")[valid].astype(int)
+        p = np.asarray(p, dtype=float)[valid]
+        return y, p
+
     results = {}
     # normal baseline
     normal_losses, normal_y = [], []
@@ -102,13 +117,13 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
         test = margins[margins["season"] == ts]
         surf = MarginSurface(method="normal")
         p = moneyline_probs(surf, test)
-        y = (test["home_margin"] > 0).astype(int).to_numpy()
+        y, p = graded_moneyline(test, p)
         normal_losses.append(_pointwise_logloss(y, p)); normal_y.append((y, p))
     normal_loss = np.concatenate(normal_losses)
     yv = np.concatenate([a for a, _ in normal_y]); pv = np.concatenate([b for _, b in normal_y])
     results["normal_baseline"] = {
         "log_loss": float(normal_loss.mean()), "brier": float(brier_score_loss(yv, np.clip(pv, _EPS, 1 - _EPS))),
-        "ece": _equal_mass_ece(yv, pv), "pointwise": normal_loss,
+        "ece": _equal_mass_ece(yv, pv), "pointwise": normal_loss, "n": int(yv.shape[0]),
     }
     # empirical, per bucket width
     for bw in buckets:
@@ -119,13 +134,13 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
             tbl = build_empirical_pmf_table(train, bucket_width=bw, baseline_sigma=baseline_sigma)
             surf = MarginSurface(method="empirical", pmf_table=tbl, bucket_width=bw)
             p = moneyline_probs(surf, test)
-            y = (test["home_margin"] > 0).astype(int).to_numpy()
+            y, p = graded_moneyline(test, p)
             losses.append(_pointwise_logloss(y, p)); ys.append((y, p))
         loss = np.concatenate(losses)
         yv = np.concatenate([a for a, _ in ys]); pv = np.concatenate([b for _, b in ys])
         results[f"empirical_bw{bw}"] = {
             "log_loss": float(loss.mean()), "brier": float(brier_score_loss(yv, np.clip(pv, _EPS, 1 - _EPS))),
-            "ece": _equal_mass_ece(yv, pv), "pointwise": loss, "bucket_width": bw,
+            "ece": _equal_mass_ece(yv, pv), "pointwise": loss, "bucket_width": bw, "n": int(yv.shape[0]),
         }
 
     # selection: best empirical vs normal, with complexity tie-break toward normal
@@ -135,7 +150,7 @@ def select_margin_surface(margins: pd.DataFrame, *, baseline_sigma: float = 13.5
     selected = best_emp if empirical_wins else "normal_baseline"
     return {
         "selected": selected,
-        "candidates": {k: {m: v[m] for m in ("log_loss", "brier", "ece")} for k, v in results.items()},
+        "candidates": {k: {m: v[m] for m in ("log_loss", "brier", "ece", "n")} for k, v in results.items()},
         "normal_minus_best_empirical_logloss": {"mean": mean_d, "ci_lower": lo, "ci_upper": hi},
         "best_empirical_bucket_width": results[best_emp].get("bucket_width"),
     }

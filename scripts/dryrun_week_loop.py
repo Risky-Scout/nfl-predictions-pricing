@@ -51,12 +51,16 @@ def main() -> None:
     # [5] resolve with REAL 2025 wk1 scores, then score vs market
     wk["home_margin"] = pd.to_numeric(wk["home_score"], errors="coerce") - pd.to_numeric(wk["away_score"], errors="coerce")
     wk["total_points"] = pd.to_numeric(wk["home_score"], errors="coerce") + pd.to_numeric(wk["away_score"], errors="coerce")
+    # Real final margins can tie/push; reuse the canonical label policy so ties and
+    # pushes resolve to pd.NA (excluded) rather than a spurious class-zero loss.
+    from nfl_hybrid.features.augmented_matrix import _edge_to_nullable_binary
+
     resolved = pd.DataFrame(
         {
             "game_id": wk["game_id"].astype(str),
-            "home_win": (wk["home_margin"] > 0).astype(int),
-            "home_cover": (wk["home_margin"] + wk["home_spread"] > 0).astype(int),
-            "over": (wk["total_points"] > wk["total_line"]).astype(int),
+            "home_win": _edge_to_nullable_binary(wk["home_margin"]),
+            "home_cover": _edge_to_nullable_binary(wk["home_margin"] + wk["home_spread"]),
+            "over": _edge_to_nullable_binary(wk["total_points"] - wk["total_line"]),
         }
     )
     logged = pd.read_csv(path)

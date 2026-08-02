@@ -121,6 +121,33 @@ def _rest_features(games: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     ]
 
 
+# --- Canonical label policy (single source of truth) ------------------------- #
+# Ties and betting pushes are EXCLUDED binary outcomes, never class zero:
+#   * a tied game is null for the no-tie moneyline classifier;
+#   * an ATS/total push is null for the no-push cover/over classifier.
+# The same rows remain valid for continuous margin/total regression, which has no
+# tie/push concept. Do NOT re-derive this tie/push handling in other modules;
+# reuse ``_edge_to_nullable_binary`` (via ``_outcome_columns``) instead.
+_EDGE_TOLERANCE = 1e-9
+
+
+def _edge_to_nullable_binary(edge: object) -> pd.Series:
+    """Convert a numeric decision edge into a nullable binary target (``Int8``).
+
+    ``edge > +tol -> 1``; ``edge < -tol -> 0``; ``|edge| <= tol`` (a tie / push)
+    or a non-finite / missing edge -> ``pd.NA``, with ``tol = _EDGE_TOLERANCE``.
+    Deliberately NOT a Boolean comparison cast to int: a zero edge must be null,
+    not class zero (that is exactly the tie/push mislabelling this repairs).
+    """
+    s = pd.to_numeric(pd.Series(edge), errors="coerce")
+    values = s.to_numpy(dtype="float64")
+    out = pd.array([pd.NA] * len(values), dtype="Int8")
+    finite = np.isfinite(values)
+    out[finite & (values > _EDGE_TOLERANCE)] = 1
+    out[finite & (values < -_EDGE_TOLERANCE)] = 0
+    return pd.Series(out, index=s.index)
+
+
 def _outcome_columns(games: pd.DataFrame) -> pd.DataFrame:
     from scipy.stats import norm
 
@@ -131,9 +158,10 @@ def _outcome_columns(games: pd.DataFrame) -> pd.DataFrame:
     g["away_score"] = pd.to_numeric(g["away_score"], errors="coerce")
     g["home_margin"] = g["home_score"] - g["away_score"]
     g["total_points"] = g["home_score"] + g["away_score"]
-    g["home_win"] = (g["home_margin"] > 0).astype("Int64")
-    g["home_cover"] = (g["home_margin"] + g["home_spread"] > 0).astype("Int64")
-    g["over"] = (g["total_points"] > g["total_line"]).astype("Int64")
+    # Ties/pushes -> pd.NA (excluded), never class zero. See the label policy above.
+    g["home_win"] = _edge_to_nullable_binary(g["home_margin"])
+    g["home_cover"] = _edge_to_nullable_binary(g["home_margin"] + g["home_spread"])
+    g["over"] = _edge_to_nullable_binary(g["total_points"] - g["total_line"])
     g["legacy_expected_margin"] = -g["home_spread"]
     g["legacy_expected_total"] = g["total_line"]
     g["legacy_home_win_probability"] = 1.0 - norm.cdf((0.0 - (-g["home_spread"])) / 13.5)
@@ -480,7 +508,13 @@ def build_augmented_feature_matrix(
     matrix = pd.concat(
         [base, diffs.reset_index(drop=True), rest.reset_index(drop=True)], axis=1
     )
-    matrix = matrix.dropna(subset=["home_win", "home_cover", "over", "home_spread", "total_line"])
+    # Keep every completed, priced game for continuous margin/total regression. A
+    # tie or push only nulls the affected binary target (home_win/home_cover/over
+    # stay nullable Int8); it must NOT drop the whole game. Binary consumers filter
+    # each target's valid (0/1) rows independently at their own fit/grade sites.
+    matrix = matrix.dropna(
+        subset=["home_margin", "total_points", "home_spread", "total_line"]
+    )
 
     # explicit integer week ordering (never string-sort)
     week_order = {str(w): w for w in range(1, 19)}
@@ -488,8 +522,8 @@ def build_augmented_feature_matrix(
     matrix["week"] = matrix["week"].astype(str).map(week_order).fillna(23).astype(int)
     matrix = matrix.sort_values(["season", "week"], kind="stable").reset_index(drop=True)
     matrix["game_index"] = np.arange(len(matrix))
-    for c in ("home_win", "home_cover", "over"):
-        matrix[c] = matrix[c].astype(int)
+    # home_win/home_cover/over remain nullable Int8 (pd.NA marks ties/pushes); do
+    # not cast to ordinary int here — that would reintroduce the R1 mislabelling.
 
     manifest = {
         "market_features": list(MARKET_FEATURES),

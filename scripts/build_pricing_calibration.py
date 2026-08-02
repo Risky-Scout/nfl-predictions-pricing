@@ -78,7 +78,9 @@ def build_outcomes() -> pd.DataFrame:
     cov, ov = hm + hs, tp - tl
     out = pd.DataFrame({
         "game_id": dev["game_id"].astype(str), "season": dev["season"],
-        "home_win": (hm > 0).astype(float),
+        # Tie/push -> NaN (excluded by select_devig_consensus's isin([0,1]) mask),
+        # never class zero. Matches the no-push cover/over encoding below.
+        "home_win": np.where(hm > 0, 1.0, np.where(hm < 0, 0.0, np.nan)),
         "home_cover": np.where(cov > 0, 1.0, np.where(cov < 0, 0.0, np.nan)),
         "over": np.where(ov > 0, 1.0, np.where(ov < 0, 0.0, np.nan)),
     })

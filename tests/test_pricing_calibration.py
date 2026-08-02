@@ -106,3 +106,79 @@ def test_normal_fallback_still_works():
     h, pu, a = surf.cover_probabilities(-3.0, -3.0, sigma=13.0)
     assert h + pu + a == pytest.approx(1.0, abs=1e-9)
     assert pu > 0  # integer line has a push under normal too
+
+
+# ---- R1: moneyline grading in select_margin_surface excludes ties ---------- #
+# A tied game (home_margin == 0) must be pd.NA in the canonical label and dropped
+# from BOTH the target and the probability vector by the same mask -- never graded
+# as a class-zero away win. Missing and non-finite margins are excluded too.
+def _margins_with_special_2022(seed=0):
+    """Clean 2019-2021 training history plus a controlled 2022 test season with a
+    tie, +inf, -inf and a missing margin alongside known class-1/class-0 games."""
+    rng = np.random.default_rng(seed)
+    spreads = np.array([-7.0, -6.0, -3.0, -2.5, 0.0, 3.0, 6.5])
+    rows = []
+    for season in (2019, 2020, 2021):
+        for _ in range(150):
+            s = float(rng.choice(spreads))
+            m = int(np.rint(-s + rng.normal(0, 13)))
+            if m == 0:
+                m = 1  # keep training history free of incidental ties
+            rows.append({"season": season, "closing_home_spread": s, "home_margin": float(m)})
+    special = [
+        (-3.0, 7.0),      # finite positive margin -> class 1
+        (-3.0, 3.0),      # finite positive margin -> class 1
+        (-6.0, 10.0),     # finite positive margin -> class 1
+        (3.0, -7.0),      # finite negative margin -> class 0
+        (2.0, -4.0),      # finite negative margin -> class 0
+        (0.0, 0.0),       # tie -> pd.NA (excluded)
+        (-3.0, np.inf),   # +inf -> pd.NA (excluded)
+        (3.0, -np.inf),   # -inf -> pd.NA (excluded)
+        (0.0, np.nan),    # missing -> pd.NA (excluded)
+    ]
+    for s, m in special:
+        rows.append({"season": 2022, "closing_home_spread": s, "home_margin": m})
+    return pd.DataFrame(rows)
+
+
+def test_select_margin_surface_excludes_ties_and_nonfinite(monkeypatch):
+    import nfl_hybrid.pricing.calibration as cal
+
+    # isolate grading to a single clean-history season; keep the bootstrap cheap.
+    monkeypatch.setattr(cal, "TEST_SEASONS", [2022])
+    monkeypatch.setattr(cal, "BOOT_N", 50)
+
+    ll_calls, brier_calls = [], []
+    orig_ll, orig_brier = cal._pointwise_logloss, cal.brier_score_loss
+
+    def spy_ll(y, p):
+        y, p = np.asarray(y), np.asarray(p)
+        ll_calls.append((y.copy(), p.copy()))
+        return orig_ll(y, p)
+
+    def spy_brier(y, p, *a, **k):
+        y, p = np.asarray(y), np.asarray(p)
+        brier_calls.append((y.copy(), p.copy()))
+        return orig_brier(y, p, *a, **k)
+
+    monkeypatch.setattr(cal, "_pointwise_logloss", spy_ll)
+    monkeypatch.setattr(cal, "brier_score_loss", spy_brier)
+
+    res = cal.select_margin_surface(_margins_with_special_2022(), buckets=(1.0, 2.0))
+
+    N_VALID, N_POS = 5, 3   # 3 finite positive + 2 finite negative; 4 excluded
+    # normal (1 call) + empirical buckets 1.0 & 2.0 (2 calls) = >=3 graded calls,
+    # covering BOTH the normal-surface and empirical-surface evaluation paths.
+    assert len(ll_calls) >= 3
+    assert len(brier_calls) >= 3
+    for y, p in ll_calls + brier_calls:
+        assert y.shape == p.shape              # same mask on target and probabilities
+        assert y.shape[0] == N_VALID           # exactly the tie/inf/-inf/missing excluded
+        assert set(np.unique(y)).issubset({0, 1})   # no NA leaked; no tie graded as 0
+        assert int(y.sum()) == N_POS           # positives -> 1, negatives -> 0
+        assert np.isfinite(p).all()
+
+    # reported sample size excludes exactly the four invalid games on every surface.
+    assert res["candidates"]["normal_baseline"]["n"] == N_VALID
+    assert res["candidates"]["empirical_bw1.0"]["n"] == N_VALID
+    assert res["candidates"]["empirical_bw2.0"]["n"] == N_VALID
