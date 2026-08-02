@@ -19,30 +19,38 @@ concurrency:
 jobs:
   python-311:
     name: Python 3.11
-    runs-on:
-      - self-hosted
-      - macOS
-      - ARM64
-      - joseph-nfl-mac
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Create Python 3.11 environment
+      - name: Assert GitHub-hosted Linux runner
         shell: bash
         run: |
-          SYSTEM_PYTHON="$(brew --prefix python@3.11)/bin/python3.11"
-          test -x "$SYSTEM_PYTHON"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            echo "Expected RUNNER_OS=Linux, got '$RUNNER_OS' — FAILING"
+            exit 1
+          fi
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "Expected RUNNER_ENVIRONMENT=github-hosted, got '$RUNNER_ENVIRONMENT' — FAILING"
+            exit 1
+          fi
+          echo "runner assertion: GitHub-hosted Linux confirmed"
 
-          VENV_DIR="$RUNNER_TEMP/nfl-python-311"
-          rm -rf "$VENV_DIR"
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-          "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
-
-          echo "PYTHON_BIN=$VENV_DIR/bin/python" >> "$GITHUB_ENV"
-          "$VENV_DIR/bin/python" --version
+      - name: Record Python interpreter
+        shell: bash
+        run: |
+          echo "PYTHON_BIN=$(which python)" >> "$GITHUB_ENV"
+          python --version
 
       - name: Upgrade packaging tools
         shell: bash
@@ -85,30 +93,39 @@ jobs:
 
   python-314:
     name: Python 3.14
-    runs-on:
-      - self-hosted
-      - macOS
-      - ARM64
-      - joseph-nfl-mac
+    runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Create Python 3.14 environment
+      - name: Assert GitHub-hosted Linux runner
         shell: bash
         run: |
-          SYSTEM_PYTHON="$(brew --prefix python@3.14)/bin/python3.14"
-          test -x "$SYSTEM_PYTHON"
+          echo "RUNNER_OS=$RUNNER_OS"
+          echo "RUNNER_ENVIRONMENT=$RUNNER_ENVIRONMENT"
+          if [ "$RUNNER_OS" != "Linux" ]; then
+            echo "Expected RUNNER_OS=Linux, got '$RUNNER_OS' — FAILING"
+            exit 1
+          fi
+          if [ "$RUNNER_ENVIRONMENT" != "github-hosted" ]; then
+            echo "Expected RUNNER_ENVIRONMENT=github-hosted, got '$RUNNER_ENVIRONMENT' — FAILING"
+            exit 1
+          fi
+          echo "runner assertion: GitHub-hosted Linux confirmed"
 
-          VENV_DIR="$RUNNER_TEMP/nfl-python-314"
-          rm -rf "$VENV_DIR"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          allow-prereleases: true
 
-          "$SYSTEM_PYTHON" -m venv "$VENV_DIR"
-
-          echo "PYTHON_BIN=$VENV_DIR/bin/python" >> "$GITHUB_ENV"
-          "$VENV_DIR/bin/python" --version
+      - name: Record Python interpreter
+        shell: bash
+        run: |
+          echo "PYTHON_BIN=$(which python)" >> "$GITHUB_ENV"
+          python --version
 
       - name: Upgrade packaging tools
         shell: bash
