@@ -264,19 +264,242 @@ def candidate_stacked(train, test, features, calibration_season, market_prob_col
 
 CANDIDATES = ("C1_market_residual", "C2_gbm", "C3_logistic", "C4_jointscore_epa", "C5_stacked")
 
+# Exact-contract metadata carried untouched from the matrix through prediction so
+# the pre-evaluation validator can prove market/outcome/prediction identity. These
+# columns are never fitted on or altered by any candidate.
+CONTRACT_COLS = (
+    "market_contract_source",
+    "moneyline_contract_id",
+    "spread_contract_id",
+    "total_contract_id",
+    "tournament_market_ml_home_probability",
+    "tournament_market_cover_home_probability",
+    "tournament_market_over_probability",
+    "closing_home_spread",
+    "closing_total_line",
+    "closing_minutes_to_kickoff",
+)
+_CONTRACT_POINT_TOL = 1e-9
 
-def run_walk_forward(matrix, features, *, test_seasons, market_prob_cols):
+
+def _assert_test_contract(test: pd.DataFrame, expected_source: str) -> None:
+    """Fail closed unless every test row carries a complete, matching contract.
+
+    Used only when ``run_walk_forward`` is called with an explicit expected
+    test-contract source (the real-closing tournament). Requires unique game IDs,
+    all contract columns, non-null IDs, finite line values, finite probabilities
+    in (0, 1), the exact expected source, and ``home_spread == closing_home_spread``
+    / ``total_line == closing_total_line``.
+    """
+    if test["game_id"].duplicated().any():
+        raise ValueError("contract-strict walk-forward: duplicate test game_id rows")
+    missing = [c for c in CONTRACT_COLS if c not in test.columns]
+    if missing:
+        raise ValueError(f"contract-strict walk-forward: test frame missing {missing}")
+    id_cols = ["moneyline_contract_id", "spread_contract_id", "total_contract_id"]
+    if test[id_cols].isna().any().any():
+        raise ValueError("contract-strict walk-forward: null contract id in test frame")
+    if (test[id_cols].astype(str).apply(lambda s: s.str.len() == 0)).any().any():
+        raise ValueError("contract-strict walk-forward: empty contract id in test frame")
+    for c in ("home_spread", "total_line", "closing_home_spread", "closing_total_line",
+              "closing_minutes_to_kickoff"):
+        if not np.isfinite(test[c].to_numpy(dtype=float)).all():
+            raise ValueError(f"contract-strict walk-forward: non-finite {c} in test frame")
+    for c in ("tournament_market_ml_home_probability",
+              "tournament_market_cover_home_probability",
+              "tournament_market_over_probability"):
+        p = test[c].to_numpy(dtype=float)
+        if not (np.isfinite(p).all() and ((p > 0.0) & (p < 1.0)).all()):
+            raise ValueError(f"contract-strict walk-forward: {c} not all finite in (0, 1)")
+    if (test["market_contract_source"].astype(str) != expected_source).any():
+        raise ValueError(
+            "contract-strict walk-forward: a test row is not "
+            f"{expected_source!r} (proxy/reference rows may never be scored)."
+        )
+    dspread = np.abs(test["home_spread"].to_numpy(float) - test["closing_home_spread"].to_numpy(float))
+    dtotal = np.abs(test["total_line"].to_numpy(float) - test["closing_total_line"].to_numpy(float))
+    if (dspread > _CONTRACT_POINT_TOL).any() or (dtotal > _CONTRACT_POINT_TOL).any():
+        raise ValueError(
+            "contract-strict walk-forward: home_spread/total_line diverge from the "
+            "bound closing points."
+        )
+
+
+def _ordered_game_keys(
+    frame: pd.DataFrame,
+    *,
+    context: str,
+) -> list[tuple[int, str]]:
+    """Canonical ordered (season, game_id) key list for a frame, failing closed.
+
+    The single game-key normalization used by both ``run_walk_forward`` and the
+    runner: it requires ``season``/``game_id`` columns, coerces season to int,
+    normalizes game_id to a stripped string, and rejects missing/empty game IDs,
+    non-numeric seasons, or any duplicate season/game key. Row order is preserved
+    exactly so callers can assert exact ordered equality against an expected grid.
+    """
+    required = {"season", "game_id"}
+    missing = sorted(required - set(frame.columns))
+
+    if missing:
+        raise ValueError(
+            f"{context}: missing game-key columns {missing}"
+        )
+
+    season = pd.to_numeric(
+        frame["season"],
+        errors="coerce",
+    )
+
+    game_id = frame["game_id"].astype("string")
+
+    if season.isna().any():
+        bad_rows = frame.index[
+            season.isna()
+        ].tolist()
+
+        raise ValueError(
+            f"{context}: non-numeric season values "
+            f"at rows {bad_rows[:20]}"
+        )
+
+    if game_id.isna().any():
+        bad_rows = frame.index[
+            game_id.isna()
+        ].tolist()
+
+        raise ValueError(
+            f"{context}: missing game_id values "
+            f"at rows {bad_rows[:20]}"
+        )
+
+    normalized_game_id = game_id.str.strip()
+
+    if (normalized_game_id == "").any():
+        bad_rows = frame.index[
+            normalized_game_id == ""
+        ].tolist()
+
+        raise ValueError(
+            f"{context}: empty game_id values "
+            f"at rows {bad_rows[:20]}"
+        )
+
+    key_frame = pd.DataFrame(
+        {
+            "season": season.astype(int),
+            "game_id": normalized_game_id.astype(str),
+        },
+        index=frame.index,
+    )
+
+    duplicate_mask = key_frame.duplicated(
+        subset=["season", "game_id"],
+        keep=False,
+    )
+
+    if duplicate_mask.any():
+        duplicates = (
+            key_frame.loc[
+                duplicate_mask,
+                ["season", "game_id"],
+            ]
+            .drop_duplicates()
+            .sort_values(
+                ["season", "game_id"],
+                kind="stable",
+            )
+            .itertuples(index=False, name=None)
+        )
+
+        raise ValueError(
+            f"{context}: duplicate season/game keys "
+            f"{list(duplicates)[:20]}"
+        )
+
+    return list(
+        key_frame[
+            ["season", "game_id"]
+        ].itertuples(index=False, name=None)
+    )
+
+
+def run_walk_forward(matrix, features, *, test_seasons, market_prob_cols,
+                     expected_test_contract_source=None, require_complete=False):
     """Return {candidate: predictions_df} pooled over test seasons.
 
-    ``market_prob_cols`` maps [ml, ats, total] reference-market probability
-    columns present in ``matrix`` (used only as the C5 meta-feature).
+    ``market_prob_cols`` maps [ml, ats, total] market-probability columns present
+    in ``matrix`` (used as the C5 meta-feature and the degenerate-target fallback
+    baseline).
+
+    ``expected_test_contract_source`` validates CONTRACT SOURCE / METADATA only:
+    when given (e.g. ``"REAL-CLOSING"``), every scored *test* row must carry a
+    complete matching exact contract (see :func:`_assert_test_contract`) and the
+    returned prediction frames carry the exact contract metadata untouched.
+    Training rows are not source-restricted (pre-closing proxy history is allowed).
+    When it is ``None`` the contract columns are simply propagated if present and no
+    source restriction is applied. This flag NEVER controls completeness.
+
+    ``require_complete`` is the INDEPENDENT completeness contract (default
+    ``False``): when true, every requested test season must be processed and every
+    registered candidate must complete successfully for it -- a requested season
+    may never be silently skipped, a registered candidate may never be silently
+    dropped, and on return every requested season is proven to have been produced
+    by every registered candidate with a nonempty pooled result. It is orthogonal
+    to ``expected_test_contract_source``: contract validation does not imply
+    completeness and completeness does not imply contract validation.
     """
+    # Contract-source validation and completeness enforcement are independent.
+    # ``validate_contract`` gates ONLY the contract-metadata checks; it must never
+    # decide season/candidate completeness.
+    validate_contract = expected_test_contract_source is not None
+
+    requested_seasons = [int(value) for value in test_seasons]
+    if len(requested_seasons) != len(set(requested_seasons)):
+        raise ValueError(
+            "run_walk_forward: duplicate requested test seasons"
+        )
+
+    processed_seasons: list[int] = []
+    candidate_processed_seasons = {name: set() for name in CANDIDATES}
+    # Batch 2A: the exact ordered (season, game_id) grid every candidate must
+    # reproduce, accumulated once per fully-completed season (never per candidate).
+    expected_pooled_keys: list[tuple[int, str]] = []
+
     results = {name: [] for name in CANDIDATES}
-    for test_season in test_seasons:
+    for test_season in requested_seasons:
         train = matrix[matrix["season"] < test_season].copy()
         test = matrix[matrix["season"] == test_season].copy()
-        if len(train) < 100 or len(test) == 0:
+        # Issue 1: never SILENTLY skip a requested historical test season. When
+        # completeness is required an unscoreable requested season is a hidden
+        # failure, so fail closed naming the season; otherwise keep lenient skip.
+        if len(test) == 0:
+            if require_complete:
+                raise ValueError(
+                    "run_walk_forward: test season "
+                    f"{test_season} has zero eligible rows"
+                )
             continue
+        if len(train) < 100:
+            if require_complete:
+                raise ValueError(
+                    "run_walk_forward: insufficient historical training rows "
+                    f"for test season {test_season}: "
+                    f"train={len(train)}, required=100"
+                )
+            continue
+        if validate_contract:
+            _assert_test_contract(test, expected_test_contract_source)
+        # Batch 2A: the exact ordered game grid this scored season must produce.
+        # Derived from the eligible test frame before any candidate result is
+        # accepted; also proves the test frame itself has unique season/game keys.
+        expected_season_keys = _ordered_game_keys(
+            test,
+            context=(
+                "run_walk_forward expected test rows "
+                f"for season {test_season}"
+            ),
+        )
         cal_season = sorted(train["season"].unique())[-1]
 
         preds = {
@@ -286,12 +509,157 @@ def run_walk_forward(matrix, features, *, test_seasons, market_prob_cols):
             "C4_jointscore_epa": candidate_jointscore_epa(train, test, features, cal_season),
             "C5_stacked": candidate_stacked(train, test, features, cal_season, market_prob_cols),
         }
+        # Issue 2: the seasonal predicted set must cover the registry EXACTLY, so a
+        # registered candidate can never be silently dropped (nor an unregistered
+        # one appear) for a scored season.
+        if require_complete:
+            expected_names = set(CANDIDATES)
+            actual_names = set(preds)
+            if actual_names != expected_names:
+                missing = sorted(expected_names - actual_names)
+                extra = sorted(actual_names - expected_names)
+                raise RuntimeError(
+                    "run_walk_forward: seasonal candidate set mismatch "
+                    f"for test season {test_season}; "
+                    f"missing={missing}, extra={extra}"
+                )
         keep = ["game_id", "season", "week", "home_win", "home_cover", "over",
                 "home_margin", "total_points", "home_spread", "total_line"]
-        for name, pred in preds.items():
+        keep += [c for c in CONTRACT_COLS if c in test.columns]
+        for name in CANDIDATES:
+            pred = preds[name]
             if pred is None:
+                # Issue 2: a registered candidate that produces nothing for a scored
+                # season is a silent omission -> fail closed when completeness is
+                # required.
+                if require_complete:
+                    raise RuntimeError(
+                        f"{name}: candidate returned None "
+                        f"for test season {test_season}"
+                    )
                 continue
-            merged = pd.concat([test[keep].reset_index(drop=True), pred.reset_index(drop=True)], axis=1)
+            # Candidates return one row per test row indexed by test.index; refuse
+            # anything that is not an exact, unique-game realignment of the test set.
+            if len(pred) != len(test) or not pred.index.equals(test.index):
+                raise ValueError(
+                    f"{name}: candidate output is not one aligned row per test row"
+                )
+            merged = pd.concat(
+                [test[keep].reset_index(drop=True), pred.reset_index(drop=True)], axis=1
+            )
+            if validate_contract and merged["game_id"].duplicated().any():
+                raise ValueError(f"{name}: duplicate game_id after candidate join")
+            # Batch 2A: the merged candidate rows must be the EXACT ordered game
+            # grid of the eligible test frame -- no missing, extra, duplicated, or
+            # reordered game. This is an invariant check in addition to the
+            # length/index guards above (a candidate must never silently reshape
+            # the scored game set).
+            actual_season_keys = _ordered_game_keys(
+                merged,
+                context=(
+                    f"{name} candidate result "
+                    f"for season {test_season}"
+                ),
+            )
+            if actual_season_keys != expected_season_keys:
+                expected_set = set(expected_season_keys)
+                actual_set = set(actual_season_keys)
+                missing = sorted(expected_set - actual_set)
+                extra = sorted(actual_set - expected_set)
+                order_mismatch = (
+                    not missing
+                    and not extra
+                    and actual_season_keys != expected_season_keys
+                )
+                raise RuntimeError(
+                    f"{name}: candidate game coverage mismatch "
+                    f"for test season {test_season}; "
+                    f"missing={missing[:20]}, "
+                    f"extra={extra[:20]}, "
+                    f"order_mismatch={order_mismatch}"
+                )
             results[name].append(merged)
+            # Only record a candidate/season as processed AFTER its result has been
+            # successfully validated and appended.
+            candidate_processed_seasons[name].add(int(test_season))
 
-    return {name: pd.concat(frames, ignore_index=True) for name, frames in results.items() if frames}
+        # Mark the season processed only once EVERY registered candidate has
+        # successfully appended a result for it (never on partial coverage).
+        if all(int(test_season) in candidate_processed_seasons[name] for name in CANDIDATES):
+            processed_seasons.append(int(test_season))
+            # Batch 2A: append this season's expected keys to the pooled grid
+            # EXACTLY ONCE (only on full completion), preserving requested-season
+            # order and, within a season, the original test row order.
+            expected_pooled_keys.extend(expected_season_keys)
+
+    out = {name: pd.concat(frames, ignore_index=True)
+           for name, frames in results.items() if frames}
+
+    if require_complete:
+        # First: every requested season was processed, no more and no fewer.
+        missing_seasons = sorted(set(requested_seasons) - set(processed_seasons))
+        extra_seasons = sorted(set(processed_seasons) - set(requested_seasons))
+        if missing_seasons or extra_seasons:
+            raise RuntimeError(
+                "run_walk_forward: requested test seasons were not "
+                "completely processed; "
+                f"missing={missing_seasons}, extra={extra_seasons}"
+            )
+
+        # Second: every registered candidate covered every requested season.
+        for name in CANDIDATES:
+            missing = sorted(set(requested_seasons) - candidate_processed_seasons[name])
+            extra = sorted(candidate_processed_seasons[name] - set(requested_seasons))
+            if missing or extra:
+                raise RuntimeError(
+                    f"{name}: completed-season mismatch; "
+                    f"missing={missing}, extra={extra}"
+                )
+
+        # Third: the pooled candidate set is exactly the registry (never trust the
+        # initial dict keys as proof that a candidate produced data).
+        expected_names = set(CANDIDATES)
+        actual_names = set(out)
+        if actual_names != expected_names:
+            missing = sorted(expected_names - actual_names)
+            extra = sorted(actual_names - expected_names)
+            raise RuntimeError(
+                "run_walk_forward: pooled candidate set mismatch; "
+                f"missing={missing}, extra={extra}"
+            )
+
+        # Fourth: every pooled result actually holds rows.
+        for name in CANDIDATES:
+            if out[name].empty:
+                raise RuntimeError(
+                    f"run_walk_forward: empty pooled result for {name}"
+                )
+
+        # Fifth (Batch 2A): every pooled candidate must reproduce the COMPLETE
+        # requested-season game grid in exact order -- no missing, extra,
+        # duplicated, or reordered game across the pooled result.
+        for name in CANDIDATES:
+            actual_pooled_keys = _ordered_game_keys(
+                out[name],
+                context=(
+                    f"{name} pooled candidate result"
+                ),
+            )
+            if actual_pooled_keys != expected_pooled_keys:
+                expected_set = set(expected_pooled_keys)
+                actual_set = set(actual_pooled_keys)
+                missing = sorted(expected_set - actual_set)
+                extra = sorted(actual_set - expected_set)
+                order_mismatch = (
+                    not missing
+                    and not extra
+                    and actual_pooled_keys != expected_pooled_keys
+                )
+                raise RuntimeError(
+                    f"{name}: pooled candidate game "
+                    "coverage mismatch; "
+                    f"missing={missing[:20]}, "
+                    f"extra={extra[:20]}, "
+                    f"order_mismatch={order_mismatch}"
+                )
+    return out

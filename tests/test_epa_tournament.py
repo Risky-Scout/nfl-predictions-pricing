@@ -454,3 +454,484 @@ def test_cross_market_target_independence():
     # every completed row keeps finite continuous outcomes for regression
     assert np.isfinite(frame["home_margin"].to_numpy()).all()
     assert np.isfinite(frame["total_points"].to_numpy()).all()
+
+
+# =============================================================================
+# R2: contract-strict walk-forward. Every scored test row carries a complete
+# exact REAL-CLOSING contract; the contract metadata is propagated untouched
+# through prediction; proxy/mismatched/duplicate rows fail closed.
+# =============================================================================
+import nfl_hybrid.selection.epa_tournament as ep
+from nfl_hybrid.markets.exact_contract import (
+    AGGREGATION_METHOD,
+    MARKET_SOURCE_CLOSING,
+    MARKET_SOURCE_PROXY,
+    ContractError,
+    make_market_contract_id,
+    validate_prediction_contract,
+)
+
+CFEATURES = ["home_spread", "total_line", "epa_net_edge_season_mean", "rest_diff"]
+TOUR_PROB_COLS = [
+    "tournament_market_ml_home_probability",
+    "tournament_market_cover_home_probability",
+    "tournament_market_over_probability",
+]
+
+
+def _ccid(gid, market, side, line, snap=180.0):
+    return make_market_contract_id(
+        game_id=gid, market_type=market, outcome_side=side, line_value=line,
+        market_source=MARKET_SOURCE_CLOSING, snapshot_minutes_to_kickoff=snap,
+        aggregation_method=AGGREGATION_METHOD,
+    )
+
+
+def _cbench_row(gid, season, hs, tl, snap=180.0):
+    return dict(
+        game_id=gid, season=season, week=1, home_team_id="H", away_team_id="A",
+        market_ml_home_probability=0.55, market_cover_home_probability=0.5,
+        market_over_probability=0.5, closing_home_spread=hs, closing_total_line=tl,
+        closing_minutes_to_kickoff=snap, market_source=MARKET_SOURCE_CLOSING,
+        aggregation_method=AGGREGATION_METHOD,
+        moneyline_contract_id=_ccid(gid, "moneyline", "home", None, snap),
+        spread_contract_id=_ccid(gid, "spread", "home", hs, snap),
+        total_contract_id=_ccid(gid, "total", "over", tl, snap),
+        moneyline_consensus_books=5, spread_consensus_books=5, total_consensus_books=5,
+        spread_candidate_point_count=1, total_candidate_point_count=1,
+    )
+
+
+def _crow(gid, season, hs, tl, margin, total, source, rng, snap=180.0):
+    real = source == MARKET_SOURCE_CLOSING
+    return dict(
+        game_id=gid, season=season, week=int(rng.integers(1, 18)),
+        home_spread=hs, total_line=tl, home_margin=margin, total_points=total,
+        epa_net_edge_season_mean=float(rng.normal(0, 0.1)), rest_diff=float(rng.integers(-4, 5)),
+        home_win=_edge_to_nullable_binary(pd.Series([margin])).iloc[0],
+        home_cover=_edge_to_nullable_binary(pd.Series([margin + hs])).iloc[0],
+        over=_edge_to_nullable_binary(pd.Series([total - tl])).iloc[0],
+        market_contract_source=source,
+        moneyline_contract_id=_ccid(gid, "moneyline", "home", None, snap) if real else "proxy",
+        spread_contract_id=_ccid(gid, "spread", "home", hs, snap) if real else "proxy",
+        total_contract_id=_ccid(gid, "total", "over", tl, snap) if real else "proxy",
+        tournament_market_ml_home_probability=0.55 if real else 0.5,
+        tournament_market_cover_home_probability=0.5,
+        tournament_market_over_probability=0.5,
+        closing_home_spread=hs if real else np.nan,
+        closing_total_line=tl if real else np.nan,
+        closing_minutes_to_kickoff=snap if real else np.nan,
+    )
+
+
+def _contract_scenario(n_real=30, seed=3):
+    rng = np.random.default_rng(seed)
+    rows, gid = [], 0
+    for season in (2020, 2021):
+        for _ in range(70):
+            gid += 1
+            hs = float(np.round(rng.normal(0, 6))); tl = float(np.round(rng.normal(45, 5)))
+            rows.append(_crow(f"p{gid}", season, hs, tl, -hs + rng.normal(0, 13), tl + rng.normal(0, 13), MARKET_SOURCE_PROXY, rng))
+    bench = []
+    for _ in range(n_real):
+        gid += 1; g = f"r{gid}"
+        hs = float(np.round(rng.normal(0, 6))); tl = float(np.round(rng.normal(45, 5)))
+        rows.append(_crow(g, 2022, hs, tl, -hs + rng.normal(0, 13), tl + rng.normal(0, 13), MARKET_SOURCE_CLOSING, rng))
+        bench.append(_cbench_row(g, 2022, hs, tl))
+    return pd.DataFrame(rows), pd.DataFrame(bench)
+
+
+def _run(matrix):
+    return run_walk_forward(
+        matrix, CFEATURES, test_seasons=[2022], market_prob_cols=TOUR_PROB_COLS,
+        expected_test_contract_source=MARKET_SOURCE_CLOSING,
+    )
+
+
+# --- Test A: all candidates receive exact point columns ---------------------- #
+def test_all_candidates_receive_exact_point_columns(monkeypatch):
+    matrix, _ = _contract_scenario()
+    seen = {}
+    required = set(TOUR_PROB_COLS) | {
+        "closing_home_spread", "closing_total_line", "spread_contract_id",
+        "total_contract_id", "moneyline_contract_id",
+    }
+    for fn_name in ("candidate_market_residual", "candidate_gbm", "candidate_logistic",
+                    "candidate_jointscore_epa", "candidate_stacked"):
+        orig = getattr(ep, fn_name)
+
+        def make(orig, name):
+            def wrapper(train, test, *a, **k):
+                seen[name] = set(test.columns)
+                return orig(train, test, *a, **k)
+            return wrapper
+
+        monkeypatch.setattr(ep, fn_name, make(orig, fn_name))
+    _run(matrix)
+    assert seen  # candidates were invoked
+    for name, cols in seen.items():
+        assert required.issubset(cols), f"{name} missing {required - cols}"
+
+
+# --- Test B: output contract propagation ------------------------------------- #
+def test_output_contract_propagation():
+    matrix, bench = _contract_scenario()
+    results = _run(matrix)
+    test_ids = list(matrix[matrix["season"] == 2022]["game_id"])
+    for name, df in results.items():
+        assert len(df) == len(test_ids)
+        assert list(df["game_id"]) == test_ids            # same games, same order
+        for col in ("moneyline_contract_id", "spread_contract_id", "total_contract_id",
+                    "closing_home_spread", "closing_total_line",
+                    "tournament_market_cover_home_probability"):
+            assert col in df.columns
+        # points equal the bound closing points
+        assert np.allclose(df["home_spread"].to_numpy(float), df["closing_home_spread"].to_numpy(float))
+        assert np.allclose(df["total_line"].to_numpy(float), df["closing_total_line"].to_numpy(float))
+
+
+# --- Test C: line mismatch fails --------------------------------------------- #
+def test_line_mismatch_fails_naming_game_and_market():
+    matrix, bench = _contract_scenario()
+    pred = _run(matrix)["C2_gbm"].copy()
+    gid = pred.loc[0, "game_id"]
+    pred.loc[0, "home_spread"] = pred.loc[0, "home_spread"] + 1.0  # mutate a point post-prediction
+    with pytest.raises(ContractError) as exc:
+        validate_prediction_contract(pred, bench)
+    assert str(gid) in str(exc.value) and "spread" in str(exc.value)
+
+
+# --- Test D: contract ID mismatch fails (point unchanged) -------------------- #
+def test_contract_id_mismatch_fails():
+    matrix, bench = _contract_scenario()
+    pred = _run(matrix)["C2_gbm"].copy()
+    pred.loc[0, "spread_contract_id"] = "tampered-but-same-point"
+    with pytest.raises(ContractError):
+        validate_prediction_contract(pred, bench)
+
+
+# --- Test E: market probability / benchmark alignment (not positional) ------- #
+def test_benchmark_alignment_is_by_game_id_not_positional():
+    matrix, bench = _contract_scenario()
+    pred = _run(matrix)["C2_gbm"].copy()
+    shuffled = bench.sample(frac=1.0, random_state=9).reset_index(drop=True)
+    # reordering benchmark rows must not break validation: it realigns by game_id
+    validate_prediction_contract(pred, shuffled)
+
+
+# --- Test F: duplicate game id fails ----------------------------------------- #
+def test_duplicate_game_id_fails_in_validator_and_walk_forward():
+    matrix, bench = _contract_scenario()
+    pred = _run(matrix)["C2_gbm"].copy()
+    dup_bench = pd.concat([bench, bench.iloc[[0]]], ignore_index=True)
+    with pytest.raises(ContractError):
+        validate_prediction_contract(pred, dup_bench)
+    dup_matrix = pd.concat([matrix, matrix[matrix["season"] == 2022].iloc[[0]]], ignore_index=True)
+    with pytest.raises(ValueError):
+        _run(dup_matrix)
+
+
+# --- Test G: source enforcement ---------------------------------------------- #
+def test_proxy_source_test_row_fails_before_prediction():
+    matrix, bench = _contract_scenario()
+    matrix = matrix.copy()
+    idx = matrix.index[matrix["season"] == 2022][0]
+    matrix.loc[idx, "market_contract_source"] = MARKET_SOURCE_PROXY  # illegal scored source
+    with pytest.raises(ValueError):
+        _run(matrix)
+
+
+# =============================================================================
+# R2 batch: two silent-failure guards in run_walk_forward.
+#   Issue 1 - a requested historical test season must never be SILENTLY skipped.
+#   Issue 2 - a registered candidate must never be SILENTLY omitted.
+# Strict (contract) mode fails closed; legacy/synthetic mode keeps leniency.
+# =============================================================================
+def test_strict_walk_forward_raises_on_empty_test_season():
+    matrix, _ = _contract_scenario()
+    with pytest.raises(ValueError, match="2099"):
+        run_walk_forward(
+            matrix, CFEATURES, test_seasons=[2099, 2022], market_prob_cols=TOUR_PROB_COLS,
+            expected_test_contract_source=MARKET_SOURCE_CLOSING,
+            require_complete=True,
+        )
+
+
+def test_strict_walk_forward_raises_on_insufficient_training():
+    matrix, _ = _contract_scenario()
+    # test season 2021 has rows but only 2020 (<100) precedes it as training history
+    with pytest.raises(ValueError, match="training rows"):
+        run_walk_forward(
+            matrix, CFEATURES, test_seasons=[2021], market_prob_cols=TOUR_PROB_COLS,
+            expected_test_contract_source=MARKET_SOURCE_CLOSING,
+            require_complete=True,
+        )
+
+
+def test_legacy_walk_forward_still_skips_unscoreable_season():
+    m = _matrix(seasons=(2020, 2021, 2022))
+    res = run_walk_forward(
+        m, FEATURES, test_seasons=[2019, 2022],
+        market_prob_cols=["ref_ml_home_prob", "ref_cover_prob", "ref_over_prob"],
+    )
+    # 2019 is silently skipped (legacy leniency preserved), 2022 scores every candidate
+    assert set(res.keys()) == set(CANDIDATES)
+
+
+def test_candidate_registry_mismatch_raises(monkeypatch):
+    matrix, _ = _contract_scenario()
+    monkeypatch.setattr(ep, "CANDIDATES", ep.CANDIDATES + ("C6_ghost",))
+    with pytest.raises(RuntimeError, match="candidate set mismatch"):
+        run_walk_forward(
+            matrix, CFEATURES, test_seasons=[2022], market_prob_cols=TOUR_PROB_COLS,
+            expected_test_contract_source=MARKET_SOURCE_CLOSING,
+            require_complete=True,
+        )
+
+
+def test_strict_walk_forward_raises_on_none_candidate(monkeypatch):
+    matrix, _ = _contract_scenario()
+    monkeypatch.setattr(ep, "candidate_stacked", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="C5_stacked"):
+        run_walk_forward(
+            matrix, CFEATURES, test_seasons=[2022], market_prob_cols=TOUR_PROB_COLS,
+            expected_test_contract_source=MARKET_SOURCE_CLOSING,
+            require_complete=True,
+        )
+
+
+def test_legacy_walk_forward_skips_none_candidate(monkeypatch):
+    m = _matrix(seasons=(2020, 2021, 2022))
+    monkeypatch.setattr(ep, "candidate_stacked", lambda *a, **k: None)
+    res = run_walk_forward(
+        m, FEATURES, test_seasons=[2022],
+        market_prob_cols=["ref_ml_home_prob", "ref_cover_prob", "ref_over_prob"],
+    )
+    # legacy mode still tolerates a None candidate (no fail-closed)
+    assert "C5_stacked" not in res and "C1_market_residual" in res
+
+
+# =============================================================================
+# R2 batch 1 correction: require_complete is an EXPLICIT completeness contract,
+# INDEPENDENT of expected_test_contract_source. Every test below monkeypatches
+# all candidates to fixed-value stubs so NO real estimator is ever fit.
+# =============================================================================
+_STUB_MARKET_COLS = ["ref_ml_home_prob", "ref_cover_prob", "ref_over_prob"]
+
+
+def stub_candidate(*args, **kwargs):
+    """Lightweight candidate: one fixed-value probability row per test row,
+    indexed exactly as test.index. No model fitting."""
+    test = args[1]
+    return pd.DataFrame(
+        {
+            PROB_COLS[0]: 0.51,
+            PROB_COLS[1]: 0.52,
+            PROB_COLS[2]: 0.53,
+        },
+        index=test.index,
+    )
+
+
+def _patch_all_candidates(monkeypatch, *, stacked=stub_candidate):
+    """Monkeypatch every candidate function in the module to a lightweight stub.
+    ``stacked`` overrides only candidate_stacked (e.g. to return None)."""
+    monkeypatch.setattr(ep, "candidate_market_residual", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_gbm", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_logistic", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_jointscore_epa", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_stacked", stacked)
+
+
+def test_require_complete_is_independent_of_contract_source(monkeypatch):
+    """Contract validation does NOT imply completeness: the same input with a
+    contract source but require_complete=False keeps the lenient skip, while
+    require_complete=True fails closed on the empty requested season."""
+    _patch_all_candidates(monkeypatch)
+    m = _matrix(seasons=(2020, 2021, 2022))
+
+    # require_complete=False: the empty requested season 2099 is silently skipped
+    # even though a contract source is supplied -> no completeness exception.
+    res = run_walk_forward(
+        m, FEATURES, test_seasons=[2099], market_prob_cols=_STUB_MARKET_COLS,
+        expected_test_contract_source="REAL-CLOSING", require_complete=False,
+    )
+    assert res == {}  # nothing scored, no raise
+
+    # require_complete=True: the same empty requested season is now a hard failure.
+    with pytest.raises(ValueError) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2099], market_prob_cols=_STUB_MARKET_COLS,
+            expected_test_contract_source="REAL-CLOSING", require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "run_walk_forward" in msg and "2099" in msg and "zero eligible rows" in msg
+
+
+def test_require_complete_rejects_zero_test_rows(monkeypatch):
+    _patch_all_candidates(monkeypatch)
+    m = _matrix(seasons=(2020, 2021, 2022))
+    with pytest.raises(ValueError) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2099], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "zero eligible rows" in msg and "2099" in msg
+
+
+def test_require_complete_rejects_insufficient_training(monkeypatch):
+    # Fewer than 100 prior training rows (2020 = 50) for a nonempty test season 2021.
+    _patch_all_candidates(monkeypatch)
+    m = _matrix(seasons=(2020, 2021), n_per_season=50)
+    with pytest.raises(ValueError) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2021], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "insufficient historical training rows" in msg
+    assert "train=50" in msg and "required=100" in msg and "2021" in msg
+
+
+def test_require_complete_rejects_candidate_none(monkeypatch):
+    # >=100 training rows and a nonempty test season; only C5_stacked returns None.
+    _patch_all_candidates(monkeypatch, stacked=lambda *a, **k: None)
+    m = _matrix(seasons=(2020, 2021, 2022))
+    with pytest.raises(RuntimeError) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2022], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "C5_stacked" in msg and "candidate returned None" in msg and "2022" in msg
+
+
+def test_require_complete_tracks_every_candidate_and_season(monkeypatch):
+    _patch_all_candidates(monkeypatch)
+    requested = [2022, 2023]
+    # >=100 rows before the first requested season (2020+2021 = 240) and >=1 row in
+    # each requested test season.
+    m = _matrix(seasons=(2020, 2021, 2022, 2023))
+    result = run_walk_forward(
+        m, FEATURES, test_seasons=requested, market_prob_cols=_STUB_MARKET_COLS,
+        require_complete=True,
+    )
+    assert set(result) == set(CANDIDATES)
+    for name in CANDIDATES:
+        assert set(result[name]["season"]) == set(requested)
+        assert not result[name].empty
+
+
+# =============================================================================
+# R2 Batch 2A: candidate GAME COVERAGE. Every candidate must reproduce the exact
+# ordered (season, game_id) grid of the eligible test frame -- a missing, extra,
+# duplicated, or reordered game fails closed BEFORE pooling. Every test below
+# monkeypatches all five candidates to lightweight stubs so no estimator is fit.
+# =============================================================================
+def _patch_c3_malformed(monkeypatch, malformed):
+    """Patch every candidate to the normal Batch 1 stub, except C3_logistic which
+    uses ``malformed`` (a ``*args, **kwargs`` stub returning a bad frame). No real
+    estimator runs in either branch."""
+    monkeypatch.setattr(ep, "candidate_market_residual", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_gbm", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_logistic", malformed)
+    monkeypatch.setattr(ep, "candidate_jointscore_epa", stub_candidate)
+    monkeypatch.setattr(ep, "candidate_stacked", stub_candidate)
+
+
+def test_ordered_game_keys_rejects_duplicate_season_game_key():
+    frame = pd.DataFrame(
+        {
+            "season": [2022, 2022],
+            "game_id": ["g1", "g1"],
+        }
+    )
+    with pytest.raises(ValueError) as exc:
+        ep._ordered_game_keys(frame, context="unit")
+    assert "duplicate season/game keys" in str(exc.value)
+
+
+def test_require_complete_rejects_candidate_missing_one_game(monkeypatch):
+    def c3_missing(*args, **kwargs):
+        test = args[1]
+        normal = stub_candidate(*args, **kwargs)
+        # drop the final game -> fewer rows than the eligible test frame
+        return normal.iloc[:-1].copy()
+
+    _patch_c3_malformed(monkeypatch, c3_missing)
+    m = _matrix(seasons=(2020, 2021, 2022))   # train(2020+2021)=240 >= 100
+    with pytest.raises((ValueError, RuntimeError)) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2022], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    # C3 is named and the failure is a row-count / index-alignment / coverage
+    # mismatch (the existing length guard fails closed before pooling).
+    assert "C3_logistic" in msg
+    assert ("aligned row per test row" in msg) or ("coverage mismatch" in msg)
+
+
+def test_require_complete_rejects_candidate_extra_game(monkeypatch):
+    def c3_extra(*args, **kwargs):
+        test = args[1]
+        normal = stub_candidate(*args, **kwargs)
+        extra_idx = int(test.index.max()) + 1000   # index not present in test.index
+        extra = pd.DataFrame(
+            {PROB_COLS[0]: [0.51], PROB_COLS[1]: [0.52], PROB_COLS[2]: [0.53]},
+            index=[extra_idx],
+        )
+        return pd.concat([normal, extra])
+
+    _patch_c3_malformed(monkeypatch, c3_extra)
+    m = _matrix(seasons=(2020, 2021, 2022))
+    with pytest.raises((ValueError, RuntimeError)) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2022], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "C3_logistic" in msg
+    assert ("aligned row per test row" in msg) or ("coverage mismatch" in msg)
+
+
+def test_require_complete_rejects_candidate_game_order_mismatch(monkeypatch):
+    def c3_reversed(*args, **kwargs):
+        normal = stub_candidate(*args, **kwargs)
+        # reversed rows keeping the reversed index labels (never reset)
+        return normal.iloc[::-1]
+
+    _patch_c3_malformed(monkeypatch, c3_reversed)
+    m = _matrix(seasons=(2020, 2021, 2022))
+    with pytest.raises((ValueError, RuntimeError)) as exc:
+        run_walk_forward(
+            m, FEATURES, test_seasons=[2022], market_prob_cols=_STUB_MARKET_COLS,
+            require_complete=True,
+        )
+    msg = str(exc.value)
+    assert "C3_logistic" in msg
+    assert ("aligned row per test row" in msg) or ("order_mismatch" in msg)
+
+
+def test_require_complete_accepts_exact_candidate_game_grid(monkeypatch):
+    _patch_all_candidates(monkeypatch)
+    requested = [2022, 2023]
+    m = _matrix(seasons=(2020, 2021, 2022, 2023))
+    # expected ordered keys: test rows concatenated in requested-season order
+    expected_keys = []
+    for season in requested:
+        part = m[m["season"] == season]
+        expected_keys += ep._ordered_game_keys(part, context=f"expected {season}")
+
+    result = run_walk_forward(
+        m, FEATURES, test_seasons=requested, market_prob_cols=_STUB_MARKET_COLS,
+        require_complete=True,
+    )
+    assert set(result) == set(CANDIDATES)
+    for name in CANDIDATES:
+        actual = ep._ordered_game_keys(result[name], context=name)
+        assert actual == expected_keys
+    # every candidate reproduced the identical expected grid
+    all_keys = [ep._ordered_game_keys(result[name], context=name) for name in CANDIDATES]
+    assert all(k == all_keys[0] for k in all_keys)
