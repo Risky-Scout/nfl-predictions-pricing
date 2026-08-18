@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from nfl_hybrid.data.external_data import resolve
 from nfl_hybrid.labels import edge_to_nullable_binary
 from nfl_hybrid.pricing.calibration import (
     load_spreadspoke_margins,
@@ -28,9 +29,7 @@ from nfl_hybrid.pricing.calibration import (
 )
 from nfl_hybrid.pricing.margin_surface import MarginSurface, build_empirical_pmf_table, discretized_normal_pmf
 
-SPREADSPOKE = "data/spreadspoke_enhanced.csv"
-PURCHASED = "data/purchased/odds_closing_dev_2022_2024.parquet"
-GAMES = "data/backfill_2020_2025/canonical/games.parquet"
+SPREADSPOKE = "data/spreadspoke_enhanced.csv"  # repo-committed; unrelated to the private backfill estate
 ART = Path("config/pricing_calibration_2026.json")
 PMF_CSV = Path("config/pricing_calibration_2026_pmf.csv")
 KEY_NUMBERS = [3, 6, 7, 10, 14]
@@ -70,7 +69,7 @@ def push_calibration(margins: pd.DataFrame, surface: MarginSurface, sigma: float
 
 
 def build_outcomes() -> pd.DataFrame:
-    games = pd.read_parquet(GAMES)
+    games = pd.read_parquet(resolve("backfill.games"))
     dev = games[games["season"].isin(TEST_SEASONS)].copy()
     hm = pd.to_numeric(dev["home_score"], errors="coerce") - pd.to_numeric(dev["away_score"], errors="coerce")
     tp = pd.to_numeric(dev["home_score"], errors="coerce") + pd.to_numeric(dev["away_score"], errors="coerce")
@@ -103,7 +102,8 @@ def main() -> None:
     margin_sigma = select_sigma(resid, "margin_resid", kind="margin")
     total_sigma = select_sigma(resid, "total_resid", kind="total")
     print("selecting de-vig + consensus ...")
-    odds = pd.read_parquet(PURCHASED); odds["game_id"] = odds["game_id"].astype(str)
+    purchased_path = resolve("purchased.odds_closing_dev_2022_2024")
+    odds = pd.read_parquet(purchased_path); odds["game_id"] = odds["game_id"].astype(str)
     devig = select_devig_consensus(odds, build_outcomes())
 
     # --- margin surface decision ------------------------------------------- #
@@ -132,7 +132,7 @@ def main() -> None:
         "random_seed": BOOT_SEED,
         "source_hashes": {
             "spreadspoke": _sha256(SPREADSPOKE),
-            "purchased_closing_odds": _sha256(PURCHASED),
+            "purchased_closing_odds": _sha256(str(purchased_path)),
         },
         "margin_surface": {
             "selected": margin_method,

@@ -9,7 +9,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PYTHONPATH="$ROOT/src"
 PY=".venv/bin/python"
-BACKFILL="data/backfill_2020_2025"
+
+# Resolve the SAME canonical backfill root that model consumers read through
+# nfl_hybrid.data.external_data (NFL_MODEL_DATA_ROOT), so this incremental
+# refresh can never write into a different data estate than consumers read
+# from. Set BACKFILL_OUTPUT_DIR to override explicitly.
+if [ -n "${BACKFILL_OUTPUT_DIR:-}" ]; then
+  BACKFILL="$BACKFILL_OUTPUT_DIR"
+else
+  BACKFILL="$($PY -c 'from nfl_hybrid.data.external_data import namespace_root; print(namespace_root("backfill"))')" || {
+    echo "ERROR: could not resolve the backfill output root. Set NFL_MODEL_DATA_ROOT or BACKFILL_OUTPUT_DIR." >&2
+    exit 1
+  }
+fi
 SEASON_DIR="outputs/season_${SEASON}"
 mkdir -p "$SEASON_DIR"
 

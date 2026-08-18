@@ -23,6 +23,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+from nfl_hybrid.data.external_data import resolve
 from nfl_hybrid.evaluation.market_relative import (
     MarketRelativeConfig,
     evaluate_market_relative,
@@ -31,13 +32,12 @@ from nfl_hybrid.evaluation.walkforward import expanding_season_backtest
 from nfl_hybrid.governance.readiness import classify_market_relative_readiness
 from nfl_hybrid.modern.joint_score import JointScoreModel
 
-BACKFILL = Path("data/backfill_2020_2025/canonical/games.parquet")
 OUT = Path("outputs")
 MARGIN_SD = 13.5
 
 
 def build_feature_matrix() -> pd.DataFrame:
-    g = pd.read_parquet(BACKFILL).copy()
+    g = pd.read_parquet(resolve("backfill.games")).copy()
     g["home_spread"] = pd.to_numeric(g["home_spread_reference"], errors="coerce")
     g["total_line"] = pd.to_numeric(g["total_line_reference"], errors="coerce")
     g["home_score"] = pd.to_numeric(g["home_score"], errors="coerce")

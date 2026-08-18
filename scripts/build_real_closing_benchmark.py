@@ -12,12 +12,13 @@ from pathlib import Path
 
 import pandas as pd
 
-BASE = Path("data/backfill_2020_2025")
+from nfl_hybrid.data.external_data import resolve
+
 OUT = Path("outputs")
 
 
 def main() -> None:
-    o = pd.read_parquet(BASE / "canonical" / "odds_closing_dev_2022_2024.parquet")
+    o = pd.read_parquet(resolve("purchased.odds_closing_dev_2022_2024"))
     o = o[o["market_type"].isin(["moneyline", "spread", "total"])].copy()
     o = o[o["minutes_to_kickoff"].astype(float) > 0]  # exclude in-play
 
@@ -34,7 +35,7 @@ def main() -> None:
         sub = closing[(closing["market_type"] == market) & (closing["outcome_side"] == side)]
         return sub.groupby("game_id")["line_value"].median()
 
-    games = pd.read_parquet(BASE / "canonical" / "games.parquet")
+    games = pd.read_parquet(resolve("backfill.games"))
     dev = games[games["season"].isin([2022, 2023, 2024])][
         ["game_id", "season", "week", "home_team_id", "away_team_id"]
     ].copy()

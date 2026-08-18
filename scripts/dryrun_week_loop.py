@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from nfl_hybrid.data.external_data import resolve
 from nfl_hybrid.operations import (
     cumulative_live_scorecard,
     live_promotion_decision,
@@ -25,7 +26,7 @@ REHEARSAL_DIR = Path("outputs/season_2026/rehearsal_2025wk1")
 
 
 def main() -> None:
-    games = pd.read_parquet("data/backfill_2020_2025/canonical/games.parquet")
+    games = pd.read_parquet(resolve("backfill.games"))
     wk = games[(games["season"] == SEASON) & (games["week"].astype(str) == str(WEEK))].copy()
     wk["home_team"] = wk["home_team_id"]
     wk["away_team"] = wk["away_team_id"]

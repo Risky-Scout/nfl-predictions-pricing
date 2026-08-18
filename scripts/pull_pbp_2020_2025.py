@@ -1,25 +1,26 @@
 """Targeted nflverse play-by-play pull for 2020-2025 with a SHA-256 manifest.
 
-Writes into the existing backfill directory alongside the other raw tables so the
-provenance layout is unchanged. Equivalent to re-running the backfill without
-``--skip-large-tables`` but without re-pulling the tables already cached.
+Writes into the "backfill" namespace of NFL_MODEL_DATA_ROOT (the same root
+consumers resolve reads from -- see nfl_hybrid.data.external_data), alongside
+the other raw tables, so the provenance layout is unchanged. Equivalent to
+re-running the backfill without ``--skip-large-tables`` but without re-pulling
+the tables already cached.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
+from nfl_hybrid.data.external_data import namespace_root
 from nfl_hybrid.data.io import write_frame
 from nfl_hybrid.data.providers.nflverse import NflverseAdapter
 from nfl_hybrid.data.provenance import SourceManifest
 
 SEASONS = tuple(range(2020, 2026))
-BASE = Path("data/backfill_2020_2025")
 
 
 def main() -> None:
-    raw = BASE / "raw"
-    manifests = BASE / "manifests"
+    base = namespace_root("backfill")
+    raw = base / "raw"
+    manifests = base / "manifests"
     raw.mkdir(parents=True, exist_ok=True)
     manifests.mkdir(parents=True, exist_ok=True)
 

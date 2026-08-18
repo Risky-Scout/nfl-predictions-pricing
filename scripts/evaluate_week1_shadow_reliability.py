@@ -27,6 +27,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from nfl_hybrid.data.external_data import describe, resolve
 from nfl_hybrid.evaluation import week1_reliability as wr
 from nfl_hybrid.features.augmented_matrix import (
     FROZEN_FEATURES,
@@ -35,10 +36,13 @@ from nfl_hybrid.features.augmented_matrix import (
 from nfl_hybrid.modern.joint_score import JointScoreModel
 from nfl_hybrid.pricing.fundamental_shadow import load_shadow
 
-BASE = Path("data/backfill_2020_2025")
-GAMES_PATH = BASE / "canonical" / "games.parquet"
-PBP_PATH = BASE / "raw" / "pbp.parquet"
-ODDS_PATH = BASE / "canonical" / "odds_closing_dev_2022_2024.parquet"
+# Documentation-only labels (never touch disk, never require NFL_MODEL_DATA_ROOT --
+# this module is loaded via importlib during CI test collection, so module-level
+# code must stay import-safe). The actual real-data read happens in main() via
+# resolve(), which fails loudly if the private data root is not configured.
+GAMES_PATH = describe("backfill.games")
+PBP_PATH = describe("backfill.pbp")
+ODDS_PATH = describe("purchased.odds_closing_dev_2022_2024")
 REPORT_JSON = Path("reports/week1_shadow_reliability_2026.json")
 REPORT_MD = Path("WEEK1_SHADOW_RELIABILITY_REPORT.md")
 LEDGER_CSV = Path("reports/week1_shadow_reliability_ledger.csv")
@@ -567,8 +571,8 @@ def write_outputs(report: dict, ledger: pd.DataFrame) -> dict:
 
 
 def main() -> dict:
-    games = pd.read_parquet(GAMES_PATH)
-    pbp = pd.read_parquet(PBP_PATH)
+    games = pd.read_parquet(resolve("backfill.games"))
+    pbp = pd.read_parquet(resolve("backfill.pbp"))
     matrix, manifest = build_augmented_feature_matrix(games, pbp)
     if manifest["all_features"] != FROZEN_FEATURES:
         raise ValueError("training features drifted from FROZEN_FEATURES")
