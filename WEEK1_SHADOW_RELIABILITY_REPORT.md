@@ -1,3 +1,8 @@
+> **HISTORICAL AUDIT RECORD — NOT CURRENT SYSTEM STATUS**
+> This report records the results and build state of a prior experiment run.
+> Numbers below are not rewritten and remain as originally reported. For
+> current status, see `STATUS.md` and `REMEDIATION_STATUS_2026.md`.
+
 # Week 1 Shadow Reliability Report (Stage 3)
 
 > Generated from `reports/week1_shadow_reliability_2026.json` (the source of truth). All numbers below are reconciled from that JSON.

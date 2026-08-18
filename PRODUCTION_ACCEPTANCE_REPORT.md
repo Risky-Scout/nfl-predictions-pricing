@@ -1,3 +1,8 @@
+> **HISTORICAL AUDIT RECORD — NOT CURRENT SYSTEM STATUS**
+> This report records the results and build state of a prior experiment run.
+> Numbers below are not rewritten and remain as originally reported. For
+> current status, see `STATUS.md` and `REMEDIATION_STATUS_2026.md`.
+
 # Production Acceptance Report — 2026 NFL Pricing Model
 
 Every claim below is backed by a command result, file, test, or numeric comparison.

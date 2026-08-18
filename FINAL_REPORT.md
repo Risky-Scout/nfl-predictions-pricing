@@ -1,3 +1,8 @@
+> **HISTORICAL AUDIT RECORD — NOT CURRENT SYSTEM STATUS**
+> This report records the results and build state of a prior experiment run.
+> Numbers below are not rewritten and remain as originally reported. For
+> current status, see `STATUS.md` and `REMEDIATION_STATUS_2026.md`.
+
 # FINAL REPORT — EPA Edge Search + 2026 Season Operations
 
 **Branch:** `overnight-edge-search` · **Run:** Phases D–G, autonomous, committed and

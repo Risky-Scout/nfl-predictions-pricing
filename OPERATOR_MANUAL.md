@@ -1,5 +1,12 @@
 # OPERATOR MANUAL — NFL Pricing Engine, 2026 Season
 
+> **Legacy operating path.** This manual documents the current
+> legacy/market-baseline weekly operating path (the one the production card
+> actually runs today). The 2026 learned-production runner (built on the
+> Fix 2 chronological pregame-state families and Fix 3 chronological
+> OOF/uncertainty) is still under remediation and is not yet the production
+> path — see `STATUS.md` and `REMEDIATION_STATUS_2026.md`.
+
 For a non-author running the season. Read the box first.
 
 > **State of the system (read this):** All three markets — moneyline, ATS, totals —
@@ -71,7 +78,7 @@ The live/training feature-parity and leakage guarantees run in **two tiers**:
   and 3.14 and fails if it reports any `skipped`. Run it directly with
   `PYTHONPATH=src pytest -q tests/test_live_features_ci.py`.
 - **Extended (local only):** `tests/test_live_features_extended.py` (marked
-  `extended_data`) replays the full private `data/backfill_2020_2025/` parquets and
+  `extended_data`) replays the full private `${NFL_MODEL_DATA_ROOT}/backfill-2020-2025/` parquets and
   **skips** wherever that data is absent. Run it when the backfill is present with
   `PYTHONPATH=src pytest -q tests/test_live_features_extended.py`.
 
@@ -93,7 +100,7 @@ It performs, in order:
 
 | Step | Command (what run_week.sh calls) | Cost | Output |
 |---|---|---|---|
-| 1. Refresh | `nfl-hybrid-backfill … open-sources` | 0 | updated `data/backfill_2020_2025/` |
+| 1. Refresh | `nfl-hybrid-backfill … open-sources` | 0 | updated `${NFL_MODEL_DATA_ROOT}/backfill-2020-2025/` |
 | 1b. **Capture** | `scripts/capture_lines.py` | **3 credits** | immutable snapshot in `data/line_history/` |
 | 2. Lines | `scripts/build_week1_2026_lines.py` | **3 credits** | `outputs/season_2026/lines_wkNN.csv` |
 | 3. Price | `predict_week …` | 0 | `outputs/season_2026/card_wkNN.csv` |
