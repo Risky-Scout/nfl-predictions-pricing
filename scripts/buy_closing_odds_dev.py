@@ -4,15 +4,21 @@ Hard ceiling 13,000 credits (plan = 12,180). 2025 is NOT purchased -- it is the
 spent holdout and stays proxy-only. Captures exact credit usage from response
 headers, matches every event to a canonical game (fails loudly on any miss),
 de-vigs through the existing layer, and writes a REAL-CLOSING benchmark.
+
+This regenerates the ONE authoritative, committed
+``purchased.odds_closing_dev_2022_2024`` asset (see
+nfl_hybrid.data.external_data) in place -- it does not write into the
+external NFL_MODEL_DATA_ROOT estate, since that asset lives in the repo, not
+in the private backfill/odds-history estate.
 """
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pandas as pd
 
+from nfl_hybrid.data.external_data import resolve, resolve_for_write
 from nfl_hybrid.data.io import write_frame
 from nfl_hybrid.data.odds import (
     add_market_consensus,
@@ -24,14 +30,13 @@ from nfl_hybrid.data.odds import (
 from nfl_hybrid.data.provenance import SourceManifest
 from nfl_hybrid.data.providers.the_odds_api import OddsAPIConfig, TheOddsAPIAdapter
 
-BASE = Path("data/backfill_2020_2025")
 CEILING = 13000
 HORIZON = (15,)  # closing only
 SEASONS = (2022, 2023, 2024)
 
 
 def main() -> None:
-    games = pd.read_parquet(BASE / "canonical" / "games.parquet")
+    games = pd.read_parquet(resolve("backfill.games"))
     dev = games[games["season"].isin(SEASONS)].copy()
 
     plan = build_prediction_horizons(dev, horizon_minutes=HORIZON)
@@ -72,7 +77,8 @@ def main() -> None:
     matched = devig_two_way_groups(matched)
     matched = add_market_consensus(matched)
 
-    write_frame(matched, BASE / "canonical" / "odds_closing_dev_2022_2024")
+    parquet_target = resolve_for_write("purchased.odds_closing_dev_2022_2024")
+    write_frame(matched, parquet_target.with_suffix(""))
     SourceManifest.from_frame(
         dataset_name="odds_closing_dev_2022_2024",
         source_name="the_odds_api",
@@ -85,7 +91,7 @@ def main() -> None:
             "estimated_credits": estimated,
             "benchmark_label": "REAL-CLOSING",
         },
-    ).write_json(BASE / "manifests" / "odds_closing_dev_2022_2024.json")
+    ).write_json(resolve_for_write("purchased.odds_closing_dev_2022_2024_manifest"))
 
     spend = None
     try:
@@ -106,7 +112,13 @@ def main() -> None:
         "matched_dev_games": int(matched["game_id"].nunique()),
         "dev_games_total": int(len(dev)),
     }
-    (BASE / "odds_closing_dev_summary.json").write_text(json.dumps(summary, indent=2, default=str))
+    # Informational-only side-effect, not a registered required key (nothing
+    # reads it as an input) -- written as a sibling of the resolved manifest.
+    summary_target = resolve_for_write(
+        "purchased.odds_closing_dev_2022_2024_manifest"
+    ).parent / "odds_closing_dev_summary.json"
+    summary_target.parent.mkdir(parents=True, exist_ok=True)
+    summary_target.write_text(json.dumps(summary, indent=2, default=str))
     print("SUMMARY:", json.dumps(summary, indent=2, default=str), flush=True)
 
 

@@ -13,6 +13,7 @@ import subprocess
 
 import pandas as pd
 
+from nfl_hybrid.data.external_data import resolve
 from nfl_hybrid.features.augmented_matrix import (
     FROZEN_FEATURES,
     build_augmented_feature_matrix,
@@ -21,8 +22,8 @@ from nfl_hybrid.pricing.fundamental_shadow import build_shadow_artifact
 
 
 def main() -> None:
-    games = pd.read_parquet("data/backfill_2020_2025/canonical/games.parquet")
-    pbp = pd.read_parquet("data/backfill_2020_2025/raw/pbp.parquet")
+    games = pd.read_parquet(resolve("backfill.games"))
+    pbp = pd.read_parquet(resolve("backfill.pbp"))
     matrix, manifest = build_augmented_feature_matrix(games, pbp)
     # single authoritative contract: training matrix must expose exactly the frozen list
     assert manifest["all_features"] == FROZEN_FEATURES, "training features drifted from FROZEN_FEATURES"

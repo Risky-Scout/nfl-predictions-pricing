@@ -81,8 +81,28 @@ def outcomes(monkeypatch):
         },
         index=[r[0] for r in ROWS],  # meaningful index we assert is preserved
     )
+
+    # build_outcomes() resolves its input path via the central data resolver
+    # (nfl_hybrid.data.external_data.resolve) BEFORE calling pd.read_parquet --
+    # resolve(...) is evaluated as an argument expression, so it runs for real
+    # even when only pd.read_parquet is mocked. Both external I/O boundaries
+    # must be mocked for this synthetic, no-private-data test to reach the
+    # dataframe fixture at all.
+    resolve_calls = []
+
+    def fake_resolve(key, **kwargs):
+        resolve_calls.append(key)
+        assert key == "backfill.games", (
+            f"build_outcomes() must resolve exactly 'backfill.games', got {key!r}"
+        )
+        return Path("/synthetic/backfill-2020-2025/canonical/games.parquet")
+
+    monkeypatch.setattr(build_script, "resolve", fake_resolve)
     monkeypatch.setattr(build_script.pd, "read_parquet", lambda *a, **k: games)
-    return build_script.build_outcomes()
+
+    result = build_script.build_outcomes()
+    assert resolve_calls == ["backfill.games"], resolve_calls
+    return result
 
 
 def _expected():

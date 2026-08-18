@@ -8,25 +8,32 @@ runs on every push with zero skips. Do not rely on this module as the sole
 regression gate.
 """
 
-import os
-
 import numpy as np
 import pandas as pd
 import pytest
 
+from nfl_hybrid.data.external_data import ExternalDataUnavailableError, resolve
 from nfl_hybrid.features.augmented_matrix import (
     FROZEN_FEATURES,
     build_augmented_feature_matrix,
     build_live_augmented_features,
 )
 
-GAMES = "data/backfill_2020_2025/canonical/games.parquet"
-PBP = "data/backfill_2020_2025/raw/pbp.parquet"
+
+def _try_resolve(key):
+    try:
+        return resolve(key)
+    except ExternalDataUnavailableError:
+        return None
+
+
+GAMES = _try_resolve("backfill.games")
+PBP = _try_resolve("backfill.pbp")
 pytestmark = [
     pytest.mark.extended_data,
     pytest.mark.skipif(
-        not (os.path.exists(GAMES) and os.path.exists(PBP)),
-        reason="backfill parquets not present (extended_data)",
+        GAMES is None or PBP is None,
+        reason="NFL_MODEL_DATA_ROOT not configured or backfill assets missing (extended_data)",
     ),
 ]
 

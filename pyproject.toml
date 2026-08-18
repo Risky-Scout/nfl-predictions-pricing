@@ -31,6 +31,7 @@ dev = ["pytest>=8.0"]
 nfl-hybrid-backfill = "nfl_hybrid.data.cli:main"
 nfl-hybrid-priors = "nfl_hybrid.priors.cli:main"
 predict_week = "nfl_hybrid.pricing.predict_week:main"
+nfl-hybrid-validate-data = "nfl_hybrid.data.external_data:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

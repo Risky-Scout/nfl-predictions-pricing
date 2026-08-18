@@ -6,15 +6,24 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from nfl_hybrid.data.external_data import ExternalDataUnavailableError, resolve
 from nfl_hybrid.features.augmented_matrix import FROZEN_FEATURES, build_live_augmented_features
 from nfl_hybrid.pricing.fundamental_shadow import attach_shadow_columns, load_shadow, score_shadow
 
-GAMES = "data/backfill_2020_2025/canonical/games.parquet"
-PBP = "data/backfill_2020_2025/raw/pbp.parquet"
+
+def _try_resolve(key):
+    try:
+        return resolve(key)
+    except ExternalDataUnavailableError:
+        return None
+
+
+GAMES = _try_resolve("backfill.games")
+PBP = _try_resolve("backfill.pbp")
 ARTIFACT = "config/shadow_fundamental_2026/jointscore_epa.joblib"
 pytestmark = pytest.mark.skipif(
-    not (os.path.exists(GAMES) and os.path.exists(PBP) and os.path.exists(ARTIFACT)),
-    reason="backfill/artifact not present",
+    GAMES is None or PBP is None or not os.path.exists(ARTIFACT),
+    reason="NFL_MODEL_DATA_ROOT not configured/backfill assets missing, or artifact not present",
 )
 
 

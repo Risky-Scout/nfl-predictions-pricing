@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import norm
 
+from nfl_hybrid.data.external_data import resolve
 from nfl_hybrid.evaluation.market_relative import evaluate_market_relative, MarketRelativeConfig
 from nfl_hybrid.features.augmented_matrix import build_augmented_feature_matrix
 from nfl_hybrid.selection.epa_tournament import CANDIDATES, run_walk_forward
@@ -23,8 +24,8 @@ MARKET_MAP = {"home_win": "moneyline", "home_cover": "ats", "over": "total"}
 
 
 def main() -> None:
-    games = pd.read_parquet("data/backfill_2020_2025/canonical/games.parquet")
-    pbp = pd.read_parquet("data/backfill_2020_2025/raw/pbp.parquet")
+    games = pd.read_parquet(resolve("backfill.games"))
+    pbp = pd.read_parquet(resolve("backfill.pbp"))
     matrix, manifest = build_augmented_feature_matrix(games, pbp)
 
     # reference-implied market probabilities (available all seasons) for C5 meta-feature

@@ -22,7 +22,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-BASE = Path("data/backfill_2020_2025")
+from nfl_hybrid.data.external_data import ENV_VAR, ExternalDataUnavailableError, resolve
+
 TEMPLATES = Path("data/templates")
 SEASONS = list(range(2020, 2026))
 
@@ -35,9 +36,11 @@ def _season_available_at(season: int) -> str:
 def _manifest_hash() -> str:
     h = hashlib.sha256()
     for name in ("pbp", "team_stats", "snap_counts", "weekly_rosters", "depth_charts"):
-        p = BASE / "manifests" / f"{name}.json"
-        if p.exists():
-            h.update(p.read_bytes())
+        try:
+            p = resolve(f"backfill.manifest_{name}")
+        except ExternalDataUnavailableError:
+            continue
+        h.update(p.read_bytes())
     return h.hexdigest()[:32]
 
 
@@ -348,11 +351,11 @@ def build_coach_history(schedules: pd.DataFrame, team_hist: pd.DataFrame, src_ha
 def main() -> None:
     import json
     src_hash = _manifest_hash()
-    pbp = pd.read_parquet(BASE / "raw" / "pbp.parquet")
-    team_stats = pd.read_parquet(BASE / "raw" / "team_stats.parquet")
-    snaps = pd.read_parquet(BASE / "raw" / "snap_counts.parquet")
-    depth = pd.read_parquet(BASE / "raw" / "depth_charts.parquet")
-    games = pd.read_parquet(BASE / "raw" / "nflverse_games.parquet")
+    pbp = pd.read_parquet(resolve("backfill.pbp"))
+    team_stats = pd.read_parquet(resolve("backfill.team_stats"))
+    snaps = pd.read_parquet(resolve("backfill.snap_counts"))
+    depth = pd.read_parquet(resolve("backfill.depth_charts"))
+    games = pd.read_parquet(resolve("backfill.nflverse_games"))
     from nfl_hybrid.data.providers.nflverse import NflverseAdapter
     try:
         players = NflverseAdapter().load_players().data
@@ -385,7 +388,7 @@ def main() -> None:
     (TEMPLATES / "PROVENANCE.json").write_text(json.dumps({
         "source_manifest_hash": src_hash,
         "seasons": SEASONS,
-        "generated_from": "data/backfill_2020_2025 (nflverse PBP/team_stats/snaps/depth_charts/schedules)",
+        "generated_from": f"{ENV_VAR}/backfill-2020-2025 (nflverse PBP/team_stats/snaps/depth_charts/schedules)",
         "note": "Coordinators/play-callers are external-only and not included; head coaches from schedules.",
     }, indent=2))
     print("wrote data/templates/PROVENANCE.json")
