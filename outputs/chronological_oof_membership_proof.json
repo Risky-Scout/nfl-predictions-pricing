@@ -1,0 +1,17 @@
+{
+  "artifact": "chronological_oof_membership_proof",
+  "data_source": "real_data:backfill-2020-2025 (season=2023)",
+  "feature_state_hash": "843503fad2cd6567da3428db93004cc10e25b886ba9bade9b6c5ac9931845886",
+  "max_training_result_available_at_utc": "2023-11-10 12:00:00+00:00",
+  "model_config_hash": "fce3eca8c7a5f10054a4f881f19d9f7d0fa814e87ae0c38722a3a15e0fdac82e",
+  "note": "Demonstrates, for one representative target game, that its chronological OOF training set satisfies max_training_result_available_at_utc < target_cutoff_utc and target_game_id not in training_game_ids, via nfl_hybrid.evaluation.chronological_oof.generate_oof_predictions. Eligibility is decided by each candidate's result_available_at_utc (kickoff plus a conservative floor, snapped to the next Tue/Fri production batch boundary), never by kickoff order alone. Independently re-verified above before being written, not just trusted from the ledger's own bookkeeping.",
+  "predicted_margin": -21.883454358688898,
+  "predicted_total": 44.374463596915746,
+  "result_availability_basis": "HISTORICAL_CONSERVATIVE_BATCH",
+  "target_cutoff_utc": "2023-11-12 17:50:00+00:00",
+  "target_game_id": "2023_10_SF_JAX",
+  "training_as_of_utc": "2023-11-12 17:50:00+00:00",
+  "training_game_count": 137,
+  "training_game_ids_truncated": false,
+  "training_membership_hash": "c66d2e3faa21d950de87460329c9864c16384cb474953a5d029d048bc948b9db"
+}

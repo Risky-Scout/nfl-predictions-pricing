@@ -18,6 +18,16 @@ data that is already vendored inside this repository's own ``data/``
 directory (e.g. the purchased closing-odds parquet), independent of
 ``NFL_MODEL_DATA_ROOT``.
 
+A third scope (``scope="generated"``) is for GENERATED pipeline artifacts --
+derived outputs a producer computes from the historical estate (e.g. the Fix
+3 chronological OOF ledgers), never raw/canonical historical data itself.
+These resolve under a separate ``NFL_MODEL_ARTIFACT_ROOT`` environment
+variable, deliberately distinct from ``NFL_MODEL_DATA_ROOT``: mixing derived,
+regenerable pipeline output into the same tree as the raw historical estate
+that produced it would make the two impossible to distinguish by location
+alone, and would risk a careless bulk-copy of one silently dragging the other
+along.
+
 Two lookup functions are provided, deliberately kept separate:
 
 - :func:`resolve` -- strict. Raises :class:`ExternalDataUnavailableError` if
@@ -42,6 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 ENV_VAR = "NFL_MODEL_DATA_ROOT"
+ARTIFACT_ENV_VAR = "NFL_MODEL_ARTIFACT_ROOT"
 
 # src/nfl_hybrid/data/external_data.py -> repo root is three parents up.
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -55,7 +66,7 @@ class ExternalDataUnavailableError(RuntimeError):
 class DatasetSpec:
     key: str
     relative_path: str
-    scope: str  # "external" (resolved under NFL_MODEL_DATA_ROOT) or "repo" (this checkout)
+    scope: str  # "external" (NFL_MODEL_DATA_ROOT), "generated" (NFL_MODEL_ARTIFACT_ROOT), or "repo" (this checkout)
     kind: str  # "file" or "dir"
     description: str
 
@@ -131,8 +142,28 @@ _register("purchased.odds_closing_dev_2022_2024_manifest",
 # scripts/buy_closing_odds_dev.py writes it as a sibling of the manifest path
 # instead of registering a phantom required key for it.
 
+# --- chronological OOF ledger (Fix 3): one authoritative expanding-window
+# out-of-fold prediction/residual/uncertainty record for the 2020-2025 estate.
+# scope="generated": this is a DERIVED pipeline artifact, computed FROM the
+# historical estate, not part of it -- it resolves under NFL_MODEL_ARTIFACT_ROOT,
+# never NFL_MODEL_DATA_ROOT, and is never committed to the repo.
+_register("oof_chronological.predictions",
+           "chronological-oof-2020-2025/oof_predictions.parquet",
+           scope="generated",
+           description="Chronological OOF predictions, pre-outcome (Fix 3, phase 1)")
+_register("oof_chronological.residual_ledger",
+           "chronological-oof-2020-2025/oof_residual_ledger.parquet",
+           scope="generated",
+           description="Chronological OOF residual ledger with expanding uncertainty (Fix 3, phase 2)")
+_register("oof_chronological.manifest",
+           "chronological-oof-2020-2025/oof_manifest.json",
+           scope="generated",
+           description="Provenance/config manifest for the chronological OOF run (Fix 3)")
+
 # --- namespace roots: directory-level write targets for producer scripts, so a
 # producer and the per-file registry above always resolve under the same root.
+# External-scope namespaces only; generated-scope keys above are resolved
+# directly per-key by resolve_for_write, not through a namespace root.
 _NAMESPACE_ROOTS: dict[str, str] = {
     "backfill": "backfill-2020-2025",
 }
@@ -164,21 +195,27 @@ def resolve_for_write(key: str, *, root_override: str | os.PathLike | None = Non
     Unlike :func:`resolve`, this does not require the path to already exist --
     it's for producers about to create it. For ``scope="external"`` keys, the
     external root itself must still exist (``NFL_MODEL_DATA_ROOT`` configured);
-    for ``scope="repo"`` keys, resolution never depends on the env var. Callers
-    are responsible for creating parent directories.
+    for ``scope="generated"`` keys, the artifact root must exist
+    (``NFL_MODEL_ARTIFACT_ROOT`` configured); for ``scope="repo"`` keys,
+    resolution never depends on either env var. Callers are responsible for
+    creating parent directories.
     """
     if key not in _REGISTRY:
         raise KeyError(f"Unknown external dataset key: {key!r}. Known keys: {sorted(_REGISTRY)}")
     spec = _REGISTRY[key]
     if spec.scope == "repo":
         return REPO_ROOT / spec.relative_path
+    if spec.scope == "generated":
+        return artifact_root(root_override) / spec.relative_path
     return external_root(root_override) / spec.relative_path
 
 
 def external_root(root_override: str | os.PathLike | None = None) -> Path:
-    """Resolve the external data root directory, or raise a clear, actionable
-    error. Never defaults to any machine-specific path -- ``root_override``
-    or the ``NFL_MODEL_DATA_ROOT`` environment variable is the only source."""
+    """Resolve the external RAW/CANONICAL historical-data root directory, or
+    raise a clear, actionable error. Never defaults to any machine-specific
+    path -- ``root_override`` or the ``NFL_MODEL_DATA_ROOT`` environment
+    variable is the only source. Never used for generated pipeline artifacts
+    -- see :func:`artifact_root`."""
     raw = root_override if root_override is not None else os.environ.get(ENV_VAR)
     if not raw:
         raise ExternalDataUnavailableError(
@@ -194,13 +231,40 @@ def external_root(root_override: str | os.PathLike | None = None) -> Path:
     return root
 
 
+def artifact_root(root_override: str | os.PathLike | None = None) -> Path:
+    """Resolve the GENERATED-artifact root directory (derived pipeline
+    outputs -- e.g. the Fix 3 chronological OOF ledgers -- never raw/canonical
+    historical data), or raise a clear, actionable error. Never defaults to
+    any machine-specific path -- ``root_override`` or the
+    ``NFL_MODEL_ARTIFACT_ROOT`` environment variable is the only source.
+    Deliberately a separate root from :func:`external_root`: generated
+    pipeline output must never be written into, or resolved from, the same
+    tree as the historical estate that produced it."""
+    raw = root_override if root_override is not None else os.environ.get(ARTIFACT_ENV_VAR)
+    if not raw:
+        raise ExternalDataUnavailableError(
+            f"{ARTIFACT_ENV_VAR} is not set and no root_override was given. Point it at "
+            f"where generated pipeline artifacts should be written, e.g. "
+            f"{ARTIFACT_ENV_VAR}=/path/to/your-artifact-root"
+        )
+    root = Path(raw).expanduser()
+    if not root.is_dir():
+        raise ExternalDataUnavailableError(
+            f"{ARTIFACT_ENV_VAR}={root} does not exist or is not a directory."
+        )
+    return root
+
+
 def describe(key: str) -> str:
     """Pure, non-raising lookup: the documented (unvalidated) location of a
     registered dataset, for labels/report metadata. Never touches disk and
-    never requires NFL_MODEL_DATA_ROOT -- safe to call at import time."""
+    never requires either root env var to be set -- safe to call at import
+    time."""
     spec = _REGISTRY[key]
     if spec.scope == "repo":
         return str(REPO_ROOT / spec.relative_path)
+    if spec.scope == "generated":
+        return f"${{{ARTIFACT_ENV_VAR}}}/{spec.relative_path}"
     return f"${{{ENV_VAR}}}/{spec.relative_path}"
 
 
@@ -218,13 +282,18 @@ def resolve(key: str, *, root_override: str | os.PathLike | None = None) -> Path
     spec = _REGISTRY[key]
     if spec.scope == "repo":
         path = REPO_ROOT / spec.relative_path
+        env_hint = "the repo checkout"
+    elif spec.scope == "generated":
+        path = artifact_root(root_override) / spec.relative_path
+        env_hint = ARTIFACT_ENV_VAR
     else:
         path = external_root(root_override) / spec.relative_path
+        env_hint = ENV_VAR
     exists = path.is_dir() if spec.kind == "dir" else path.is_file()
     if not exists:
         raise ExternalDataUnavailableError(
             f"Registered dataset '{key}' ({spec.description}) not found at {path}. "
-            f"Check {ENV_VAR}."
+            f"Check {env_hint}."
         )
     return path
 
@@ -252,6 +321,7 @@ def main() -> int:
     results = validate()
     n_ok = sum(1 for v in results.values() if v["resolved"])
     print(f"{ENV_VAR}={os.environ.get(ENV_VAR)!r}")
+    print(f"{ARTIFACT_ENV_VAR}={os.environ.get(ARTIFACT_ENV_VAR)!r}")
     for key, info in results.items():
         status = "OK" if info["resolved"] else "MISSING"
         print(f"  [{status:7s}] {key:40s} {info['path']}")

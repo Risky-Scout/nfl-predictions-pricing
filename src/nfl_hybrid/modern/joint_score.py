@@ -160,6 +160,15 @@ class JointScoreModel:
         x = self.preprocessor.transform(frame[self.feature_columns])
         return self.margin_model.predict(x), self.total_model.predict(x)
 
+    def predict_means(self, frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+        """Public point-prediction accessor: (predicted_margin, predicted_total)
+        only -- no probabilities, no market-relative push/tie adjustment, and no
+        dependence on ``margin_sd_`` / ``total_sd_`` / ``residual_correlation_``
+        (those three attributes are fit from this model's own training
+        residuals; callers building genuinely out-of-fold uncertainty, e.g.
+        :mod:`nfl_hybrid.evaluation.chronological_oof`, must never read them)."""
+        return self._means(frame)
+
     def raw_probabilities(self, frame: pd.DataFrame) -> pd.DataFrame:
         margin_mean, total_mean = self._means(frame)
         home_spread = frame["home_spread"].to_numpy(float)
