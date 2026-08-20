@@ -62,7 +62,8 @@ from threadpoolctl import threadpool_limits
 
 from nfl_hybrid.data import external_data
 from nfl_hybrid.data.availability import add_postgame_available_at, assert_available_before
-from nfl_hybrid.features.pregame_rolling import build_game_pregame_matrix
+from nfl_hybrid.features.feature_manifest import validate_no_banned_features
+from nfl_hybrid.features.pregame_rolling import IDENTIFIER_COLUMNS, build_game_pregame_matrix
 from nfl_hybrid.features.pregame_state import (
     PregameStateBundle,
     build_authoritative_pregame_state,
@@ -250,6 +251,62 @@ def compute_result_available_at_utc(
     return floor.map(_next_batch_boundary)
 
 
+def declared_state_family_columns(state: pd.DataFrame) -> list[str]:
+    """A state family's OWN explicitly generated output columns -- the exact
+    positive-provenance set: every column that family's builder emitted
+    minus the shared identifier/key columns (:data:`IDENTIFIER_COLUMNS`,
+    reused unchanged from :mod:`nfl_hybrid.features.pregame_rolling`, the
+    same set :func:`nfl_hybrid.features.pregame_rolling.build_game_pregame_matrix`
+    itself uses to decide what to pivot).
+
+    This is deliberately NOT "every home_*/away_* column after pivoting" --
+    that wildcard rule is exactly the Fix 3.1 incident's root cause (see
+    :func:`build_oof_feature_matrix`). A column only ever reaches this list
+    by being emitted by the family's own builder (already checked, before
+    this function ever sees it, by
+    :func:`nfl_hybrid.features.pregame_state.build_authoritative_pregame_state`'s
+    cross-family ``validate_no_banned_features`` call on this exact
+    pre-pivot frame) -- never by surviving a merge onto a copy of the raw
+    ``games`` table.
+    """
+    return [c for c in state.columns if c not in IDENTIFIER_COLUMNS]
+
+
+def compute_feature_provenance(
+    feature_columns: Sequence[str],
+) -> tuple[dict[str, str], ...]:
+    """One provenance record per OOF feature column: ``feature_name``,
+    ``state_family``, ``source_feature``, ``side`` (home/away), and
+    ``availability_semantics``. Derived purely from the
+    ``{family}__{home|away}_{source_feature}`` naming convention
+    :func:`build_oof_feature_matrix` itself imposes when it renames pivoted
+    columns -- so this can never drift from what the matrix actually
+    contains; it is read off the same names, not maintained as a separate
+    parallel list.
+    """
+    records: list[dict[str, str]] = []
+    for name in feature_columns:
+        family, separator, rest = name.partition("__")
+        if not separator:
+            raise ValueError(f"Feature column {name!r} does not carry a state-family prefix.")
+        if rest.startswith("home_"):
+            side, source = "home", rest[len("home_"):]
+        elif rest.startswith("away_"):
+            side, source = "away", rest[len("away_"):]
+        else:
+            raise ValueError(f"Feature column {name!r} is not home_/away_-sided.")
+        records.append(
+            {
+                "feature_name": name,
+                "state_family": family,
+                "source_feature": source,
+                "side": side,
+                "availability_semantics": "pregame_shifted_prior_state",
+            }
+        )
+    return tuple(records)
+
+
 def build_oof_feature_matrix(
     games: pd.DataFrame,
     play_by_play: pd.DataFrame,
@@ -262,10 +319,28 @@ def build_oof_feature_matrix(
     """One game-level feature row per game, built exclusively from the Fix 2
     authoritative pregame-state bundle.
 
-    No feature curation: every numeric home/away-pivoted column produced by
-    every state family that was actually built is used, unchanged. This is a
-    fixed, total-inclusion rule (declared once, here), not a selection
-    procedure -- nothing is ranked, searched, or dropped for performance.
+    Positive-provenance feature selection (Fix 3.1): a state family's
+    pivoted home_*/away_* columns become OOF features ONLY if they are
+    produced by pivoting a column that family's own builder actually
+    generated (:func:`declared_state_family_columns`) -- never merely
+    because a pivoted column's name happens to start with ``home_`` or
+    ``away_``. Two things enforce this at the point of pivoting itself, not
+    only at selection time:
+
+      1. ``build_game_pregame_matrix`` is called here with
+         ``carrier_columns=()`` -- the pivot's own native-``games`` base
+         carries nothing but the join keys, so no native ``games`` column
+         (``home_score``, ``home_moneyline_reference``,
+         ``home_spread_reference``, ...) is even present in the pivoted
+         frame to be mistaken for a feature.
+      2. The column-selection step below still only keeps names in the
+         explicit allowlist derived from ``declared_state_family_columns``
+         -- defense-in-depth, so a future carrier_columns change alone could
+         not reopen this leak.
+
+    This is a fixed, declared-once selection rule -- nothing is ranked,
+    searched, or dropped for performance; every family-declared column that
+    was actually built is used, unchanged.
 
     Also attaches ``result_available_at_utc`` (via
     :func:`compute_result_available_at_utc`) -- required by
@@ -311,10 +386,16 @@ def build_oof_feature_matrix(
         state = bundle.state.get(family)
         if state is None or not len(state):
             continue
-        pivoted = build_game_pregame_matrix(games, state)
+        declared = declared_state_family_columns(state)
+        pivoted = build_game_pregame_matrix(games, state, carrier_columns=())
         pivoted["game_id"] = pivoted["game_id"].astype(str)
-        prefixed = [c for c in pivoted.columns if c.startswith("home_") or c.startswith("away_")]
-        numeric = [c for c in prefixed if pd.api.types.is_numeric_dtype(pivoted[c])]
+        # Positive-provenance allowlist: only pivoted columns tracing back to
+        # this family's OWN declared output columns -- never every pivoted
+        # column starting with home_/away_ (that wildcard rule is the Fix 3.1
+        # incident's root cause; see this function's docstring).
+        allowed = {f"home_{c}" for c in declared} | {f"away_{c}" for c in declared}
+        candidate = [c for c in pivoted.columns if c in allowed]
+        numeric = [c for c in candidate if pd.api.types.is_numeric_dtype(pivoted[c])]
         renamed = {c: f"{family}__{c}" for c in numeric}
         family_frame = pivoted[["game_id"] + numeric].rename(columns=renamed)
         matrix = matrix.merge(family_frame, on="game_id", how="left", validate="one_to_one")
@@ -322,6 +403,13 @@ def build_oof_feature_matrix(
 
     if not feature_columns:
         raise ValueError("No numeric pregame-state feature columns were produced by any family.")
+
+    # Hard fail-closed exclusion, defense-in-depth over the allowlist above:
+    # reject on sight if any selected feature name matches the repository's
+    # single banned/postgame/current-market pattern policy (same policy
+    # pregame_state.py already applies to each family's pre-pivot columns;
+    # applying it again here catches the final, family-prefixed names too).
+    validate_no_banned_features(feature_columns)
 
     matrix[feature_columns] = matrix[feature_columns].astype("float64")
     matrix = matrix.sort_values(["scheduled_kickoff_utc", "game_id"], kind="stable").reset_index(

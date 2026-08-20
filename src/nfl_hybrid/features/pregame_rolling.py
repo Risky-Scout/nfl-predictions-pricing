@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -347,8 +347,36 @@ def build_team_pregame_features(
 def build_game_pregame_matrix(
     games: pd.DataFrame,
     team_pregame: pd.DataFrame,
+    *,
+    carrier_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
-    """Pivot canonicalized team features to one home/away game row."""
+    """Pivot canonicalized team features to one home/away game row.
+
+    ``carrier_columns``: the exact NATIVE ``games`` columns to carry onto
+    the base of the returned matrix, beyond the join keys (``game_id`` and
+    whichever of ``home_team_id``/``home_team`` and ``away_team_id``/
+    ``away_team`` are present) that are always kept because the pivot itself
+    needs them. Default is ``()`` -- no native ``games`` column, safe or
+    otherwise, is carried through unless a caller explicitly names it.
+    ``None`` is accepted and treated identically to ``()``; it is NOT, and
+    must never become, a way to request "every native column" -- there is no
+    such request this function will honor.
+
+    A caller that wants a native ``games`` column in its output (e.g. a
+    schedule field like ``gameday``) must name it explicitly in
+    ``carrier_columns``. No caller may request "all columns" -- there is no
+    wildcard/None escape hatch. This is a deliberate API-level fix for the
+    Fix 3.1 OOF target-feature-leakage incident (see
+    :mod:`nfl_hybrid.evaluation.chronological_oof`): the pre-fix default
+    silently copied the full, un-narrowed ``games`` table as the pivot base,
+    which let native postgame/current-market columns (``home_score``,
+    ``home_moneyline_reference``, ``home_spread_reference``, ...) survive
+    into what a blind ``home_*``/``away_*`` sweep downstream then mistook for
+    genuine pivoted pregame-state features. A safe-by-default empty
+    carrier set means a newly added native ``games`` column (of any name,
+    including one that looks pregame-safe) can never again reach a caller's
+    output without that caller explicitly asking for it by name.
+    """
 
     home_candidates = (
         "home_team_id",
@@ -383,7 +411,22 @@ def build_game_pregame_matrix(
             "team identifiers."
         )
 
-    game_work = games.copy()
+    # None is accepted only as a synonym for () -- never as "all columns".
+    # There is no wildcard/full-passthrough request this function honors.
+    if carrier_columns is None:
+        carrier_columns = ()
+
+    keep = list(
+        dict.fromkeys(
+            ["game_id", home_column, away_column, *carrier_columns]
+        )
+    )
+    missing_carrier = [c for c in keep if c not in games.columns]
+    if missing_carrier:
+        raise ValueError(
+            f"Games table missing requested carrier_columns: {missing_carrier}"
+        )
+    game_work = games[keep].copy()
 
     if game_work["game_id"].duplicated().any():
         raise ValueError(

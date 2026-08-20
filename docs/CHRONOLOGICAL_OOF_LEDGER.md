@@ -26,9 +26,12 @@ the analogous problem one level up the pipeline, for *predictions* and for
 ```
 build_authoritative_pregame_state (Fix 2)   -- the only state source
     -> build_oof_feature_matrix               -- one game-level feature row,
-                                                  every numeric home/away
-                                                  pivoted column from every
-                                                  state family, unmodified
+                                                  positive-provenance columns
+                                                  only (Fix 3.1) -- every
+                                                  family-DECLARED column that
+                                                  was actually built, never
+                                                  every home/away-prefixed
+                                                  column merely by name
     -> generate_oof_predictions               -- expanding-window OOF point
                                                   predictions (phase 1)
     -> attach_outcomes_and_residuals          -- outcomes attached after the
@@ -36,6 +39,36 @@ build_authoritative_pregame_state (Fix 2)   -- the only state source
     -> attach_expanding_oof_uncertainty       -- leave-future-out residual
                                                   SD / correlation, per row
 ```
+
+## Fix 3.1: OOF feature-provenance repair (target-feature leakage)
+
+Fix 3's original `build_oof_feature_matrix` selected every numeric column on
+the pivoted matrix whose name started with `home_`/`away_`. That pivot's base
+frame (`build_game_pregame_matrix`) was a full copy of the raw `games` table,
+so native carrier columns that already happened to be `home_`/`away_`-prefixed
+survived the pivot unchanged and were indistinguishable, by name alone, from a
+genuine generated pregame-state feature. Confirmed leaked example:
+`epa__home_score` exactly equalled the target game's own final `home_score` --
+35 leaked columns total (7 native columns × 5 state families). See
+`outputs/fix3_1_oof_feature_leakage_proof.json` for the full leak/repair
+proof and `NFL_MODEL_ARTIFACT_ROOT/invalidated/fix3-target-feature-leakage-
+2026-08-20/` for the preserved, quarantined original (invalidated) ledger.
+
+The repair is positive-provenance, not an expanded blacklist:
+`build_oof_feature_matrix` now only pivots each state family's own
+explicitly-declared output columns (`declared_state_family_columns` --
+literally the same `IDENTIFIER_COLUMNS`-excluded column set
+`pregame_state.py`'s cross-family `validate_no_banned_features` already
+checks pre-pivot), and calls `build_game_pregame_matrix(..., carrier_columns=
+())` so the pivot's own native-`games` base carries nothing but join keys in
+the first place -- defense-in-depth, so a future change to the carrier-column
+default alone could not reopen this leak. A repository-wide
+`validate_no_banned_features` pattern/exact-name check also runs a second
+time, on the final family-prefixed feature names, as a third independent
+layer. `compute_feature_provenance(feature_columns)` derives a
+`{feature_name, state_family, source_feature, side, availability_semantics}`
+record for every feature straight from this naming convention, so provenance
+can never drift out of sync with what the matrix actually contains.
 
 `run_chronological_oof(games, play_by_play, ...)` wires all four stages
 together; each stage is independently callable and tested.

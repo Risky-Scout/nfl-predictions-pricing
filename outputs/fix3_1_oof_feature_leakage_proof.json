@@ -1,0 +1,241 @@
+{
+  "artifact": "fix3_oof_feature_leakage_proof",
+  "fix": "FIX_3_1_OOF_FEATURE_LEAKAGE_REMEDIATION",
+  "generated_utc": "2026-08-20",
+  "root_cause": {
+    "leaking_function": "nfl_hybrid.evaluation.chronological_oof.build_oof_feature_matrix",
+    "contaminating_function": "nfl_hybrid.features.pregame_rolling.build_game_pregame_matrix",
+    "mechanism": "build_game_pregame_matrix pivoted genuine shifted pregame-state columns onto a full copy of the raw games table (game_work = games.copy()). build_oof_feature_matrix then selected every numeric column on that pivoted frame whose name started with home_/away_, which swept in native games-table passthrough columns (already home_/away_-prefixed in the raw schema) alongside genuine generated features, with no way to distinguish the two by name alone.",
+    "why_existing_banned_column_check_missed_it": "nfl_hybrid.features.pregame_state.build_authoritative_pregame_state already calls validate_no_banned_features, but only on each state family's pre-pivot team-long table -- at that stage no native games column has entered the frame yet. The wildcard home_*/away_* sweep that actually caused the leak happens downstream, inside build_oof_feature_matrix, on the post-pivot, family-prefixed matrix -- a stage the existing check never re-ran on."
+  },
+  "known_leak_count_before": 35,
+  "known_leak_count_after": 0,
+  "additional_finding": "The wildcard sweep also leaked home_rest_days/away_rest_days per family (2 additional native columns x 5 families = 10 more feature slots not enumerated in the original 35-name incident report, for 45 leaked feature columns total pre-fix). home_rest_days/away_rest_days are genuinely pregame-safe information (SAFE_PREGAME_METADATA), but per the Fix 3.1 provenance contract, safe native fields still require explicit approval before becoming a model feature -- none exists today, so they are correctly excluded post-fix, same as the unsafe 35.",
+  "known_leak_count_after_including_additional_finding": 0,
+  "leak_metadata_note": "known_leak_count_* fields above are retained for continuity with the original incident report but are ambiguous on their own (they conflate two different categories of unapproved column). Do not rely on them in isolation -- use the three unambiguous, separately-typed counts below.",
+  "confirmed_unsafe_predictor_count": 35,
+  "safe_but_unapproved_passthrough_count": 10,
+  "total_unapproved_native_predictor_count": 45,
+  "predictor_count_definitions": {
+    "confirmed_unsafe_predictor_count": "Native target/postgame/current-market columns confirmed leaked pre-fix (7 native columns x 5 state families: home_score, away_score, home_moneyline_reference, away_moneyline_reference, home_spread_reference, home_spread_price_reference, away_spread_price_reference).",
+    "safe_but_unapproved_passthrough_count": "Native columns that are pregame-safe (SAFE_PREGAME_METADATA) but reached the pre-fix feature set with no explicit approval step (2 native columns x 5 state families: home_rest_days, away_rest_days). Pregame-safe is a necessary, not sufficient, condition for being a model feature under the Fix 3.1 provenance contract.",
+    "total_unapproved_native_predictor_count": "confirmed_unsafe_predictor_count + safe_but_unapproved_passthrough_count = 45, matching feature_matrix.removed_feature_count below."
+  },
+  "epa__home_score_present_before": true,
+  "epa__home_score_present_after": false,
+  "target_outcome_feature_count": 0,
+  "target_current_market_feature_count": 0,
+  "native_passthrough_audit": {
+    "native_passthrough_total_count": 61,
+    "approved_predictive_passthrough_count": 0,
+    "unsafe_passthrough_count": 30,
+    "unclassified_passthrough_count": 0,
+    "classification_breakdown": {
+      "SAFE_PREGAME_METADATA": 25,
+      "UNSAFE_TARGET_OR_POSTGAME": 13,
+      "CURRENT_TARGET_MARKET": 17,
+      "NOT_MODEL_FEATURE": 6
+    },
+    "classified_columns": {
+      "SAFE_PREGAME_METADATA": [
+        "game_id", "season", "season_type", "week", "scheduled_kickoff_utc",
+        "schedule_date", "kickoff_time_basis", "home_team_id", "away_team_id",
+        "home_team_name", "away_team_name", "neutral_site", "division_game",
+        "stadium_id", "stadium_name", "roof", "surface", "home_rest_days",
+        "away_rest_days", "home_coach", "away_coach", "referee",
+        "source_game_id", "spreadspoke_game_id", "canonical_game_id"
+      ],
+      "UNSAFE_TARGET_OR_POSTGAME": [
+        "home_score", "away_score", "overtime",
+        "home_qb_id", "away_qb_id", "home_qb_name", "away_qb_name",
+        "temperature_f_observed", "wind_mph_observed",
+        "spreadspoke_temperature_f_observed", "spreadspoke_wind_mph_observed",
+        "spreadspoke_humidity_observed", "spreadspoke_weather_detail_observed"
+      ],
+      "CURRENT_TARGET_MARKET": [
+        "home_moneyline_reference", "away_moneyline_reference", "home_spread_reference",
+        "home_spread_price_reference", "away_spread_price_reference", "total_line_reference",
+        "over_price_reference", "under_price_reference", "nflverse_spread_line_home_favored_positive",
+        "line_reference_type", "line_timestamp_utc", "line_timestamp_known",
+        "spreadspoke_home_spread_reference", "spreadspoke_total_line_reference",
+        "spreadspoke_line_reference_type", "spread_reference_difference", "total_reference_difference"
+      ],
+      "NOT_MODEL_FEATURE": [
+        "source_name", "source_retrieved_at_utc", "spreadspoke_retrieved_at_utc",
+        "spreadspoke_stadium_name", "match_status", "date_delta_days"
+      ]
+    },
+    "ambiguous_column_note": "home_qb_id/home_qb_name/away_qb_id/away_qb_name (and their away_ counterparts) are conservatively classified UNSAFE_TARGET_OR_POSTGAME: their nflverse source ingestion timing/finality relative to each game's own pregame cutoff was not independently verified during this audit, so they are treated as unsafe pending a dedicated availability-timestamp audit -- consistent with the observed-weather columns' existing treatment.",
+    "audit_scope": "All 61 native columns on the real backfill-2020-2025 season=2023 games table (src/nfl_hybrid/data/providers/nflverse.py-produced schema plus Spreadspoke-enrichment columns from src/nfl_hybrid/data/reconcile.py), not only the 35 previously-confirmed names."
+  },
+  "architectural_repair": {
+    "approach": "positive_provenance_allowlist",
+    "not_an_expanded_blacklist": true,
+    "mechanism": [
+      "declared_state_family_columns(state) returns exactly the state family's OWN pre-pivot output columns (state.columns minus IDENTIFIER_COLUMNS) -- the same set pregame_state.py's cross-family validate_no_banned_features already checked before this function ever sees it.",
+      "build_game_pregame_matrix(games, state, carrier_columns=()) is called with an empty carrier-column set for the OOF path specifically, so the pivot's own native-games base carries nothing but join keys -- no native column is even present to be mistaken for a feature. Per the API hardening pass below, carrier_columns now defaults to () (not None/full-native-row) for every caller, including augmented_matrix.py and opponent_pregame.py, which pass carrier_columns=() explicitly for self-documentation even though it now matches the default.",
+      "Feature selection keeps only pivoted columns in {f'home_{c}' for c in declared} | {f'away_{c}' for c in declared} -- never every column starting with home_/away_.",
+      "validate_no_banned_features(feature_columns) runs a second time on the final, family-prefixed names as defense-in-depth.",
+      "compute_feature_provenance(feature_columns) derives {feature_name, state_family, source_feature, side, availability_semantics} for every feature directly from this same naming convention, so provenance cannot drift out of sync with the matrix."
+    ],
+    "why_a_new_raw_column_cannot_silently_become_a_feature": "Feature selection is driven entirely by each state family's own declared output-column set, established before any pivot happens and independently checked by validate_no_banned_features. A newly added raw games column is never a member of that declared set (state-family builders only emit columns they explicitly compute), so it can never enter the allowlist regardless of its name. Even if a future change re-widened build_game_pregame_matrix's carrier_columns for the OOF path, the allowlist step alone would still exclude it."
+  },
+  "feature_matrix": {
+    "feature_count_before": 3125,
+    "feature_count_after": 3080,
+    "removed_feature_count": 45,
+    "added_feature_count": 0,
+    "feature_state_hash_before": "843503fad2cd6567da3428db93004cc10e25b886ba9bade9b6c5ac9931845886",
+    "feature_state_hash_after": "7d731c88416cef2d9f55b2267b377c085b557d349117637be6fecd0f9bf1c931",
+    "feature_manifest_names_sha256_after": "7ba0305086352b92c1a20113bbc996bd6ae2a3bce2bcb8afc5b4b92f2a21c704",
+    "state_family_feature_counts": {
+      "before": {"epa": 2607, "opponent_adjusted": 277, "qb": 175, "elo": 15, "market_history": 51},
+      "after":  {"epa": 2598, "opponent_adjusted": 268, "qb": 166, "elo": 6,  "market_history": 42}
+    },
+    "removed_per_family_native_suffixes": [
+      "home_score", "away_score",
+      "home_moneyline_reference", "away_moneyline_reference",
+      "home_spread_reference", "home_spread_price_reference", "away_spread_price_reference",
+      "home_rest_days", "away_rest_days"
+    ],
+    "full_feature_manifest_location": "NFL_MODEL_ARTIFACT_ROOT/chronological-oof-2020-2025/oof_manifest.json (feature_columns field, 3080 names)"
+  },
+  "adversarial_proofs": {
+    "poison_pill_target_mutation": {
+      "test": "tests/test_oof_feature_provenance.py::test_poison_pill_target_mutation_does_not_change_its_own_feature_vector",
+      "mutated_fields": [
+        "home_score", "away_score", "home_spread_reference", "total_line_reference",
+        "home_moneyline_reference", "away_moneyline_reference",
+        "home_spread_price_reference", "away_spread_price_reference"
+      ],
+      "mutated_to_sentinels": true,
+      "result": "PASS -- target's own predictive feature vector byte-identical before/after mutation",
+      "would_fail_pre_fix": "verified separately (not part of the committed suite): reproducing Fix 3's original wildcard-sweep selection on the same fixture shows epa__home_score tracks the target's own home_score 1:1 (10.0 -> 999.0 under mutation)"
+    },
+    "future_game_mutation": {
+      "test": "tests/test_oof_feature_provenance.py::test_future_game_mutation_does_not_change_an_earlier_targets_feature_vector",
+      "result": "PASS -- earlier target's feature vector unchanged when a later game's score/market fields are mutated to sentinels"
+    },
+    "prior_game_positive_control": {
+      "test": "tests/test_oof_feature_provenance.py::test_prior_game_positive_control_legitimate_history_still_propagates",
+      "mutated_field": "a completed prior game's home_score/away_score (feeds Elo state's rating update)",
+      "affected_feature_family": "elo__* (e.g. elo__home_elo_pregame_rating)",
+      "result": "PASS -- the later target's Elo-family pregame features changed in response to the legitimate prior-game outcome mutation"
+    },
+    "current_market_leakage": {
+      "test": "tests/test_oof_feature_provenance.py::test_no_feature_traces_to_a_native_current_market_or_outcome_column",
+      "result": "PASS -- no feature's provenance-derived source_feature traces to a native current-market or outcome column"
+    },
+    "known_leak_regression": {
+      "test": "tests/test_oof_feature_provenance.py::test_known_leaked_feature_names_are_absent",
+      "result": "PASS -- all 35 previously-confirmed leaked names absent; epa__home_score absent"
+    }
+  },
+  "independent_training_membership_reproof": {
+    "source": "outputs/chronological_oof_membership_proof.json (regenerated against the corrected code)",
+    "target_game_id": "2023_10_SF_JAX",
+    "training_game_count": 137,
+    "target_excluded_from_own_training_ids": true,
+    "max_training_result_available_at_utc": "2023-11-10 12:00:00+00:00",
+    "target_cutoff_utc": "2023-11-12 17:50:00+00:00",
+    "invariant_holds": true
+  },
+  "corrected_oof_ledger": {
+    "location": "NFL_MODEL_ARTIFACT_ROOT/chronological-oof-2020-2025/",
+    "artifact_scope": "FIX3_1_PROOF",
+    "production_evidence": false,
+    "full_historical_ledger": false,
+    "final_model_frozen": false,
+    "season_coverage": [2023],
+    "n_predictions": 225,
+    "n_oof": 225,
+    "n_insufficient_warmup": 0,
+    "uncertainty_eligible_rows": 192,
+    "uncertainty_ineligible_rows": 33,
+    "result_availability_basis": "HISTORICAL_CONSERVATIVE_BATCH"
+  },
+  "api_hardening_2026_08_20": {
+    "summary": "Final API/provenance hardening pass, applied after the architectural_repair above already shipped. Closes the residual gap left by that repair: build_game_pregame_matrix's own DEFAULT was still an unrestricted native-row copy (carrier_columns=None), so any future caller that omitted carrier_columns -- not just the OOF path, which already opted in to carrier_columns=() -- would silently get the full raw games row again. This pass makes the safe behavior the default, not merely an opt-in.",
+    "final_signature": "def build_game_pregame_matrix(games: pd.DataFrame, team_pregame: pd.DataFrame, *, carrier_columns: Sequence[str] = ()) -> pd.DataFrame",
+    "full_raw_row_passthrough_still_default": false,
+    "none_semantics": "carrier_columns=None is accepted and treated identically to carrier_columns=() (never as \"all columns\"); documented explicitly in the function's docstring and covered by tests/test_pregame_rolling.py::test_none_carrier_columns_behaves_identically_to_default and tests/test_oof_feature_provenance.py::test_native_carrier_columns_never_reach_the_pivot_when_narrowed.",
+    "caller_audit": {
+      "method": "grep -rln build_game_pregame_matrix across the full repository (src/, tests/, examples/, tests/fixtures/), then read every match to determine actual call sites vs. docstring/comment mentions.",
+      "scope_caveat": "none identified in the scoped dependency/caller audit -- this enumerates every caller found by the grep+read pass described above, run once at fix time; it is not a standing guarantee that no other caller can ever be introduced. A future new caller that omits carrier_columns is still protected by the safe default itself, independent of this audit.",
+      "callers_found": [
+        {
+          "file": "src/nfl_hybrid/features/augmented_matrix.py",
+          "function": "build_live_augmented_features",
+          "previous_call": "build_game_pregame_matrix(tg.assign(game_id=...), team_pregame)  # implicit default = full native row",
+          "updated_call": "build_game_pregame_matrix(tg.assign(game_id=...), team_pregame, carrier_columns=())",
+          "why_empty_is_correct": "The pivot's native-games columns are never read afterward: _diff_features(pivot) only reads pivoted home_*/away_*__last4_mean|season_mean EPA columns (from team_pregame, not games); market lines and rest-days are computed independently from tg/all_games and merged in explicitly; any pivot column colliding with those is dropped at the 'collide' step; and the final output is hard-selected to game_id + FROZEN_FEATURES only."
+        },
+        {
+          "file": "src/nfl_hybrid/features/augmented_matrix.py",
+          "function": "build_augmented_feature_matrix",
+          "previous_call": "build_game_pregame_matrix(games, team_pregame)  # implicit default = full native row",
+          "updated_call": "build_game_pregame_matrix(games, team_pregame, carrier_columns=())",
+          "why_empty_is_correct": "Same as above: pivot is only consumed via _diff_features(pivot) for EPA differentials; the outcome/market base frame (`base`) is built independently from `games` via _outcome_columns(games), not from the pivot."
+        },
+        {
+          "file": "src/nfl_hybrid/features/opponent_pregame.py",
+          "function": "build_game_opponent_adjusted_matrix",
+          "previous_call": "build_game_pregame_matrix(games, team_strength)  # implicit default = full native row",
+          "updated_call": "build_game_pregame_matrix(games, team_strength, carrier_columns=())",
+          "why_empty_is_correct": "Every caller of build_game_opponent_adjusted_matrix (tests/test_opponent_pregame.py, examples/build_opponent_adjusted_features.py) only reads home_oa_*/away_oa_* pivoted opponent-adjusted columns; no caller reads a native games column off this function's return value."
+        },
+        {
+          "file": "src/nfl_hybrid/evaluation/chronological_oof.py",
+          "function": "build_oof_feature_matrix",
+          "previous_call": "build_game_pregame_matrix(games, state, carrier_columns=())  # already explicit pre-hardening",
+          "updated_call": "unchanged -- already carrier_columns=()",
+          "why_empty_is_correct": "This was the original architectural_repair site; unaffected by this hardening pass other than now matching the (also-empty) function default."
+        }
+      ],
+      "no_caller_requests_all_columns": true,
+      "callers_requiring_native_passthrough_after_audit": "none -- no caller in the repository reads a native games column off build_game_pregame_matrix's return value; every caller either needs zero native columns (all four above) or has not yet been written."
+    },
+    "secret_column_regression_test": {
+      "test": "tests/test_pregame_rolling.py::test_default_carrier_columns_excludes_native_passthrough",
+      "method": "Added a synthetic native games column, home_future_secret_result = 999999 (a column that did not exist when build_game_pregame_matrix was written), called the function with default arguments (no carrier_columns), and asserted the column is absent from the returned matrix.",
+      "result": "PASS -- home_future_secret_result not in matrix.columns",
+      "proves": "A future raw-games-schema addition -- of any name, including one that looks exactly like a target/outcome leak -- cannot silently become candidate/model data via this function's default behavior."
+    },
+    "explicit_safe_carrier_positive_control": {
+      "test": "tests/test_pregame_rolling.py::test_explicit_carrier_columns_returns_only_the_requested_safe_column",
+      "method": "Called build_game_pregame_matrix with carrier_columns=(\"gameday\",) (a known pregame-safe native schedule column) and asserted it, and only it, is present and correctly valued in the output.",
+      "result": "PASS -- gameday present with correct per-game values; no other native column present",
+      "proves": "The narrowing is a real explicit allowlist (default -> no native passthrough; explicit request -> only the specifically requested safe carrier columns), not a blanket suppression that would also block legitimate explicit requests."
+    },
+    "focused_tests_run": {
+      "tests/test_pregame_rolling.py": "8 passed",
+      "tests/test_oof_feature_provenance.py": "7 passed",
+      "tests/test_augmented_matrix.py": "11 passed (caller of build_game_pregame_matrix changed; run because of that)",
+      "tests/test_opponent_pregame.py": "4 passed (caller of build_game_pregame_matrix changed; run because of that)",
+      "combined_runtime_seconds_pregame_and_provenance": 16.52,
+      "combined_runtime_seconds_augmented_and_opponent": 1.45,
+      "full_local_regression_suite_run": false
+    }
+  },
+  "oof_artifact_hash_verification": {
+    "purpose": "Prove this hardening pass (API default change + 4 caller edits + 2 test file edits + this metadata file) did not regenerate, mutate, or otherwise touch the corrected Fix 3.1 OOF artifacts. No OOF-generating command (generate_oof_predictions, scripts/generate_fix3_1_proof_scale_oof.py, or any full-model refit) was run at any point during this hardening pass.",
+    "artifact_root_env_var": "NFL_MODEL_ARTIFACT_ROOT",
+    "artifact_root_value_used": "/Users/josephshackelford/NFL-Model-Artifacts",
+    "artifact_relative_dir": "chronological-oof-2020-2025",
+    "sha256_before_hardening": {
+      "oof_predictions.parquet": "06744f66361a3d78bff432825972fe812c8811e7310076c72c10b651ca69f14f",
+      "oof_residual_ledger.parquet": "aa3d11114d8b709042dde2865ef077203f2bf775e90d2dd38e94c8fbc5b32e9c",
+      "oof_manifest.json": "6551b34a8ca57582c85b604e11b78d743ed3089b1fcdb3c727c4266d8ebd5ad6"
+    },
+    "sha256_after_hardening": {
+      "oof_predictions.parquet": "06744f66361a3d78bff432825972fe812c8811e7310076c72c10b651ca69f14f",
+      "oof_residual_ledger.parquet": "aa3d11114d8b709042dde2865ef077203f2bf775e90d2dd38e94c8fbc5b32e9c",
+      "oof_manifest.json": "6551b34a8ca57582c85b604e11b78d743ed3089b1fcdb3c727c4266d8ebd5ad6"
+    },
+    "all_three_hashes_identical_before_after": true,
+    "feature_state_hash": "7d731c88416cef2d9f55b2267b377c085b557d349117637be6fecd0f9bf1c931",
+    "feature_state_hash_matches_feature_matrix_after": true,
+    "no_oof_regeneration_commands_run": true,
+    "purpose_forward": "These hashes let Fix 4 prove, later, that it consumed the exact leakage-clean Fix 3.1 OOF artifact this hardening pass verified untouched -- by re-hashing the same three files and the feature_state_hash against the values recorded here."
+  }
+}

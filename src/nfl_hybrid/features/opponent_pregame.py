@@ -881,4 +881,5 @@ def build_game_opponent_adjusted_matrix(
     return build_game_pregame_matrix(
         games,
         team_strength,
+        carrier_columns=(),
     )

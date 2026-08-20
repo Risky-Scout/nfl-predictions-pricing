@@ -390,7 +390,11 @@ def build_live_augmented_features(
     team_game_all["game_id"] = team_game_all["game_id"].astype(str)
 
     team_pregame = build_team_pregame_features(team_game_all, all_games, config=cfg)
-    pivot = build_game_pregame_matrix(tg.assign(game_id=tg["game_id"].astype(str)), team_pregame)
+    pivot = build_game_pregame_matrix(
+        tg.assign(game_id=tg["game_id"].astype(str)),
+        team_pregame,
+        carrier_columns=(),
+    )
 
     diffs, epa_cols = _diff_features(pivot)
     rest, rest_cols = _rest_features(all_games)
@@ -468,7 +472,7 @@ def build_augmented_feature_matrix(
     cfg = rolling_config or PregameRollingConfig(windows=(4,))
     team_game = aggregate_advanced_team_game(play_by_play)
     team_pregame = build_team_pregame_features(team_game, games, config=cfg)
-    pivot = build_game_pregame_matrix(games, team_pregame)
+    pivot = build_game_pregame_matrix(games, team_pregame, carrier_columns=())
 
     diffs, epa_cols = _diff_features(pivot)
     rest, rest_cols = _rest_features(games)

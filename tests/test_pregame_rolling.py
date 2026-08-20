@@ -207,3 +207,71 @@ def test_game_matrix_normalizes_rams_provider_alias():
         ],
         0.05,
     )
+
+
+def test_default_carrier_columns_excludes_native_passthrough():
+    """Fix 3.1 API hardening: default behavior (``carrier_columns`` unset)
+    must not copy the full native ``games`` row. A brand-new native column
+    that did not exist when this function was written -- including one that
+    happens to look like a target-leak field -- must not silently reach the
+    returned matrix just because a caller didn't narrow it."""
+    games = _games().copy()
+    games["home_future_secret_result"] = 999999
+
+    team_features = build_team_pregame_features(
+        _team_games(),
+        games,
+    )
+
+    matrix = build_game_pregame_matrix(
+        games,
+        team_features,
+    )
+
+    assert "home_future_secret_result" not in matrix.columns
+
+
+def test_none_carrier_columns_behaves_identically_to_default():
+    """``carrier_columns=None`` must never mean "all raw columns" -- it is
+    treated identically to the safe ``()`` default."""
+    games = _games().copy()
+    games["home_future_secret_result"] = 999999
+
+    team_features = build_team_pregame_features(
+        _team_games(),
+        games,
+    )
+
+    matrix = build_game_pregame_matrix(
+        games,
+        team_features,
+        carrier_columns=None,
+    )
+
+    assert "home_future_secret_result" not in matrix.columns
+
+
+def test_explicit_carrier_columns_returns_only_the_requested_safe_column():
+    """Positive control: a caller that explicitly names one known-safe
+    native ``games`` column (``gameday``, a schedule field) gets exactly
+    that column back -- proving the narrowing is a real allowlist, not a
+    blanket suppression that would also hide legitimate explicit requests."""
+    games = _games()
+
+    team_features = build_team_pregame_features(
+        _team_games(),
+        games,
+    )
+
+    matrix = build_game_pregame_matrix(
+        games,
+        team_features,
+        carrier_columns=("gameday",),
+    )
+
+    assert "gameday" in matrix.columns
+    assert matrix.set_index("game_id")["gameday"].to_dict() == {
+        "G1": "2025-09-01",
+        "G2": "2025-09-08",
+        "G3": "2025-09-15",
+    }
