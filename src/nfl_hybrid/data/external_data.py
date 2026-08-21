@@ -160,6 +160,97 @@ _register("oof_chronological.manifest",
            scope="generated",
            description="Provenance/config manifest for the chronological OOF run (Fix 3)")
 
+# --- canonical closing_t10 ATS/TOTAL market matrices (Fix 4 item 3): the
+# EXISTING canonical T-10 market attachment (src/nfl_hybrid/features/
+# odds_attachment.py + canonical_market_matrices.py), already gated at build
+# time on >=3 eligible books and <=5 minute snapshot lag
+# (OddsAttachmentConfig). Fix 4 reuses this real, already-verified dataset
+# rather than inventing a second consensus rule -- see
+# nfl_hybrid.evaluation.chronological_market_attachment. scope="external"
+# (NFL_MODEL_DATA_ROOT): this is canonical historical market data, not a
+# generated pipeline artifact.
+_register("canonical_market.pregame_ats_t10_2020_2023",
+           "feature-store-2020-2025/compact-canonical-2020-2023/pregame_ats_market_augmented_canonical_t10.parquet",
+           description="Canonical closing_t10 ATS market matrix (>=3 books, <=5min lag), seasons 2020-2023")
+_register("canonical_market.pregame_ats_t10_2020_2023_manifest",
+           "feature-store-2020-2025/compact-canonical-2020-2023/pregame_ats_market_augmented_canonical_t10.manifest.json",
+           description="Provenance manifest for canonical_market.pregame_ats_t10_2020_2023")
+_register("canonical_market.pregame_total_t10_2020_2023",
+           "feature-store-2020-2025/compact-canonical-2020-2023/pregame_total_market_augmented_canonical_t10.parquet",
+           description="Canonical closing_t10 TOTAL market matrix (>=3 books, <=5min lag), seasons 2020-2023")
+_register("canonical_market.pregame_total_t10_2020_2023_manifest",
+           "feature-store-2020-2025/compact-canonical-2020-2023/pregame_total_market_augmented_canonical_t10.manifest.json",
+           description="Provenance manifest for canonical_market.pregame_total_t10_2020_2023")
+
+# --- chronological calibration ledger (Fix 4): one authoritative record of
+# calibrating each chronological OOF prediction (Fix 3) from ONLY earlier OOF
+# predictions whose own outcome was resolved/available before the target's own
+# forecast cutoff. scope="generated": derived FROM the Fix 3 OOF ledger, not
+# part of the raw historical estate -- resolves under NFL_MODEL_ARTIFACT_ROOT,
+# never NFL_MODEL_DATA_ROOT, and is never committed to the repo.
+#
+# LEGACY / NON-AUTHORITATIVE (Fix 4 artifact hygiene, 2026-08-20): these three
+# generic keys are a market-agnostic write path for
+# persist_calibration_ledger() (nfl_hybrid.evaluation.chronological_calibration).
+# Their only caller, scripts/generate_chronological_calibration_membership_proof.py
+# -- a MONEYLINE-only engine-proof script that also called generate_oof_predictions/
+# persist_oof_ledger itself and could overwrite the canonical corrected Fix 3.1
+# OOF artifact (it never read the certified Fix 3.1 ledger) -- has been REMOVED
+# from the repo entirely (Fix 4 final hazard removal, 2026-08-20) rather than
+# fixed, since it was not required for ATS/TOTAL certification. No current
+# code path calls persist_calibration_ledger() outside its own direct unit
+# test (tests/test_chronological_calibration.py, root_override=tmp_path only).
+# No current authoritative code path RESOLVES (reads) these three keys as
+# model/calibration evidence either -- ATS/TOTAL certification exclusively
+# uses the explicit market-partitioned .ats_*/.total_* keys below. The prior
+# files these keys pointed to were found derived from the pre-Fix-3.1 leaked
+# OOF and were quarantined to
+# NFL_MODEL_ARTIFACT_ROOT/invalidated/fix4-pre-fix3-1-moneyline-calibration-2026-08-20/
+# -- do not treat a resolve() of these generic keys as current Fix 4 evidence,
+# and do not reintroduce a script that writes to them via persist_oof_ledger.
+_register("chronological_calibration.raw_probabilities",
+           "chronological-calibration-2020-2025/raw_probabilities.parquet",
+           scope="generated",
+           description="LEGACY/non-authoritative: generic (market-unpartitioned) pre-calibration raw probabilities. Not read by any current certification path -- see ats_raw/total_raw")
+_register("chronological_calibration.ledger",
+           "chronological-calibration-2020-2025/calibration_ledger.parquet",
+           scope="generated",
+           description="LEGACY/non-authoritative: generic (market-unpartitioned) calibration ledger. Not read by any current certification path -- see ats_ledger/total_ledger")
+_register("chronological_calibration.manifest",
+           "chronological-calibration-2020-2025/calibration_manifest.json",
+           scope="generated",
+           description="LEGACY/non-authoritative: generic (market-unpartitioned) calibration manifest. Not read by any current certification path -- see ats_manifest/total_manifest")
+
+# --- real ATS / TOTAL chronological calibration proof (Fix 4 repair): the
+# market-attached ATS and TOTAL raw/ledger artifacts, persisted under an
+# EXPLICIT market partition -- never ambiguous about which market a ledger
+# is. scope="generated": derived from the Fix 3 OOF ledger + the canonical
+# T-10 market matrices above, never raw historical data itself.
+_register("chronological_calibration.ats_raw",
+           "chronological-calibration-2020-2025/ats_raw_probabilities.parquet",
+           scope="generated",
+           description="Real ATS raw (pre-calibration) three-way probability ledger, real T-10 spread attached (Fix 4)")
+_register("chronological_calibration.ats_ledger",
+           "chronological-calibration-2020-2025/ats_calibration_ledger.parquet",
+           scope="generated",
+           description="Real ATS chronological calibration ledger (Fix 4)")
+_register("chronological_calibration.ats_manifest",
+           "chronological-calibration-2020-2025/ats_calibration_manifest.json",
+           scope="generated",
+           description="Provenance/config manifest for the real ATS chronological calibration run (Fix 4)")
+_register("chronological_calibration.total_raw",
+           "chronological-calibration-2020-2025/total_raw_probabilities.parquet",
+           scope="generated",
+           description="Real TOTAL raw (pre-calibration) three-way probability ledger, real T-10 total attached (Fix 4)")
+_register("chronological_calibration.total_ledger",
+           "chronological-calibration-2020-2025/total_calibration_ledger.parquet",
+           scope="generated",
+           description="Real TOTAL chronological calibration ledger (Fix 4)")
+_register("chronological_calibration.total_manifest",
+           "chronological-calibration-2020-2025/total_calibration_manifest.json",
+           scope="generated",
+           description="Provenance/config manifest for the real TOTAL chronological calibration run (Fix 4)")
+
 # --- namespace roots: directory-level write targets for producer scripts, so a
 # producer and the per-file registry above always resolve under the same root.
 # External-scope namespaces only; generated-scope keys above are resolved
