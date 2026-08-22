@@ -1,0 +1,35 @@
+{
+  "data": [
+    {
+      "id": 900001,
+      "visitor_team": {
+        "id": 19,
+        "conference": "NFC",
+        "division": "EAST",
+        "location": "Dallas",
+        "name": "Cowboys",
+        "full_name": "Dallas Cowboys",
+        "abbreviation": "DAL"
+      },
+      "home_team": {
+        "id": 18,
+        "conference": "NFC",
+        "division": "EAST",
+        "location": "Philadelphia",
+        "name": "Eagles",
+        "full_name": "Philadelphia Eagles",
+        "abbreviation": "PHI"
+      },
+      "summary": "Eagles edge Cowboys 24-20",
+      "venue": "Lincoln Financial Field",
+      "week": 1,
+      "date": "2025-09-05T00:20:00.000Z",
+      "season": 2025,
+      "postseason": false,
+      "status": "Final",
+      "status_state": "final",
+      "home_team_score": 24,
+      "visitor_team_score": 20
+    }
+  ]
+}

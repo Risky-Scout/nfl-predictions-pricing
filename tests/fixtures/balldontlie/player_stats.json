@@ -1,0 +1,31 @@
+{
+  "data": [
+    {
+      "player": {"id": 5001, "first_name": "Jalen", "last_name": "Hurts", "position": "Quarterback", "position_abbreviation": "QB"},
+      "team": {"id": 18, "abbreviation": "PHI"},
+      "game": {"id": 900001, "season": 2025, "week": 1},
+      "passing_completions": 19, "passing_attempts": 28, "passing_yards": 201, "yards_per_pass_attempt": 7.2,
+      "passing_touchdowns": 2, "passing_interceptions": 0, "sacks": 2, "sacks_loss": 13, "qbr": 78.4, "qb_rating": 101.2,
+      "rushing_attempts": 8, "rushing_yards": 34, "yards_per_rush_attempt": 4.25, "rushing_touchdowns": 1, "long_rushing": 12,
+      "receptions": null, "receiving_yards": null, "yards_per_reception": null, "receiving_touchdowns": null, "long_reception": null,
+      "receiving_targets": null, "fumbles": 0, "fumbles_lost": 0, "fumbles_recovered": 0,
+      "total_tackles": null, "defensive_sacks": null, "solo_tackles": null, "tackles_for_loss": null, "passes_defended": null,
+      "qb_hits": null, "fumbles_touchdowns": null, "defensive_interceptions": null, "interception_yards": null,
+      "interception_touchdowns": null, "kick_returns": null, "kick_return_yards": null
+    },
+    {
+      "player": {"id": 5002, "first_name": "KaVontae", "last_name": "Turpin", "position": "Wide Receiver", "position_abbreviation": "WR"},
+      "team": {"id": 19, "abbreviation": "DAL"},
+      "game": {"id": 900001, "season": 2025, "week": 1},
+      "passing_completions": null, "passing_attempts": null, "passing_yards": null, "yards_per_pass_attempt": null,
+      "passing_touchdowns": null, "passing_interceptions": null, "sacks": null, "sacks_loss": null, "qbr": null, "qb_rating": null,
+      "rushing_attempts": 2, "rushing_yards": 9, "yards_per_rush_attempt": 4.5, "rushing_touchdowns": 0, "long_rushing": 5,
+      "receptions": 2, "receiving_yards": 18, "yards_per_reception": 9.0, "receiving_touchdowns": 0, "long_reception": 16,
+      "receiving_targets": 2, "fumbles": null, "fumbles_lost": null, "fumbles_recovered": null,
+      "total_tackles": null, "defensive_sacks": null, "solo_tackles": null, "tackles_for_loss": null, "passes_defended": null,
+      "qb_hits": null, "fumbles_touchdowns": null, "defensive_interceptions": null, "interception_yards": null,
+      "interception_touchdowns": null, "kick_returns": 4, "kick_return_yards": 81
+    }
+  ],
+  "meta": {"next_cursor": null, "per_page": 25}
+}

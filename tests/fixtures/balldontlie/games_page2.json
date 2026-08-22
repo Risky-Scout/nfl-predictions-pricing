@@ -1,0 +1,35 @@
+{
+  "data": [
+    {
+      "id": 900003,
+      "visitor_team": {"id": 1, "conference": "AFC", "division": "EAST", "location": "New England", "name": "Patriots", "full_name": "New England Patriots", "abbreviation": "NE"},
+      "home_team": {"id": 31, "conference": "NFC", "division": "WEST", "location": "Seattle", "name": "Seahawks", "full_name": "Seattle Seahawks", "abbreviation": "SEA"},
+      "summary": null,
+      "venue": "Lumen Field",
+      "week": 1,
+      "date": "2026-09-10T00:20:00.000Z",
+      "season": 2026,
+      "postseason": false,
+      "status": "9/9 - 8:20 PM EDT",
+      "status_state": "scheduled",
+      "home_team_score": null, "home_team_q1": null, "home_team_q2": null, "home_team_q3": null, "home_team_q4": null, "home_team_ot": null,
+      "visitor_team_score": null, "visitor_team_q1": null, "visitor_team_q2": null, "visitor_team_q3": null, "visitor_team_q4": null, "visitor_team_ot": null
+    },
+    {
+      "id": 900004,
+      "visitor_team": {"id": 30, "conference": "NFC", "division": "WEST", "location": "San Francisco", "name": "49ers", "full_name": "San Francisco 49ers", "abbreviation": "SF"},
+      "home_team": {"id": 32, "conference": "NFC", "division": "WEST", "location": "Los Angeles", "name": "Rams", "full_name": "Los Angeles Rams", "abbreviation": "LAR"},
+      "summary": null,
+      "venue": "SoFi Stadium",
+      "week": 3,
+      "date": "2026-09-24T20:15:00.000Z",
+      "season": 2026,
+      "postseason": false,
+      "status": "In Progress - Q3 08:41",
+      "status_state": "in_progress",
+      "home_team_score": 17, "home_team_q1": 7, "home_team_q2": 7, "home_team_q3": 3, "home_team_q4": null, "home_team_ot": null,
+      "visitor_team_score": 14, "visitor_team_q1": 7, "visitor_team_q2": 0, "visitor_team_q3": 7, "visitor_team_q4": null, "visitor_team_ot": null
+    }
+  ],
+  "meta": {"prev_cursor": 900002, "next_cursor": null, "per_page": 2}
+}

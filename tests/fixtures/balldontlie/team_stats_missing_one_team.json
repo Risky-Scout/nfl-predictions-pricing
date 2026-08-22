@@ -1,0 +1,20 @@
+{
+  "data": [
+    {
+      "game": {"id": 900002, "season": 2025, "week": 1},
+      "team": {"id": 14, "abbreviation": "KC"},
+      "home_away": "away",
+      "first_downs": 18, "first_downs_passing": 10, "first_downs_rushing": 6, "first_downs_penalty": 2,
+      "third_down_efficiency": "5-12", "third_down_conversions": 5, "third_down_attempts": 12,
+      "fourth_down_efficiency": "0-0", "fourth_down_conversions": 0, "fourth_down_attempts": 0,
+      "total_offensive_plays": 58, "total_yards": 289, "yards_per_play": 5.0, "total_drives": 10,
+      "net_passing_yards": 210, "passing_completions": 22, "passing_attempts": 35, "yards_per_pass": 6.0,
+      "sacks": 3, "sack_yards_lost": 21,
+      "rushing_yards": 79, "rushing_attempts": 20, "yards_per_rush_attempt": 4.0,
+      "red_zone_scores": 1, "red_zone_attempts": 3, "penalties": 5, "penalty_yards": 40,
+      "turnovers": 2, "fumbles_lost": 1, "interceptions_thrown": 1, "defensive_touchdowns": 0,
+      "possession_time": "27:10", "possession_time_seconds": 1630
+    }
+  ],
+  "meta": {"next_cursor": null, "per_page": 25}
+}
