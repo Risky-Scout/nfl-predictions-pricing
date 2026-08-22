@@ -1,0 +1,35 @@
+{
+  "data": [
+    {
+      "game": {"id": 900001, "season": 2025, "week": 1},
+      "team": {"id": 19, "abbreviation": "DAL"},
+      "home_away": "away",
+      "first_downs": 22, "first_downs_passing": 9, "first_downs_rushing": 7, "first_downs_penalty": 6,
+      "third_down_efficiency": "7-11", "third_down_conversions": 7, "third_down_attempts": 11,
+      "fourth_down_efficiency": "0-1", "fourth_down_conversions": 0, "fourth_down_attempts": 1,
+      "total_offensive_plays": 56, "total_yards": 307, "yards_per_play": 5.5, "total_drives": 8,
+      "net_passing_yards": 188, "passing_completions": 21, "passing_attempts": 34, "yards_per_pass": 5.5,
+      "sacks": null, "sack_yards_lost": null,
+      "rushing_yards": 119, "rushing_attempts": 22, "yards_per_rush_attempt": 5.4,
+      "red_zone_scores": 2, "red_zone_attempts": 3, "penalties": 4, "penalty_yards": 42,
+      "turnovers": 1, "fumbles_lost": 1, "interceptions_thrown": 0, "defensive_touchdowns": 0,
+      "possession_time": "25:08", "possession_time_seconds": 1508
+    },
+    {
+      "game": {"id": 900001, "season": 2025, "week": 1},
+      "team": {"id": 18, "abbreviation": "PHI"},
+      "home_away": "home",
+      "first_downs": 24, "first_downs_passing": 11, "first_downs_rushing": 9, "first_downs_penalty": 4,
+      "third_down_efficiency": "8-13", "third_down_conversions": 8, "third_down_attempts": 13,
+      "fourth_down_efficiency": "1-1", "fourth_down_conversions": 1, "fourth_down_attempts": 1,
+      "total_offensive_plays": 61, "total_yards": 331, "yards_per_play": 5.4, "total_drives": 9,
+      "net_passing_yards": 201, "passing_completions": 19, "passing_attempts": 28, "yards_per_pass": 7.2,
+      "sacks": 2, "sack_yards_lost": 13,
+      "rushing_yards": 130, "rushing_attempts": 27, "yards_per_rush_attempt": 4.8,
+      "red_zone_scores": 2, "red_zone_attempts": 2, "penalties": 6, "penalty_yards": 55,
+      "turnovers": 0, "fumbles_lost": 0, "interceptions_thrown": 0, "defensive_touchdowns": 0,
+      "possession_time": "34:52", "possession_time_seconds": 2092
+    }
+  ],
+  "meta": {"next_cursor": null, "per_page": 25}
+}

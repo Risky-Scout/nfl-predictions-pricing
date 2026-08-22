@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "player": {
+        "id": 6002, "first_name": "Example", "last_name": "Player", "position": "Wide Receiver", "position_abbreviation": "WR",
+        "team": {"id": 18, "abbreviation": "PHI"}
+      },
+      "status": "Out",
+      "comment": "Placed on IR with a hamstring injury.",
+      "date": "2026-08-05T12:00:00.000Z"
+    }
+  ],
+  "meta": {"next_cursor": null, "per_page": 1}
+}

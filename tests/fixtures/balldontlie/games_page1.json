@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "id": 900001,
+      "visitor_team": {"id": 19, "conference": "NFC", "division": "EAST", "location": "Dallas", "name": "Cowboys", "full_name": "Dallas Cowboys", "abbreviation": "DAL"},
+      "home_team": {"id": 18, "conference": "NFC", "division": "EAST", "location": "Philadelphia", "name": "Eagles", "full_name": "Philadelphia Eagles", "abbreviation": "PHI"},
+      "summary": "Eagles edge Cowboys 24-20",
+      "venue": "Lincoln Financial Field",
+      "week": 1,
+      "date": "2025-09-05T00:20:00.000Z",
+      "season": 2025,
+      "postseason": false,
+      "status": "Final",
+      "status_state": "final",
+      "home_team_score": 24,
+      "home_team_q1": 7, "home_team_q2": 14, "home_team_q3": 3, "home_team_q4": null, "home_team_ot": null,
+      "visitor_team_score": 20,
+      "visitor_team_q1": 7, "visitor_team_q2": 13, "visitor_team_q3": null, "visitor_team_q4": null, "visitor_team_ot": null
+    },
+    {
+      "id": 900002,
+      "visitor_team": {"id": 14, "conference": "AFC", "division": "WEST", "location": "Kansas City", "name": "Chiefs", "full_name": "Kansas City Chiefs", "abbreviation": "KC"},
+      "home_team": {"id": 17, "conference": "AFC", "division": "WEST", "location": "Los Angeles", "name": "Chargers", "full_name": "Los Angeles Chargers", "abbreviation": "LAC"},
+      "summary": "Chargers beat Chiefs 27-21",
+      "venue": "Corinthians Arena",
+      "week": 1,
+      "date": "2025-09-06T00:00:00.000Z",
+      "season": 2025,
+      "postseason": false,
+      "status": "Final",
+      "status_state": "final",
+      "home_team_score": 27,
+      "home_team_q1": 7, "home_team_q2": 6, "home_team_q3": 7, "home_team_q4": 7, "home_team_ot": null,
+      "visitor_team_score": 21,
+      "visitor_team_q1": 7, "visitor_team_q2": 0, "visitor_team_q3": 7, "visitor_team_q4": 7, "visitor_team_ot": null
+    }
+  ],
+  "meta": {"next_cursor": 900002, "per_page": 2}
+}

@@ -1,0 +1,17 @@
+{
+  "data": [
+    {
+      "player": {"id": 2502, "first_name": "Cam", "last_name": "Jurgens", "position": "Center", "position_abbreviation": "C"},
+      "position": "C", "depth": 1, "player_name": "Cam Jurgens", "injury_status": null
+    },
+    {
+      "player": {"id": 13874880, "first_name": "Drew", "last_name": "Kendall", "position": "Center", "position_abbreviation": "C"},
+      "position": "C", "depth": 2, "player_name": "Drew Kendall", "injury_status": null
+    },
+    {
+      "player": {"id": 5001, "first_name": "Jalen", "last_name": "Hurts", "position": "Quarterback", "position_abbreviation": "QB"},
+      "position": "QB", "depth": 1, "player_name": "Jalen Hurts", "injury_status": "Questionable"
+    }
+  ],
+  "meta": {"next_cursor": null, "per_page": 25}
+}

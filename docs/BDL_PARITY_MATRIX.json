@@ -1,0 +1,122 @@
+[
+  {
+    "feature_family": "game_result",
+    "historical_definition": "home_score/away_score as published on the final schedule row",
+    "historical_source": "nflverse schedules (backfill.games / backfill.nflverse_games)",
+    "live_definition": "home_team_score/visitor_team_score once status_state == 'final'",
+    "live_source": "BDL GET /games",
+    "parity_status": "EXACT",
+    "production_eligible": true,
+    "validation_evidence": "2025 overlap backtest actually run 2026-08-22 (scripts/bdl_overlap_backtest.py, NFL_MODEL_DATA_ROOT + live BALLDONTLIE_API_KEY, see outputs/bdl_overlap_backtest_2025.json): 10-game non-cherry-picked stratified sample spanning weeks {1,2,4,6,8,10,11,13,15,17} and 16 distinct teams -- 10/10 games matched by season/week/home/away identity, 10/10 home_score exact, 10/10 away_score exact, max kickoff-timestamp diff 0.0 minutes. Same box-score-final definition as the historical source; no transform involved."
+  },
+  {
+    "feature_family": "elo_inputs",
+    "historical_definition": "Elo state depends on nothing but game identity + final score",
+    "historical_source": "nflverse schedules via build_elo_pregame_state(games) (nfl_hybrid.features.elo_state) -- game_id, season, week, kickoff, teams, scores only",
+    "live_definition": "Identical field set (game_id, season, week, kickoff_utc, home_team, away_team, home_score, away_score), gated on FINAL status_state",
+    "live_source": "canonical.normalize_games() output (this Fix)",
+    "parity_status": "EXACT",
+    "production_eligible": true,
+    "validation_evidence": "Field-for-field mapping in canonical.py::GAMES_COLUMNS covers every column build_elo_pregame_state reads; same measured 10-game 2026-08-22 overlap evidence as game_result (identity + score are the only inputs Elo state depends on)."
+  },
+  {
+    "feature_family": "team_box_official",
+    "historical_definition": "Official league box-score aggregates (yards, first downs, third/fourth-down efficiency, drives, possession time)",
+    "historical_source": "nflverse official team-game box stats (backfill.team_stats) -- registered but NOT currently consumed by the wired Fix 2/3 pregame-state pipeline",
+    "live_definition": "Official BDL box-score aggregates, same category set (verified live 2026-08-21, game 423945 -- see canonical.py _TEAM_STATS_NUMERIC_FIELDS)",
+    "live_source": "BDL GET /team_stats",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "2025 overlap backtest actually run 2026-08-22 against nflverse's own team_stats table (the correct historical source for this family -- it is registered but not PBP-derived in the wired pipeline): 19 team-games compared across the 10-game sample. 15 of 16 compared fields showed 100% exact agreement (passing_completions, passing_attempts, rushing_yards, rushing_attempts, sacks, penalties, penalty_yards, interceptions_thrown, fumbles_lost, first_downs_passing, first_downs_rushing, turnovers[derived], net_passing_yards[derived], total_yards[derived]) -- net_passing_yards/total_yards only matched once a REAL sign-convention difference was found and corrected: historical sack_yards_lost is signed negative, BDL reports the unsigned magnitude (confirmed live, e.g. 2025_01_ARI_NO ARI: historical=-33, BDL=33; 19/19 exact once corrected). defensive_touchdowns did NOT validate: 18/19 exact, one unexplained disagreement (2025_10_ARI_SEA, SEA: historical def_tds=0, BDL defensive_touchdowns=2) with no identified root cause. Because this one field's disagreement is unresolved and this family isn't yet wired into production, the family-level status stays conservative (APPROXIMATE_NOT_APPROVED) despite the other 15 fields validating cleanly -- see outputs/bdl_overlap_backtest_2025.json 'team_box' for full per-field stats."
+  },
+  {
+    "feature_family": "team_box_pbp_derived (play volume / rates)",
+    "historical_definition": "Play-level masks (down/distance/play-type/score-differential) applied to nflverse PBP rows, then counted/rated per team-game",
+    "historical_source": "aggregate_advanced_team_game(nflverse PBP) -- nfl_hybrid.features.pbp_advanced -- scrimmage_plays, dropbacks, pass/rush attempts, third/fourth-down attempts, explosive rates, completion_rate, air_yards_per_attempt, sack/turnover counts, drive counts (THIS is the family actually wired into the 'epa' pregame-state family alongside its EPA-dependent metrics)",
+    "live_definition": "n/a -- not implemented in Fix 5",
+    "live_source": "BDL GET /plays (down/distance/play-type fields exist) -- NO transform built",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "BDL /plays exposes start_down/start_distance/start_yards_to_endzone/type_slug, structurally similar to nflverse's down/ydstogo/yardline_100/play_type, but BDL's type_slug vocabulary (verified live: e.g. 'kickoff') has not been mapped to pbp_advanced.py's play-type masks, and no such recount transform was built or validated in Fix 5 (Section 17: only adapt the subset with proven parity; Section 25: do not force an unvalidated family into eligibility). 2025 overlap backtest actually run 2026-08-22 additionally measured that BDL's canonical play COUNT itself does not agree 1:1 with nflverse's PBP row count for the same game: across all 10 sampled games BDL consistently returned MORE canonical plays than nflverse (e.g. 2025_01_ARI_NO: 195 BDL vs. 182 nflverse; 2025_17_DAL_WAS: 198 vs. 187; mean excess ~10 plays/game), even though pagination, dedup, ordering, and terminal-score reconciliation were all clean (0 anomalies, 10/10 games reconciled -- see 'pbp' section of outputs/bdl_overlap_backtest_2025.json). Any nflverse PBP-mask-derived count/rate feature ported onto BDL /plays would need its own row-count reconciliation before being validated, not just a play-count mapping."
+  },
+  {
+    "feature_family": "qb_player_stats_boxscore",
+    "historical_definition": "Counted directly from PBP rows grouped by passer_player_id",
+    "historical_source": "aggregate_qb_game_efficiency(nflverse PBP) -- attempts, completions, yards, TDs, INTs, sacks (non-EPA counting fields)",
+    "live_definition": "Official BDL per-player box totals (verified live 2026-08-21)",
+    "live_source": "BDL GET /stats (passing_completions, passing_attempts, passing_yards, passing_touchdowns, passing_interceptions, sacks, ...)",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "2025 overlap backtest actually run 2026-08-22 (10-game sample). Player identity coverage by normalized name+team+game: 184/192 (95.8%) active offensive skill-position rows matched, 23/23 (100%) QB rows matched -- no gsis_id/pfr_id crosswalk exists, matching was by name (see canonical.PLAYER_IDENTITY_PARITY = 'PARTIAL'). completions, passing_yards, passing_touchdowns, passing_interceptions, and sacks_suffered were 100% exact across BDL vs. nflverse's own player_stats table for all 20-24 comparable QB rows. HOWEVER: comparing against the ACTUALLY WIRED historical feature builder (aggregate_qb_game_efficiency, which reads raw PBP directly, not the player_stats table) revealed 'attempts' does NOT match: the wired PBP 'pass_attempt' mask counted MORE attempts than the official box score (which BDL matches exactly) in 18 of 19 spot-checked QB-games (e.g. Kyler Murray 2025_01_ARI_NO: PBP-mask=34, box/BDL=29; Dak Prescott 2025_17_DAL_WAS: PBP-mask=43, box/BDL=37) -- completions/yards/TDs/INTs/sacks agreed across all three sources in every case, only 'attempts' diverges. This is a genuine definitional gap between nflverse's own two representations of the same game (raw PBP pass_attempt flag vs. published box score), not a BDL data-quality issue -- but it means BDL cannot be blessed as a drop-in replacement for the wired feature's 'attempts' field without first reconciling that gap, so the family stays APPROXIMATE_NOT_APPROVED as a whole (Section 25: do not force an unvalidated family into eligibility merely because most of its fields validated)."
+  },
+  {
+    "feature_family": "epa_success_cpoe (team + QB)",
+    "historical_definition": "nflverse's own proprietary expected-points/win-probability/completion-probability models, applied per play",
+    "historical_source": "nflverse PBP columns 'epa', 'success', 'cpoe', 'wpa' -- consumed directly (not recomputed) by aggregate_advanced_team_game and aggregate_qb_game_efficiency, and by DEFAULT_QB_METRICS in qb_pregame.py",
+    "live_definition": "BDL /plays has NO epa, success, cpoe, or wpa field. Verified live 2026-08-21 against the full raw field list for game 423945: id, game, type_slug, type_abbreviation, type_text, text, short_text, away_score, home_score, scoring_play, period, clock_display, team, start_yard_line, start_down, start_distance, start_yards_to_endzone, end_yard_line, end_down, end_distance, end_yards_to_endzone, end_down_distance_text, end_short_down_distance_text, end_possession_text, stat_yardage, home_win_probability, wallclock -- none of those is an EPA/success/CPOE/WPA equivalent. 'home_win_probability' IS present but is a distinct, provider-native win-probability figure with no validated transform to nflverse's wpa (Section 16 explicitly forbids relabeling it as one). GOAT-tier /advanced_stats/passing does expose a differently-modeled 'completion_percentage_above_expectation' (a CPOE-shaped metric from a different model) -- inspected per Section 2 but deliberately NOT wired into any production path.",
+    "live_source": "none",
+    "parity_status": "UNAVAILABLE",
+    "production_eligible": false,
+    "validation_evidence": "No EPA-equivalent field exists anywhere in the BDL NFL schema surfaces checked (plays, advanced_stats/rushing, advanced_stats/passing). This repo has no independent expected-points model to fall back on, and Fix 5 is explicitly prohibited from building one (Section 16)."
+  },
+  {
+    "feature_family": "success_rate",
+    "historical_definition": "Per-play boolean success flag from nflverse's model",
+    "historical_source": "nflverse PBP 'success' column (tied to nflverse's own EPA-based success definition)",
+    "live_definition": "No success flag or equivalent threshold-based indicator on BDL /plays",
+    "live_source": "none",
+    "parity_status": "UNAVAILABLE",
+    "production_eligible": false,
+    "validation_evidence": "Same field audit as epa_success_cpoe. A different, independently-defined down/distance/yards-gained success heuristic could in principle be built from BDL's start_down/start_distance/stat_yardage fields, but Section 16 explicitly forbids substituting a differently-defined success metric for nflverse's own -- that would need to be a separate, later, explicitly-approved definition change, not a Fix 5 substitution."
+  },
+  {
+    "feature_family": "pass_rush_efficiency (yards/play, completion%, ypc -- non-EPA)",
+    "historical_definition": "Simple rate stats over PBP-derived counts",
+    "historical_source": "aggregate_advanced_team_game -- completion_rate, air_yards_per_attempt, yards_per_play-style rates computed from PBP",
+    "live_definition": "Official BDL rate fields (verified live 2026-08-21)",
+    "live_source": "BDL /team_stats (yards_per_play, yards_per_pass, yards_per_rush_attempt) and /plays (stat_yardage per play)",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "2025 overlap backtest actually run 2026-08-22. This family's historical source is aggregate_advanced_team_game's PBP-mask-derived rate fields (offense_completion_rate, offense_air_yards_per_attempt, yards-per-play-style rates), whose denominators are built from the same 'pass_attempt' PBP mask found (see qb_player_stats_boxscore evidence) to disagree with box-score/BDL attempts in 18 of 19 spot-checked team-games (offense_pass_attempts vs. box-score attempts: only 1/19 exact match). Any BDL-sourced rate computed with BDL's own (box-score-matching) attempt count would therefore use a systematically different denominator than the wired feature -- not a compatible substitute without first reconciling that denominator definition."
+  },
+  {
+    "feature_family": "turnovers",
+    "historical_definition": "Counted from nflverse's interception/fumble_lost play flags",
+    "historical_source": "aggregate_advanced_team_game -- interception/fumble_lost counts from PBP flags",
+    "live_definition": "Official BDL box-count fields (verified live 2026-08-21)",
+    "live_source": "BDL /team_stats (turnovers, fumbles_lost, interceptions_thrown) and /stats (fumbles_lost, defensive_interceptions)",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "2025 overlap backtest actually run 2026-08-22. BDL turnovers (interceptions_thrown + fumbles_lost) matched nflverse's own box-score turnovers 19/19 exact. But the ACTUALLY WIRED historical feature (aggregate_advanced_team_game's offense_turnovers, PBP-mask derived) matched the box-score figure only 18/19 in the same sample -- one unresolved disagreement (2025_11_TB_BUF, BUF: offense_turnovers=2 vs. box=3, offense_fumbles_lost=0 vs. box fumbles_lost_total=1). This is close (94.7% three-way agreement) but a real, unexplained discrepancy was found in a 19-row sample, and Section 25 requires a conservative outcome -- staying APPROXIMATE_NOT_APPROVED rather than rounding a single-digit-percent unexplained gap up to VALIDATED_TRANSFORM."
+  },
+  {
+    "feature_family": "play_volume (drives, pace, total plays)",
+    "historical_definition": "nflverse-numbered drive identifiers grouped per team",
+    "historical_source": "aggregate_advanced_team_game._drive_metrics -- drive counts/rates keyed off nflverse's own 'drive' column",
+    "live_definition": "Official BDL per-game aggregate counts (verified live 2026-08-21)",
+    "live_source": "BDL /team_stats total_drives, total_offensive_plays",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "BDL /plays has no explicit drive-number field at all (no 'drive' equivalent observed in the verified field list), so a play-level drive_metrics parity would need drive boundaries inferred from possession changes -- an unvalidated transform, not built in Fix 5. The team_stats-level total_drives aggregate exists but is, again, unvalidated against the historical estate (2025 overlap backtest run 2026-08-22 did not compare total_drives/total_offensive_plays -- no matching historical field was available to compare against; see qb_player_stats_boxscore/pass_rush_efficiency evidence for a related finding that the wired PBP-mask attempt/play counts do not agree with box-score-style counts in this same sample, which would also affect any play-count feature in this family)."
+  },
+  {
+    "feature_family": "roster_depth",
+    "historical_definition": "Roster/depth state as of each historical week",
+    "historical_source": "nflverse weekly rosters/depth charts (backfill.weekly_rosters, backfill.depth_charts) -- a genuine historical time series",
+    "live_definition": "CURRENT depth-chart state only (verified live 2026-08-21: no as-of/historical parameter beyond 'season'; response is a live snapshot)",
+    "live_source": "BDL GET /teams/{id}/roster",
+    "parity_status": "UNAVAILABLE",
+    "production_eligible": false,
+    "validation_evidence": "BDL's roster endpoint is not source-compatible with historical reconstruction -- it cannot answer 'what was team X's depth chart as of week 3, 2024'. It is a sound LIVE 2026-forward pregame snapshot source (Section 13) but has no historical-parity counterpart to validate against, so it stays UNAVAILABLE for parity purposes specifically (not a statement that live roster ingestion itself is broken)."
+  },
+  {
+    "feature_family": "injuries",
+    "historical_definition": "Official weekly injury report fields, richer vocabulary",
+    "historical_source": "nflverse injury reports (backfill.injuries) -- includes practice-participation status (DNP/Limited/Full) and game-status designation",
+    "live_definition": "{player, status, comment (free text), date} only -- verified live 2026-08-21; no practice-participation field of any kind",
+    "live_source": "BDL GET /player_injuries",
+    "parity_status": "APPROXIMATE_NOT_APPROVED",
+    "production_eligible": false,
+    "validation_evidence": "Same broad concept (player health/availability status) but a materially narrower field set than the historical estate -- no practice-participation status is available to map at all (Section 14 explicitly forbids inferring one). 'status' free text (e.g. 'Questionable') is plausibly comparable to nflverse's game-status designation but no vocabulary-mapping validation was run."
+  }
+]
