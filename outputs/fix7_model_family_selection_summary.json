@@ -1,0 +1,306 @@
+{
+  "fix6_feature_manifest_hash": "d523a007f7babfd0e8913f7ad6204f3670120d5d0f36183ecead9e153a8b24bf",
+  "frozen_feature_columns": [
+    "home_elo_pregame_rating",
+    "home_elo_pregame_win_probability",
+    "home_elo_pregame_expected_margin",
+    "away_elo_pregame_rating",
+    "away_elo_pregame_win_probability",
+    "away_elo_pregame_expected_margin"
+  ],
+  "selection_matrix_hash": "4034b9a468a8e01859581c338f1123a43544495670e443f68d3906c64d70a79f",
+  "selection_matrix_row_count": 1343,
+  "model_family_preregistration_hash": "cafb64d89910c56b312b48cf140f901792c4a77ac7b075c98b903169f8879932",
+  "firewall_counts": {
+    "raw_rows_season_2025_seen_by_firewall": 285,
+    "rows_season_ge_2025_passed_beyond_firewall": 0,
+    "rows_season_ge_2025_used_for_feature_building": 0,
+    "rows_season_ge_2025_used_for_model_fit": 0,
+    "rows_season_ge_2025_used_for_metrics": 0
+  },
+  "fit_counts": {
+    "paired": 18,
+    "individual": 36
+  },
+  "huber_valid": true,
+  "huber_invalid_reasons": [],
+  "ridge_alpha_selection": {
+    "best_alpha_name": "RIDGE_ALPHA_100",
+    "selected_alpha_name": "RIDGE_ALPHA_100",
+    "selected_alpha_value": 100.0,
+    "per_alpha": {
+      "RIDGE_ALPHA_0_1": {
+        "alpha": 0.1,
+        "pooled_primary_score": 13.748499181975053,
+        "mean_delta_vs_best": 0.9371798470223596,
+        "se_delta_vs_best": 0.5906166245341326,
+        "within_one_se_of_best": false,
+        "is_best": false,
+        "n": 815,
+        "selected": false
+      },
+      "RIDGE_ALPHA_1": {
+        "alpha": 1.0,
+        "pooled_primary_score": 13.732866543990873,
+        "mean_delta_vs_best": 0.5163946898649583,
+        "se_delta_vs_best": 0.4197440390163818,
+        "within_one_se_of_best": false,
+        "is_best": false,
+        "n": 815,
+        "selected": false
+      },
+      "RIDGE_ALPHA_10": {
+        "alpha": 10.0,
+        "pooled_primary_score": 13.721136242923645,
+        "mean_delta_vs_best": 0.2036039628182706,
+        "se_delta_vs_best": 0.21340724149474208,
+        "within_one_se_of_best": true,
+        "is_best": false,
+        "n": 815,
+        "selected": false
+      },
+      "RIDGE_ALPHA_100": {
+        "alpha": 100.0,
+        "pooled_primary_score": 13.713259074953852,
+        "mean_delta_vs_best": 0.0,
+        "se_delta_vs_best": 0.0,
+        "within_one_se_of_best": true,
+        "is_best": true,
+        "selected": true
+      }
+    }
+  },
+  "family_selection": {
+    "family_representative": {
+      "RIDGE": "RIDGE_ALPHA_100",
+      "HGBR": "HGBR_INCUMBENT",
+      "HUBER": "HUBER_FIXED"
+    },
+    "valid_families_in_order": [
+      "RIDGE",
+      "HUBER",
+      "HGBR"
+    ],
+    "best": "HUBER",
+    "pooled_primary": {
+      "RIDGE": 13.713259074953852,
+      "HUBER": 13.699468675957185,
+      "HGBR": 14.597609000955412
+    },
+    "one_se_set": [
+      "RIDGE",
+      "HUBER"
+    ],
+    "comparisons_vs_best": {
+      "RIDGE": {
+        "mean_delta": 0.42934459226919763,
+        "se_delta": 0.5745414889230575,
+        "n": 815
+      },
+      "HGBR": {
+        "mean_delta": 25.498132365281307,
+        "se_delta": 3.6061376165123717,
+        "n": 815
+      }
+    },
+    "tentative": "RIDGE",
+    "lower_family_checks": {},
+    "selected_family": "RIDGE",
+    "selection_reason": "TENTATIVE_IS_LOWEST_COMPLEXITY"
+  },
+  "selected_family": "RIDGE",
+  "selected_candidate_spec": {
+    "name": "RIDGE_ALPHA_100",
+    "family": "RIDGE",
+    "hyperparameters": {
+      "alpha": 100.0,
+      "fit_intercept": true,
+      "solver": "svd"
+    },
+    "random_state": null
+  },
+  "final_model_spec_hash": "418724cb32fcb9a6a58f44fc77a7d579dbbc64d8078991c13d363751892ddede",
+  "locked_post_exposure_2024_audit": {
+    "fold": "OUTER",
+    "outer_2024_previously_exposed": true,
+    "outer_2024_role": "LOCKED_POST_EXPOSURE_AUDIT",
+    "outer_2024_used_for_model_selection": false,
+    "outer_2024_used_for_estimator_adjustment": false,
+    "selected_family": "RIDGE",
+    "per_finalist": {
+      "RIDGE": {
+        "candidate_name": "RIDGE_ALPHA_100",
+        "primary_score": 13.004863013805377,
+        "margin_rmse": 13.063037763701024,
+        "total_rmse": 12.946688263909728,
+        "segment_primary_score": {
+          "week1": 11.46259047117072,
+          "weeks2_4": 13.540193639896813,
+          "weeks5_plus": 12.981579957456205
+        }
+      },
+      "HGBR": {
+        "candidate_name": "HGBR_INCUMBENT",
+        "primary_score": 13.599707444355102,
+        "margin_rmse": 13.788382612902728,
+        "total_rmse": 13.411032275807477,
+        "segment_primary_score": {
+          "week1": 12.581668808993355,
+          "weeks2_4": 13.159061138014549,
+          "weeks5_plus": 13.730315388490201
+        }
+      },
+      "HUBER": {
+        "candidate_name": "HUBER_FIXED",
+        "primary_score": 13.035776424147457,
+        "margin_rmse": 13.081081368093919,
+        "total_rmse": 12.990471480200995,
+        "segment_primary_score": {
+          "week1": 11.606636420006566,
+          "weeks2_4": 13.447689138936223,
+          "weeks5_plus": 13.033093555851266
+        }
+      }
+    },
+    "rules": {
+      "overall": {
+        "selected": 13.004863013805377,
+        "best": 13.004863013805377,
+        "tolerance": 0.02,
+        "pass": true
+      },
+      "margin": {
+        "selected": 13.063037763701024,
+        "best": 13.063037763701024,
+        "tolerance": 0.05,
+        "pass": true
+      },
+      "total": {
+        "selected": 12.946688263909728,
+        "best": 12.946688263909728,
+        "tolerance": 0.05,
+        "pass": true
+      },
+      "week1": {
+        "selected": 11.46259047117072,
+        "best": 11.46259047117072,
+        "tolerance": 0.1,
+        "pass": true
+      },
+      "weeks2_4": {
+        "selected": 13.540193639896813,
+        "best": 13.159061138014549,
+        "tolerance": 0.1,
+        "pass": true
+      },
+      "weeks5_plus": {
+        "selected": 12.981579957456205,
+        "best": 12.981579957456205,
+        "tolerance": 0.05,
+        "pass": true
+      }
+    },
+    "overall_pass": true
+  },
+  "interpretability": {
+    "selected_family": "RIDGE",
+    "family_specific": {
+      "method": "COEFFICIENTS",
+      "result": {
+        "margin": {
+          "intercept": 1.6302521008403354,
+          "standardized_coefficients": {
+            "home_elo_pregame_rating": 0.5526224658079237,
+            "home_elo_pregame_win_probability": 1.0605392176485973,
+            "home_elo_pregame_expected_margin": 0.9064169964732383,
+            "away_elo_pregame_rating": -0.7735727090621034,
+            "away_elo_pregame_win_probability": -1.0605392176485953,
+            "away_elo_pregame_expected_margin": -0.9064169964732384
+          },
+          "original_scale_coefficients": {
+            "home_elo_pregame_rating": 0.006421930664512513,
+            "home_elo_pregame_win_probability": 6.891401547560853,
+            "home_elo_pregame_expected_margin": 0.1868623715540232,
+            "away_elo_pregame_rating": -0.009121064373287618,
+            "away_elo_pregame_win_probability": -6.89140154756084,
+            "away_elo_pregame_expected_margin": -0.18686237155402322
+          }
+        },
+        "total": {
+          "intercept": 45.65452847805789,
+          "standardized_coefficients": {
+            "home_elo_pregame_rating": 0.8286738541361895,
+            "home_elo_pregame_win_probability": 0.31728167841840405,
+            "home_elo_pregame_expected_margin": -0.059095861819422085,
+            "away_elo_pregame_rating": 1.2605565046206093,
+            "away_elo_pregame_win_probability": -0.3172816784184072,
+            "away_elo_pregame_expected_margin": 0.05909586181942187
+          },
+          "original_scale_coefficients": {
+            "home_elo_pregame_rating": 0.009629876387628866,
+            "home_elo_pregame_win_probability": 2.0617016450491907,
+            "home_elo_pregame_expected_margin": -0.012182905805575435,
+            "away_elo_pregame_rating": 0.014863007562341454,
+            "away_elo_pregame_win_probability": -2.061701645049211,
+            "away_elo_pregame_expected_margin": 0.01218290580557539
+          }
+        },
+        "elo_core_feature_relationship": "Of the six preregistered core ELO_STRENGTH features, elo_pregame_win_probability and elo_pregame_expected_margin (each side, home/away) are a DETERMINISTIC BIJECTIVE PAIR: both are computed in LegacyElo.predict (src/nfl_hybrid/legacy/elo.py:99-100) as monotonic, invertible transforms of the identical underlying scalar `adjusted_difference` -- p_home = 1/(1+10^(-adjusted_difference/scale)) (logistic) and margin = adjusted_difference/elo_to_margin (linear) -- so, for a fixed game row, either quantity is exactly recoverable from the other; retaining both provides no additional predictive information beyond either alone. The away-side win_probability/expected_margin are likewise exact deterministic transforms of the home-side values (away_win_probability = 1 - home_win_probability, away_expected_margin = -home_expected_margin; src/nfl_hybrid/features/elo_state.py). elo_pregame_rating (home/away separately) is a DIFFERENT, non-redundant quantity: it is the raw pre-context Elo rating that combines with match-context adjustments not separately exposed as their own ELO_STRENGTH columns (home_field_elo, travel, rest/bye, QB adjustment, playoff multiplier -- see LegacyElo.predict) to form adjusted_difference, so home_rating/away_rating are NOT deterministically recoverable from win_probability/expected_margin alone, and vice versa. Net: of the 6 retained columns, there are 3 non-redundant underlying quantities per game (home_rating, away_rating, adjusted_difference), with win_probability/expected_margin on both sides being redundant deterministic encodings of the third."
+      }
+    },
+    "local_sensitivity": {
+      "label": "LOCAL_SENSITIVITY",
+      "not_shapley_attribution": true,
+      "not_additive_contribution": true,
+      "example_game_id": "2024_01_BAL_KC",
+      "example_week": 1,
+      "predicted_margin": -1.2176365694958051,
+      "predicted_total": 48.09754722743732,
+      "reference_source": "outer model training data only (season<=2023); never a 2024 validation row",
+      "perturbation_deltas": {
+        "home_elo_pregame_rating": {
+          "reference_value": 1503.0393748393863,
+          "original_value": 1575.2384710310023,
+          "margin_delta": -0.4636575897830273,
+          "total_delta": -0.69526837162379
+        },
+        "home_elo_pregame_win_probability": {
+          "reference_value": 0.5784967523447427,
+          "original_value": 0.4902906477436176,
+          "margin_delta": 0.6078636857525082,
+          "total_delta": 0.1818546709595168
+        },
+        "home_elo_pregame_expected_margin": {
+          "reference_value": 2.2,
+          "original_value": -0.2699038879782347,
+          "margin_delta": 0.46153209801811546,
+          "total_delta": -0.03009060641606709
+        },
+        "away_elo_pregame_rating": {
+          "reference_value": 1499.94217488659,
+          "original_value": 1636.9860682304582,
+          "margin_delta": 1.249986173155384,
+          "total_delta": -2.036884423142631
+        },
+        "away_elo_pregame_win_probability": {
+          "reference_value": 0.42150324765525726,
+          "original_value": 0.5097093522563825,
+          "margin_delta": 0.6078636857525077,
+          "total_delta": 0.1818546709595239
+        },
+        "away_elo_pregame_expected_margin": {
+          "reference_value": -2.2,
+          "original_value": 0.2699038879782347,
+          "margin_delta": 0.46153209801811546,
+          "total_delta": -0.03009060641606709
+        }
+      }
+    },
+    "phase8_additional_real_data_fits": 0
+  },
+  "phase8_additional_real_data_fits": 0,
+  "ats_total_probability_evaluation": "DEFERRED_UNTIL_FINAL_FAMILY_CHRONOLOGICAL_OOF",
+  "final_feature_spec_status": "FROZEN_ESTIMATOR_SPEC_FOR_OFFICIAL_OOF_CALIBRATION",
+  "pytest_output_tail": "........................................................................ [ 59%]\n.................................................                        [100%]\n121 passed in 3.91s\n",
+  "git_diff_check": "clean"
+}
