@@ -1,0 +1,65 @@
+{
+  "week1_prior_config_hash": "7b74165d6f7d10882a453ca104bcf873291d897852ed145752f59539fd574e30",
+  "frozen_k": 8.0,
+  "k_grid": [
+    2.0,
+    4.0,
+    6.0,
+    8.0
+  ],
+  "k_grid_trace": [
+    {
+      "k": 2.0,
+      "primary_score": 14.462278263473927,
+      "mean_delta_vs_best": 3.609824847087627,
+      "se_delta_vs_best": 3.638483397890449,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 4.0,
+      "primary_score": 14.349127292823937,
+      "mean_delta_vs_best": 0.35503707682665564,
+      "se_delta_vs_best": 2.8898547444721707,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 6.0,
+      "primary_score": 14.401215009210702,
+      "mean_delta_vs_best": 1.7978881040399866,
+      "se_delta_vs_best": 2.195586655350933,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 8.0,
+      "primary_score": 14.338884441160776,
+      "mean_delta_vs_best": 0.0,
+      "se_delta_vs_best": 0.0,
+      "is_best": true
+    },
+    {
+      "selected_k": 8.0,
+      "within_one_se_set": [
+        2.0,
+        4.0,
+        6.0,
+        8.0
+      ]
+    }
+  ],
+  "neutral_fallback": {
+    "points_scored": 22.0,
+    "points_allowed": 22.0,
+    "margin": 0.0,
+    "win": 0.5
+  },
+  "neutral_prior_source": "fixed untuned engineering constant; not estimated from 2020-2024 data",
+  "neutral_prior_label": "UNTUNED_ENGINEERING_PRIOR",
+  "week1_blend_k_selected_during_candidate_evaluation": 8,
+  "week1_blend_active_in_final_feature_set": false,
+  "active_final_week1_prior": "ELO_SEASON_BOUNDARY_REGRESSION_TO_MEAN",
+  "active_final_week1_prior_source": "nfl_hybrid.features.elo_state / nfl_hybrid.legacy.elo",
+  "week1_blend_provenance_note": "k=8 was legitimately selected on K_SEARCH_SPEC before feature-group selection began. Every group that consumes the Week1 blend (SCORING_MARGIN/SCORING_OFFENSE/SCORING_DEFENSE/WIN_RATE) was subsequently REJECTED_NO_OOS_GAIN in Phase 5's forward selection -- see outputs/fix6_feature_selection_summary.json's group_classification. k=8 and this module's implementation are retained unchanged as selection evidence/provenance; they do not affect the frozen six-feature (ELO_STRENGTH-only) production candidate specification. The only Week-1 prior mechanism actually active in the final six features is Elo's pre-existing season-boundary LegacyElo.regress_to_mean, unmodified by Fix 6."
+}
