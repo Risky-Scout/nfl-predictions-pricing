@@ -182,6 +182,30 @@ _register("canonical_market.pregame_total_t10_2020_2023_manifest",
            "feature-store-2020-2025/compact-canonical-2020-2023/pregame_total_market_augmented_canonical_t10.manifest.json",
            description="Provenance manifest for canonical_market.pregame_total_t10_2020_2023")
 
+# --- canonical closing_t10 ATS/TOTAL market matrices, 2020-2024 confirmation
+# scope (Fix 6): Fix 4's own _CANONICAL_MARKET_KEYS registry (above) only
+# covers 2020-2023 -- these two additional keys point at a same-shaped,
+# same-quality-gate (verified: both manifests' quality_gate_columns list
+# market_t10_eligible_books/market_t10_hold/market_t10_snapshot_lag_minutes,
+# identical to the 2020-2023 files) confirmation-scope export that also
+# covers season 2024, so Fix 6's LOCKED_POST_EXPOSURE_2024_AUDIT secondary
+# market diagnostics can use real canonical T10 lines for 2024 without
+# editing nfl_hybrid.evaluation.chronological_market_attachment.py (a Fix-4
+# file) at all. scope="external": canonical historical market data, not a
+# generated pipeline artifact.
+_register("canonical_market.pregame_ats_t10_2020_2024_confirmation",
+           "feature-store-2020-2025/compact-canonical-2020-2024-confirmation/pregame_ats_market_augmented_canonical_t10.parquet",
+           description="Canonical closing_t10 ATS market matrix (>=3 books, <=5min lag), seasons 2020-2024 (confirmation scope)")
+_register("canonical_market.pregame_ats_t10_2020_2024_confirmation_manifest",
+           "feature-store-2020-2025/compact-canonical-2020-2024-confirmation/pregame_ats_market_augmented_canonical_t10.manifest.json",
+           description="Provenance manifest for canonical_market.pregame_ats_t10_2020_2024_confirmation")
+_register("canonical_market.pregame_total_t10_2020_2024_confirmation",
+           "feature-store-2020-2025/compact-canonical-2020-2024-confirmation/pregame_total_market_augmented_canonical_t10.parquet",
+           description="Canonical closing_t10 TOTAL market matrix (>=3 books, <=5min lag), seasons 2020-2024 (confirmation scope)")
+_register("canonical_market.pregame_total_t10_2020_2024_confirmation_manifest",
+           "feature-store-2020-2025/compact-canonical-2020-2024-confirmation/pregame_total_market_augmented_canonical_t10.manifest.json",
+           description="Provenance manifest for canonical_market.pregame_total_t10_2020_2024_confirmation")
+
 # --- chronological calibration ledger (Fix 4): one authoritative record of
 # calibrating each chronological OOF prediction (Fix 3) from ONLY earlier OOF
 # predictions whose own outcome was resolved/available before the target's own
@@ -250,6 +274,37 @@ _register("chronological_calibration.total_manifest",
            "chronological-calibration-2020-2025/total_calibration_manifest.json",
            scope="generated",
            description="Provenance/config manifest for the real TOTAL chronological calibration run (Fix 4)")
+
+# --- Fix 6 feature-deduction-2026 artifacts: Week-1 prior + compact
+# production feature-set selection evidence. scope="generated": derived from
+# the historical estate (games table only -- no PBP is read anywhere in this
+# pipeline, since only game_result/elo_inputs are Fix-5 production-eligible),
+# never raw/canonical historical data itself; resolves under
+# NFL_MODEL_ARTIFACT_ROOT, never committed to the repo.
+_register("feature_deduction_2026.candidate_inventory",
+           "feature-deduction-2026/candidate_feature_inventory.json",
+           scope="generated",
+           description="Fix 6: per-feature/group provenance + eligibility inventory")
+_register("feature_deduction_2026.group_ablation_results",
+           "feature-deduction-2026/group_ablation_results.json",
+           scope="generated",
+           description="Fix 6: forward/backward group ablation results across inner folds")
+_register("feature_deduction_2026.week1_prior_k_grid",
+           "feature-deduction-2026/week1_prior_k_grid.json",
+           scope="generated",
+           description="Fix 6: Week-1 blend k-grid search results across inner folds")
+_register("feature_deduction_2026.inner_fold_predictions",
+           "feature-deduction-2026/inner_fold_predictions.parquet",
+           scope="generated",
+           description="Fix 6: inner-fold (A/B/C) validate-season predictions for the frozen spec")
+_register("feature_deduction_2026.outer_2024_predictions",
+           "feature-deduction-2026/outer_2024_predictions.parquet",
+           scope="generated",
+           description="Fix 6: single outer 2024 confirmation predictions (frozen spec + core baseline)")
+_register("feature_deduction_2026.selection_manifest",
+           "feature-deduction-2026/selection_manifest.json",
+           scope="generated",
+           description="Fix 6: frozen selection manifest (hashes, PASS/FAIL rule, final feature list)")
 
 # --- namespace roots: directory-level write targets for producer scripts, so a
 # producer and the per-file registry above always resolve under the same root.

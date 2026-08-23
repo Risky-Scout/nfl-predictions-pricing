@@ -1,0 +1,278 @@
+{
+  "model_config_hash": "6fa4d8b78860031ea4dec6e5ff740ee3514f088cb88eb6fd351c3a3e7b2f5ffc",
+  "week1_prior_config_hash": "7b74165d6f7d10882a453ca104bcf873291d897852ed145752f59539fd574e30",
+  "feature_manifest_hash": "d523a007f7babfd0e8913f7ad6204f3670120d5d0f36183ecead9e153a8b24bf",
+  "selection_config_hash": "72ea37918e00568c3d6a9c5d9326b56ad32c571f0c4e99efa4fff193dd57d7eb",
+  "candidate_group_registry_hash": "b1b27344c61ae3f645d5284243159d71255a1939b1443b23561a0052934ba5a0",
+  "preregistration_hash": "56d1751d4ac3cb039f5265145ba44856618d5d1baaa66eef8bd4f359e49f45b6",
+  "retained_groups": [
+    "ELO_STRENGTH"
+  ],
+  "final_features": [
+    "home_elo_pregame_rating",
+    "home_elo_pregame_win_probability",
+    "home_elo_pregame_expected_margin",
+    "away_elo_pregame_rating",
+    "away_elo_pregame_win_probability",
+    "away_elo_pregame_expected_margin"
+  ],
+  "final_feature_count": 6,
+  "final_feature_spec_status": "FROZEN_FEATURE_INPUT_FOR_MODEL_FAMILY_SELECTION",
+  "final_feature_spec_status_note": "This is the frozen INPUT feature specification for the next, separate model-family-selection stage -- not a final production model, not a final production predictor, and not a production-approved final model. The next stage still has to select/freeze the model family and regenerate official chronological OOF/calibration evidence (nfl_hybrid.evaluation.chronological_oof) before any production promotion.",
+  "week1_blend_k_selected_during_candidate_evaluation": 8,
+  "week1_blend_active_in_final_feature_set": false,
+  "active_final_week1_prior": "ELO_SEASON_BOUNDARY_REGRESSION_TO_MEAN",
+  "active_final_week1_prior_source": "nfl_hybrid.features.elo_state / nfl_hybrid.legacy.elo",
+  "week1_blend_provenance_note": "k=8 was legitimately selected on K_SEARCH_SPEC (ELO_STRENGTH + SCORING_MARGIN + SCORING_OFFENSE + SCORING_DEFENSE + WIN_RATE) BEFORE feature-group selection began, using the analytic paired-SE tie-break rule -- see week1_prior_config_hash and week1_grid_trace below. However, every group that consumes the k=8 Week1 blend (SCORING_MARGIN/SCORING_OFFENSE/SCORING_DEFENSE/WIN_RATE) was subsequently REJECTED_NO_OOS_GAIN in Phase 5's forward selection (see retained_groups=['ELO_STRENGTH'] and group_classification below). k=8 is therefore retained as selection evidence/provenance -- it is not deleted, and the Week1-blend implementation (nfl_hybrid.features.week1_prior) is not deleted -- but it does NOT affect the frozen six-feature production candidate specification. The ONLY Week-1 prior mechanism actually active in the six retained features is Elo's pre-existing season-boundary regress_to_mean (LegacyElo.regress_to_mean, keep=2/3 toward mean=1505, fired once per season transition, unmodified by Fix 6).",
+  "elo_core_feature_relationship": "Of the six preregistered core ELO_STRENGTH features, elo_pregame_win_probability and elo_pregame_expected_margin (each side, home/away) are a DETERMINISTIC BIJECTIVE PAIR: both are computed in LegacyElo.predict (src/nfl_hybrid/legacy/elo.py:99-100) as monotonic, invertible transforms of the identical underlying scalar `adjusted_difference` -- p_home = 1/(1+10^(-adjusted_difference/scale)) (logistic) and margin = adjusted_difference/elo_to_margin (linear) -- so, for a fixed game row, either quantity is exactly recoverable from the other; retaining both provides no additional predictive information beyond either alone. The away-side win_probability/expected_margin are likewise exact deterministic transforms of the home-side values (away_win_probability = 1 - home_win_probability, away_expected_margin = -home_expected_margin; src/nfl_hybrid/features/elo_state.py). elo_pregame_rating (home/away separately) is a DIFFERENT, non-redundant quantity: it is the raw pre-context Elo rating that combines with match-context adjustments not separately exposed as their own ELO_STRENGTH columns (home_field_elo, travel, rest/bye, QB adjustment, playoff multiplier -- see LegacyElo.predict) to form adjusted_difference, so home_rating/away_rating are NOT deterministically recoverable from win_probability/expected_margin alone, and vice versa. Net: of the 6 retained columns, there are 3 non-redundant underlying quantities per game (home_rating, away_rating, adjusted_difference), with win_probability/expected_margin on both sides being redundant deterministic encodings of the third. These are related deterministic/derived Elo encodings retained as preregistered core; not independently feature-selected -- pruning was explicitly out of scope for this provenance-hardening pass since it would violate the frozen selection process (Section 2 of the preregistration).",
+  "group_classification": {
+    "selected": ["ELO_STRENGTH"],
+    "rejected_by_oos_rule": ["SCORING_MARGIN", "SCORING_OFFENSE", "SCORING_DEFENSE", "WIN_RATE", "REST", "SEASON_PHASE"],
+    "blocked_by_live_parity_or_contract": [
+      "epa/opponent_adjusted/qb pregame-state families (PBP/QB-box derived, Fix-5 blocked)",
+      "market_history (no proven 2026 live-parity contract for the T10/closing-line provider)",
+      "neutral_site (not in Fix 5's live-mapped BDL field set)",
+      "division_game (no live team/division registry exists anywhere in this repository)"
+    ],
+    "classification_note": "REJECTED_BY_OOS_RULE groups were fully eligible, evaluated, and are Fix-5 production-eligible in principle -- they were excluded solely because the frozen forward-selection significance rule (wins>=2/3 folds AND mean_delta+SE_delta<0) was not cleared. BLOCKED_BY_LIVE_PARITY_OR_CONTRACT items never entered the candidate tournament at all -- they are excluded on live-reproducibility/provenance grounds, independent of any observed statistical performance. These two categories are never mixed."
+  },
+  "outer_confirmation": {
+    "fold": "OUTER",
+    "outer_2024_previously_exposed": true,
+    "outer_2024_role": "LOCKED_POST_EXPOSURE_AUDIT",
+    "outer_2024_used_for_selection": false,
+    "outer_2024_used_for_revised_spec_adjustment": false,
+    "compact_groups": [
+      "ELO_STRENGTH"
+    ],
+    "core_groups": [
+      "ELO_STRENGTH"
+    ],
+    "compact_metrics": {
+      "margin": {
+        "n": 272,
+        "mae": 10.763079088614784,
+        "rmse": 13.788382612902728
+      },
+      "total": {
+        "n": 272,
+        "mae": 10.2957605527016,
+        "rmse": 13.411032275807477
+      },
+      "primary_score": 13.599707444355102
+    },
+    "core_metrics": {
+      "margin": {
+        "n": 272,
+        "mae": 10.763079088614784,
+        "rmse": 13.788382612902728
+      },
+      "total": {
+        "n": 272,
+        "mae": 10.2957605527016,
+        "rmse": 13.411032275807477
+      },
+      "primary_score": 13.599707444355102
+    },
+    "relative_primary_change": 0.0,
+    "relative_margin_change": 0.0,
+    "relative_total_change": 0.0,
+    "primary_pass": true,
+    "margin_pass": true,
+    "total_pass": true,
+    "segment_report": {
+      "week1": {
+        "compact_primary_score": 12.581668808993355,
+        "baseline_primary_score": 12.581668808993355,
+        "relative_change": 0.0,
+        "tolerance": 0.1,
+        "pass": true
+      },
+      "weeks2_4": {
+        "compact_primary_score": 13.159061138014549,
+        "baseline_primary_score": 13.159061138014549,
+        "relative_change": 0.0,
+        "tolerance": 0.1,
+        "pass": true
+      },
+      "weeks5_plus": {
+        "compact_primary_score": 13.730315388490201,
+        "baseline_primary_score": 13.730315388490201,
+        "relative_change": 0.0,
+        "tolerance": 0.05,
+        "pass": true
+      }
+    },
+    "overall_pass": true,
+    "secondary_market_diagnostics": {
+      "compact": {
+        "status": "OK",
+        "ats": {
+          "n": 264,
+          "brier": 0.2866388433645834,
+          "log_loss": 0.7878622092045812
+        },
+        "total": {
+          "n": 267,
+          "brier": 0.273632128812595,
+          "log_loss": 0.7578284853424964
+        },
+        "ats_coverage_n": 272,
+        "total_coverage_n": 272
+      },
+      "core_baseline": {
+        "status": "OK",
+        "ats": {
+          "n": 264,
+          "brier": 0.2866388433645834,
+          "log_loss": 0.7878622092045812
+        },
+        "total": {
+          "n": 267,
+          "brier": 0.273632128812595,
+          "log_loss": 0.7578284853424964
+        },
+        "ats_coverage_n": 272,
+        "total_coverage_n": 272
+      }
+    }
+  },
+  "interpretability": {
+    "label": "LOCAL_SENSITIVITY",
+    "not_shapley_attribution": true,
+    "not_additive_contribution": true,
+    "example_game_id": "2024_01_BAL_KC",
+    "example_week": 1,
+    "predicted_margin": -5.7097413299745305,
+    "predicted_total": 44.38239109564935,
+    "reference_source": "outer model training data only (season<=2023) for recency features; fixed neutral constants for Week1-blended features",
+    "perturbation_deltas": {
+      "home_elo_pregame_rating": {
+        "reference_value": 1503.0393748393863,
+        "original_value": 1575.2384710310023,
+        "margin_delta": -3.258012799995674,
+        "total_delta": -2.5441929727401273,
+        "group": "ELO_STRENGTH"
+      },
+      "home_elo_pregame_win_probability": {
+        "reference_value": 0.5784967523447427,
+        "original_value": 0.4902906477436176,
+        "margin_delta": 0.01376442178557813,
+        "total_delta": 4.983530651464108,
+        "group": "ELO_STRENGTH"
+      },
+      "home_elo_pregame_expected_margin": {
+        "reference_value": 2.2,
+        "original_value": -0.2699038879782347,
+        "margin_delta": 0.0,
+        "total_delta": 0.0,
+        "group": "ELO_STRENGTH"
+      },
+      "away_elo_pregame_rating": {
+        "reference_value": 1499.94217488659,
+        "original_value": 1636.9860682304582,
+        "margin_delta": -2.0297086331978704,
+        "total_delta": -6.37091969081753,
+        "group": "ELO_STRENGTH"
+      },
+      "away_elo_pregame_win_probability": {
+        "reference_value": 0.42150324765525726,
+        "original_value": 0.5097093522563825,
+        "margin_delta": -1.2547207221319,
+        "total_delta": 1.7221864404975236,
+        "group": "ELO_STRENGTH"
+      },
+      "away_elo_pregame_expected_margin": {
+        "reference_value": -2.2,
+        "original_value": 0.2699038879782347,
+        "margin_delta": 0.0,
+        "total_delta": 0.0,
+        "group": "ELO_STRENGTH"
+      }
+    },
+    "global_permutation_importance_by_feature": {
+      "home_elo_pregame_rating": -0.01333076935444627,
+      "home_elo_pregame_win_probability": 0.06023939578634818,
+      "home_elo_pregame_expected_margin": 0.0,
+      "away_elo_pregame_rating": 0.007430428100021025,
+      "away_elo_pregame_win_probability": 0.047502805903773836,
+      "away_elo_pregame_expected_margin": 0.0
+    },
+    "global_permutation_importance_by_group": {
+      "ELO_STRENGTH": 0.11517262979014303
+    }
+  },
+  "firewall_counts": {
+    "raw_rows_season_2025_seen_by_firewall": 285,
+    "rows_season_ge_2025_passed_beyond_firewall": 0,
+    "rows_season_ge_2025_used_for_feature_building": 0,
+    "rows_season_ge_2025_used_for_model_fit": 0,
+    "rows_season_ge_2025_used_for_metrics": 0
+  },
+  "k_grid_trace": [
+    {
+      "k": 2.0,
+      "primary_score": 14.462278263473927,
+      "mean_delta_vs_best": 3.609824847087627,
+      "se_delta_vs_best": 3.638483397890449,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 4.0,
+      "primary_score": 14.349127292823937,
+      "mean_delta_vs_best": 0.35503707682665564,
+      "se_delta_vs_best": 2.8898547444721707,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 6.0,
+      "primary_score": 14.401215009210702,
+      "mean_delta_vs_best": 1.7978881040399866,
+      "se_delta_vs_best": 2.195586655350933,
+      "is_best": false,
+      "within_one_se_of_best": true
+    },
+    {
+      "k": 8.0,
+      "primary_score": 14.338884441160776,
+      "mean_delta_vs_best": 0.0,
+      "se_delta_vs_best": 0.0,
+      "is_best": true
+    },
+    {
+      "selected_k": 8.0,
+      "within_one_se_set": [
+        2.0,
+        4.0,
+        6.0,
+        8.0
+      ]
+    }
+  ],
+  "blocked_high_value_candidates": [
+    {
+      "blocked_family": "market_history (prior-game ATS/OU outcome rolling state)",
+      "historical_incremental_signal": "Not measured in Fix 6 (excluded before evaluation per Section 0: eligibility must be proven before use, never assumed).",
+      "reason_blocked": "Fix 5's BDL parity work (docs/BDL_PARITY_MATRIX.md) validates box-score/PBP families only; it does not cover the T10/closing-line market-data provider. No 2026 live-parity contract has been proven for reproducing historical home_spread_reference/total_line_reference as-of a past date, so this family cannot be admitted here even though it is already lagged and leakage-safe by construction (nfl_hybrid.features.market_history).",
+      "parity_work_required": "Run a BDL/T10-style overlap backtest for the market-line provider's live 2026 feed against the historical home_spread_reference/total_line_reference estate, and add it to a parity matrix the way docs/BDL_PARITY_MATRIX.md does for box/PBP data."
+    },
+    {
+      "blocked_family": "epa/opponent_adjusted/qb pregame-state families (nfl_hybrid.features.pregame_state.STATE_FAMILIES)",
+      "historical_incremental_signal": "Not measured in Fix 6 (excluded before evaluation) -- these are the state families the existing Fix 2/3 pregame-state pipeline already computes, but all of them ultimately read PBP/QB-box columns Fix 5 marked APPROXIMATE_NOT_APPROVED or UNAVAILABLE.",
+      "reason_blocked": "Every source column these families read (EPA, success, CPOE, PBP-derived play volume, QB box counting stats) is Fix-5 blocked -- see BLOCKED_LIVE_PARITY_FAMILIES above.",
+      "parity_work_required": "Resolve the specific gaps documented in docs/BDL_PARITY_MATRIX.md per family before any of these families can re-enter a future feature-selection round."
+    }
+  ],
+  "blocked_no_live_registry_columns": [
+    {
+      "column": "division_game",
+      "reason": "No static team->division registry exists anywhere in this repository (src/nfl_hybrid/data/team_ids.py has only a name-alias table, no conference/division data; grep for division_map/TEAM_DIVISION/AFC_EAST etc. across src/ returns zero hits). The native `division_game` column is historical-only (src/nfl_hybrid/data/providers/nflverse.py reads it straight from the nflverse feed) with no proven identical live reconstruction, so it cannot be classified DERIVED_FROM_EXACT_SOURCE."
+    },
+    {
+      "column": "neutral_site",
+      "reason": "Not in Fix 5's live-mapped field set: nfl_hybrid.providers.balldontlie.canonical.GAMES_COLUMNS has no neutral_site entry, and parity.py's elo_inputs live_definition only lists game_id/season/week/kickoff_utc/home_team/away_team/home_score/away_score. Used only internally (defaulted to False when absent) by nfl_hybrid.features.elo_state for Elo home-field adjustment -- not independently live-provable as a standalone Fix 6 feature."
+    }
+  ]
+}
