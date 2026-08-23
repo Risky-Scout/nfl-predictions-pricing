@@ -1,0 +1,94 @@
+{
+  "schema_version": "fix7-postfreeze-evidence-replay-v2-stable-hash",
+  "status": "POSTFREEZE_EVIDENCE_REPLAY",
+  "replay_used_for_selection": false,
+  "selected_family_as_frozen": "RIDGE",
+  "selected_candidate_as_frozen": "RIDGE_ALPHA_100",
+  "original_frozen_hashes": {
+    "fix6_feature_manifest_hash": "d523a007f7babfd0e8913f7ad6204f3670120d5d0f36183ecead9e153a8b24bf",
+    "selection_matrix_hash": "4034b9a468a8e01859581c338f1123a43544495670e443f68d3906c64d70a79f",
+    "model_family_preregistration_hash": "cafb64d89910c56b312b48cf140f901792c4a77ac7b075c98b903169f8879932",
+    "candidate_registry_hash": "360e40e8a541c3a4480a576813c67ec13bf5dafc8d198dc8b8ca05e675cc9b58",
+    "final_model_spec_hash": "418724cb32fcb9a6a58f44fc77a7d579dbbc64d8078991c13d363751892ddede"
+  },
+  "fix7_postfreeze_evidence_replay_hash": "fbc1a3f8cf2ace1985ca9f803bd60c2b1b248b0a367ec4dcb890506f2c014375",
+  "fix7_postfreeze_evidence_replay_hash_is_scientific_only": true,
+  "replay_matrix_hash": "4034b9a468a8e01859581c338f1123a43544495670e443f68d3906c64d70a79f",
+  "replay_matrix_row_count": 1343,
+  "firewall_counts": {
+    "raw_rows_season_2025_seen_by_replay_firewall": 285,
+    "rows_season_ge_2025_passed_beyond_replay_firewall": 0,
+    "rows_season_ge_2025_used_for_replay_features": 0,
+    "rows_season_ge_2025_used_for_replay_fits": 0,
+    "rows_season_ge_2025_used_for_replay_metrics": 0
+  },
+  "pooled_reproduction_all_match": true,
+  "ridge_alpha_cross_check_all_match": true,
+  "family_selection_cross_check_all_match": true,
+  "locked_2024_audit_replay_overall_pass": true,
+  "fit_provenance": {
+    "successful_replay_run_count": 2,
+    "latest_replay_real_data_paired_fit_count": 21,
+    "latest_replay_real_data_individual_fit_count": 42,
+    "cumulative_replay_real_data_paired_fit_count": 42,
+    "cumulative_replay_real_data_individual_fit_count": 84,
+    "original_real_data_paired_fit_count": 21,
+    "original_real_data_individual_fit_count": 42,
+    "all_replay_fits_used_for_selection": false,
+    "duplicate_replay_explanation": "The second replay run was executed after documentation-only edits (no scientific inputs changed) and was not required for selection: the estimator was already frozen before either replay ran. It was scientifically harmless because every reproduction gate in run 2 matched run 1 and the original frozen evidence exactly (bit-for-bit for all six pooled primary scores, and within the declared max(1e-10, 1e-12*|original|) tolerance for every other paired/audit quantity) -- no replay result at any point had the authority to change the winner, and none did."
+  },
+  "inner_fold_detail_row_count": 18,
+  "finalist_2024_metrics": {
+    "RIDGE": {
+      "candidate_name": "RIDGE_ALPHA_100",
+      "n_games": 272,
+      "margin_RMSE": 13.063037763701024,
+      "margin_MAE": 10.041594245583477,
+      "total_RMSE": 12.946688263909728,
+      "total_MAE": 10.023943284726913,
+      "primary_score": 13.004863013805377,
+      "segment_primary_score": {
+        "week1": 11.46259047117072,
+        "weeks2_4": 13.540193639896813,
+        "weeks5_plus": 12.981579957456205
+      },
+      "margin_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "total_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "rmse_and_primary_provenance": "ORIGINALLY_PERSISTED_SELECTION_METRIC (reproduced by replay)"
+    },
+    "HUBER": {
+      "candidate_name": "HUBER_FIXED",
+      "n_games": 272,
+      "margin_RMSE": 13.081081368093919,
+      "margin_MAE": 10.049295621086376,
+      "total_RMSE": 12.990471480200995,
+      "total_MAE": 10.01957115256402,
+      "primary_score": 13.035776424147457,
+      "segment_primary_score": {
+        "week1": 11.606636420006566,
+        "weeks2_4": 13.447689138936223,
+        "weeks5_plus": 13.033093555851266
+      },
+      "margin_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "total_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "rmse_and_primary_provenance": "ORIGINALLY_PERSISTED_SELECTION_METRIC (reproduced by replay)"
+    },
+    "HGBR": {
+      "candidate_name": "HGBR_INCUMBENT",
+      "n_games": 272,
+      "margin_RMSE": 13.788382612902728,
+      "margin_MAE": 10.763079088614784,
+      "total_RMSE": 13.411032275807477,
+      "total_MAE": 10.2957605527016,
+      "primary_score": 13.599707444355102,
+      "segment_primary_score": {
+        "week1": 12.581668808993355,
+        "weeks2_4": 13.159061138014549,
+        "weeks5_plus": 13.730315388490201
+      },
+      "margin_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "total_MAE_provenance": "POSTFREEZE_REPLAY_RECONSTRUCTED_METRIC",
+      "rmse_and_primary_provenance": "ORIGINALLY_PERSISTED_SELECTION_METRIC (reproduced by replay)"
+    }
+  }
+}
