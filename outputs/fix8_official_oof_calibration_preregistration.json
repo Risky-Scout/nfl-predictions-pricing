@@ -1,0 +1,184 @@
+{
+  "ats_pricing": "line-independent joint football state computed first (official Ridge OOF + same-horizon uncertainty); nfl_hybrid.evaluation.chronological_calibration.build_raw_probabilities(market=ATS, threshold=official raw consensus spread) introduced only after",
+  "calibration_chronology_rule": "an observation enters a stream's calibration history only if it shares that stream's own market/horizon, its raw prediction was OOF at its own historical cutoff, and result_available_at_utc < C (STRICT)",
+  "calibration_family": "three_way.logistic_on_logit_conditional_calibrator",
+  "calibration_warmup_minimum": 100,
+  "calibrator_config_hash": "dd522c2aad5ee5013bf7ba625d1eea09cc5235d46a7ed0c214597c979e51395c",
+  "candidate_registry_hash": "360e40e8a541c3a4480a576813c67ec13bf5dafc8d198dc8b8ca05e675cc9b58",
+  "card_cutoff_contract": {
+    "card_membership_key": [
+      "season",
+      "week",
+      "season_type"
+    ],
+    "card_monday_algorithm": "earliest kickoff in card -> America/New_York local date -> minus weekday() days",
+    "fri_cutoff_rule": "card_monday + 4 days, 12:00 America/New_York, DST-aware, converted to UTC",
+    "tue_cutoff_rule": "card_monday + 1 day, 12:00 America/New_York, DST-aware, converted to UTC"
+  },
+  "chronological_training_eligibility_rule": "a training row must belong to the SAME horizon's own eligible-target population AND satisfy result_available_at_utc < target_cutoff_utc (STRICT), using its own historically-generated horizon-as-of feature vector",
+  "estimator": {
+    "hyperparameters": {
+      "alpha": 100.0,
+      "fit_intercept": true,
+      "solver": "svd"
+    },
+    "name": "RIDGE_ALPHA_100[margin,total]",
+    "preprocessing": {
+      "type": "StandardScaler",
+      "with_mean": true,
+      "with_std": true
+    },
+    "target_sharing_rule": "SAME_FAMILY_AND_HYPERPARAMETERS_FOR_MARGIN_AND_TOTAL_FIT_SEPARATELY"
+  },
+  "expected_market_reconciliation": {
+    "FRI_ATS": {
+      "coherent_leq_cutoff": 1568,
+      "eligible": 1581,
+      "ge3_before_age_filter": 1568,
+      "market_ready": 1448
+    },
+    "FRI_TOTAL": {
+      "coherent_leq_cutoff": 1568,
+      "eligible": 1581,
+      "ge3_before_age_filter": 1565,
+      "market_ready": 1446
+    },
+    "TUE_ATS": {
+      "coherent_leq_cutoff": 917,
+      "eligible": 1693,
+      "ge3_before_age_filter": 894,
+      "market_ready": 844
+    },
+    "TUE_TOTAL": {
+      "coherent_leq_cutoff": 903,
+      "eligible": 1693,
+      "ge3_before_age_filter": 876,
+      "market_ready": 826
+    }
+  },
+  "expected_market_reconciliation_2025": {
+    "FRI_ATS": {
+      "coherent_leq_cutoff": 264,
+      "eligible": 264,
+      "ge3_before_age_filter": 264,
+      "market_ready": 242
+    },
+    "FRI_TOTAL": {
+      "coherent_leq_cutoff": 264,
+      "eligible": 264,
+      "ge3_before_age_filter": 264,
+      "market_ready": 242
+    },
+    "TUE_ATS": {
+      "coherent_leq_cutoff": 190,
+      "eligible": 285,
+      "ge3_before_age_filter": 189,
+      "market_ready": 177
+    },
+    "TUE_TOTAL": {
+      "coherent_leq_cutoff": 190,
+      "eligible": 285,
+      "ge3_before_age_filter": 188,
+      "market_ready": 176
+    }
+  },
+  "failure_rule": "do not change frozen rules just to achieve PASS; any hard gate failure stops the run immediately, no retry",
+  "fit_ceiling": {
+    "expected_max_batches_per_horizon": {
+      "FRI": 131,
+      "TUE": 131
+    },
+    "expected_max_individual": 524,
+    "expected_max_paired": 262,
+    "hard_ceiling_individual": 578,
+    "hard_ceiling_paired": 289
+  },
+  "fix71_hashes": {
+    "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+    "horizon_feature_semantics_version": "HORIZON_CUTOFF_ASOF_ELO_V2_CARD_SCOPED",
+    "horizon_membership_ledger_hash_fix71_certified_2020_2024_scope": "b095a2bf9177029eb67e1516fbc79b080ef800cfe18b86989254dd4d0a8dae49",
+    "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722"
+  },
+  "fix7_final_model_spec_hash": "418724cb32fcb9a6a58f44fc77a7d579dbbc64d8078991c13d363751892ddede",
+  "fix8_official_oof_calibration_preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+  "four_calibration_streams": [
+    "ATS_TUE",
+    "ATS_FRI",
+    "TOTAL_TUE",
+    "TOTAL_FRI"
+  ],
+  "matrix_contracts": {
+    "FRI": {
+      "n_batches": 131,
+      "row_count": 1581
+    },
+    "TUE": {
+      "n_batches": 131,
+      "row_count": 1693
+    }
+  },
+  "membership_counts": {
+    "fri_eligible": 1581,
+    "fri_eligible_2025": 264,
+    "raw_rows_season_2026_seen_by_firewall": 0,
+    "rows_season_ge_2026_used_for_anything": 0,
+    "tue_eligible": 1693,
+    "tue_eligible_2025": 285
+  },
+  "model_readiness_rule": {
+    "min_training_games": 48,
+    "not_ready_status": "MODEL_NOT_READY",
+    "source": "nfl_hybrid.evaluation.chronological_oof.ChronologicalOOFConfig.min_training_games (reused unchanged)"
+  },
+  "no_ats_total_pooling": true,
+  "no_horizon_pooling": true,
+  "official_oof_construction": "fit once per horizon cutoff batch (one card), never once per game; margin and total fit separately; reuses Fix 3's own batching-by-shared-cutoff optimization and its own attach_outcomes_and_residuals",
+  "ordered_six_elo_features": [
+    "home_elo_pregame_rating",
+    "home_elo_pregame_win_probability",
+    "home_elo_pregame_expected_margin",
+    "away_elo_pregame_rating",
+    "away_elo_pregame_win_probability",
+    "away_elo_pregame_expected_margin"
+  ],
+  "push_handling": "nfl_hybrid.labels.edge_to_nullable_binary tie/push policy; push probability calibrated via nfl_hybrid.calibration.three_way._fit_push_scales/_predict_push (reused, chronological membership)",
+  "raw_market_reconstruction": {
+    "as_of_rule": "market_last_update <= returned_snapshot_utc <= target_cutoff_utc",
+    "coherence_rule": "both sides of a market quote from the same (game_id, bookmaker_key, returned_snapshot_utc, market_last_update); spread points exact opposites; total points identical; both decimal prices > 1.0",
+    "consensus_method": "median_of_devigged_per_book_quotes_across_eligible_books",
+    "freshness_applied_before_book_counting": true,
+    "freshness_max_age_hours": 48.0,
+    "minimum_fresh_coherent_books": 3,
+    "no_synthetic_minus_110": true,
+    "no_t10_five_minute_lag_rule": true,
+    "source": "raw Odds API timestamped bookmaker snapshot history (odds_history.2020_2023 / 2024_confirmation / 2025_final_test bookmaker_quotes.parquet) -- never pre-generated opening/T10 horizon exports"
+  },
+  "repo": {
+    "branch": "fix/official-oof-tue-fri-calibration-2026",
+    "head_sha": "404f126cf887aca6d7a991d5d8338db2486a4b12",
+    "origin_main_sha": "404f126cf887aca6d7a991d5d8338db2486a4b12",
+    "required_base_sha": "404f126cf887aca6d7a991d5d8338db2486a4b12"
+  },
+  "result_availability_basis": "HISTORICAL_CONSERVATIVE_FLOOR_KICKOFF_PLUS_5H",
+  "result_availability_duration_hours": 5.0,
+  "ridge_alpha_100_candidate_spec_hash": "27b3eec6554e1bdefdcdda3f6a6bb9311efa675c850f059aa71881d6c77978d7",
+  "same_horizon_uncertainty_rule": {
+    "method": "nfl_hybrid.evaluation.chronological_oof.attach_expanding_oof_uncertainty (unchanged)",
+    "min_uncertainty_warmup": 32,
+    "pooled_across_horizons": false,
+    "rho_clip": [
+      -0.95,
+      0.95
+    ]
+  },
+  "schema_version": "fix8-official-oof-tue-fri-calibration-v1",
+  "success_criteria_summary": "repo/hash gates pass; Fix 7.1 V2 semantics used; TUE eligible=1693; FRI eligible=1581; chronological OOF valid; fit ceiling respected; same-horizon uncertainty valid; raw market reconstruction valid; expected market reconciliation explained/reproduced; no market leakage into Ridge; all four calibration histories chronological; all four streams ready by end 2025; 2025 changed no frozen rule; no 2026 outcome used; scientific hashes deterministic; focused tests pass; full pytest passes; git diff --check clean",
+  "target_eligibility_rule": "target_cutoff_utc(card, horizon) < scheduled_kickoff_utc(game) (STRICT); an ineligible target is excluded entirely, never floated to a different card's cutoff",
+  "total_pricing": "nfl_hybrid.evaluation.chronological_calibration.build_raw_probabilities(market=TOTAL, threshold=official raw consensus total)",
+  "twenty_twenty_five_role": {
+    "twenty_twenty_six_outcomes_forbidden": true,
+    "used_2025_for_postfreeze_chronological_replay": true,
+    "used_2025_for_rule_tuning": false,
+    "used_2025_for_selection": false
+  }
+}

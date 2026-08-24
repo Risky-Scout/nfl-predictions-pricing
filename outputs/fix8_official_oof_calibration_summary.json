@@ -1,0 +1,240 @@
+{
+  "all_four_streams_ready_by_end_2025": true,
+  "evidence_paths": {
+    "ATS_FRI_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/ats_fri_calibration_ledger.parquet",
+    "ATS_FRI_raw": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/ats_fri_raw_probabilities.parquet",
+    "ATS_TUE_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/ats_tue_calibration_ledger.parquet",
+    "ATS_TUE_raw": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/ats_tue_raw_probabilities.parquet",
+    "FRI_ATS_market_consensus": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/fri_ats_market_consensus.parquet",
+    "FRI_TOTAL_market_consensus": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/fri_total_market_consensus.parquet",
+    "FRI_residual_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/fri_official_oof_residual_ledger.parquet",
+    "TOTAL_FRI_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/total_fri_calibration_ledger.parquet",
+    "TOTAL_FRI_raw": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/total_fri_raw_probabilities.parquet",
+    "TOTAL_TUE_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/total_tue_calibration_ledger.parquet",
+    "TOTAL_TUE_raw": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/total_tue_raw_probabilities.parquet",
+    "TUE_ATS_market_consensus": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/tue_ats_market_consensus.parquet",
+    "TUE_TOTAL_market_consensus": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/tue_total_market_consensus.parquet",
+    "TUE_residual_ledger": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/tue_official_oof_residual_ledger.parquet",
+    "production_calibration_seed": "/Users/josephshackelford/NFL-Model-Artifacts/fix8-official-oof-calibration-2026/production_calibration_seed.json"
+  },
+  "fit_counts": {
+    "total_individual": 510,
+    "total_paired": 255
+  },
+  "fix71_hashes": {
+    "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+    "horizon_feature_semantics_version": "HORIZON_CUTOFF_ASOF_ELO_V2_CARD_SCOPED",
+    "horizon_membership_ledger_hash_fix71_certified_2020_2024_scope": "b095a2bf9177029eb67e1516fbc79b080ef800cfe18b86989254dd4d0a8dae49",
+    "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722"
+  },
+  "fix7_final_model_spec_hash": "418724cb32fcb9a6a58f44fc77a7d579dbbc64d8078991c13d363751892ddede",
+  "fix8_official_oof_calibration_preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+  "full_pytest_output_tail": "  'epa__away_special_teams_epa_per_play__all_mean'\n   'epa__away_special_teams_epa_per_play__ewm_hl4'\n   'epa__away_special_teams_epa_per_play__season_mean'\n   'epa__away_special_teams_epa_per_play__last4_mean'\n   'epa__away_special_teams_epa_per_play__last8_mean']. At least one non-missing value is needed for imputation with strategy='median'.\n    warnings.warn(\n\ntests/test_chronological_oof_extended.py: 16 warnings\n  /opt/homebrew/lib/python3.14/site-packages/sklearn/impute/_base.py:647: UserWarning: Skipping features without any observed values: ['epa__home_defense_allowed_scramble_epa__all_mean'\n   'epa__home_defense_allowed_scramble_epa__ewm_hl4'\n   'epa__home_defense_allowed_scramble_epa__season_mean'\n   'epa__home_defense_allowed_scramble_epa__last4_mean'\n   'epa__home_defense_allowed_scramble_epa__last8_mean'\n   'epa__home_defense_allowed_scramble_success_rate__all_mean'\n   'epa__home_defense_allowed_scramble_success_rate__ewm_hl4'\n   'epa__home_defense_allowed_scramble_success_rate__season_mean'\n   'epa__home_defense_allowed_scramble_success_rate__last4_mean'\n   'epa__home_defense_allowed_scramble_success_rate__last8_mean'\n   'epa__home_offense_scramble_epa__all_mean'\n   'epa__home_offense_scramble_epa__ewm_hl4'\n   'epa__home_offense_scramble_epa__season_mean'\n   'epa__home_offense_scramble_epa__last4_mean'\n   'epa__home_offense_scramble_epa__last8_mean'\n   'epa__home_offense_scramble_success_rate__all_mean'\n   'epa__home_offense_scramble_success_rate__ewm_hl4'\n   'epa__home_offense_scramble_success_rate__season_mean'\n   'epa__home_offense_scramble_success_rate__last4_mean'\n   'epa__home_offense_scramble_success_rate__last8_mean'\n   'epa__away_defense_allowed_scramble_epa__all_mean'\n   'epa__away_defense_allowed_scramble_epa__ewm_hl4'\n   'epa__away_defense_allowed_scramble_epa__season_mean'\n   'epa__away_defense_allowed_scramble_epa__last4_mean'\n   'epa__away_defense_allowed_scramble_epa__last8_mean'\n   'epa__away_defense_allowed_scramble_success_rate__all_mean'\n   'epa__away_defense_allowed_scramble_success_rate__ewm_hl4'\n   'epa__away_defense_allowed_scramble_success_rate__season_mean'\n   'epa__away_defense_allowed_scramble_success_rate__last4_mean'\n   'epa__away_defense_allowed_scramble_success_rate__last8_mean'\n   'epa__away_offense_scramble_epa__all_mean'\n   'epa__away_offense_scramble_epa__ewm_hl4'\n   'epa__away_offense_scramble_epa__season_mean'\n   'epa__away_offense_scramble_epa__last4_mean'\n   'epa__away_offense_scramble_epa__last8_mean'\n   'epa__away_offense_scramble_success_rate__all_mean'\n   'epa__away_offense_scramble_success_rate__ewm_hl4'\n   'epa__away_offense_scramble_success_rate__season_mean'\n   'epa__away_offense_scramble_success_rate__last4_mean'\n   'epa__away_offense_scramble_success_rate__last8_mean']. At least one non-missing value is needed for imputation with strategy='median'.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n876 passed, 26 warnings in 395.79s (0:06:35)\n",
+  "git_diff_check": "clean",
+  "market_reconciliation": {
+    "FRI_ATS": {
+      "coherent_leq_cutoff": 1568,
+      "eligible": 1581,
+      "ge3_before_age_filter": 1568,
+      "market_ready": 1448,
+      "max_age_hours": 48.0,
+      "minimum_books": 3
+    },
+    "FRI_TOTAL": {
+      "coherent_leq_cutoff": 1568,
+      "eligible": 1581,
+      "ge3_before_age_filter": 1565,
+      "market_ready": 1446,
+      "max_age_hours": 48.0,
+      "minimum_books": 3
+    },
+    "TUE_ATS": {
+      "coherent_leq_cutoff": 917,
+      "eligible": 1693,
+      "ge3_before_age_filter": 894,
+      "market_ready": 844,
+      "max_age_hours": 48.0,
+      "minimum_books": 3
+    },
+    "TUE_TOTAL": {
+      "coherent_leq_cutoff": 903,
+      "eligible": 1693,
+      "ge3_before_age_filter": 876,
+      "market_ready": 826,
+      "max_age_hours": 48.0,
+      "minimum_books": 3
+    }
+  },
+  "membership_counts": {
+    "fri_eligible": 1581,
+    "fri_eligible_2025": 264,
+    "raw_rows_season_2026_seen_by_firewall": 0,
+    "rows_season_ge_2026_used_for_anything": 0,
+    "tue_eligible": 1693,
+    "tue_eligible_2025": 285
+  },
+  "ordered_six_elo_features": [
+    "home_elo_pregame_rating",
+    "home_elo_pregame_win_probability",
+    "home_elo_pregame_expected_margin",
+    "away_elo_pregame_rating",
+    "away_elo_pregame_win_probability",
+    "away_elo_pregame_expected_margin"
+  ],
+  "per_stream": {
+    "ATS_FRI": {
+      "audit_2025": {
+        "calibrated_brier": 0.25055221391061766,
+        "calibrated_ece": 0.07127623090636448,
+        "calibrated_log_loss": 0.6942538251970761,
+        "label": "DESCRIPTIVE / NON-SELECTION ONLY",
+        "n_pushes_excluded": 4,
+        "n_scored": 238,
+        "raw_brier": 0.2621004958339095,
+        "raw_ece": 0.10040668210234256,
+        "raw_log_loss": 0.7188645481760959
+      },
+      "n_calibrated": 1247,
+      "n_raw_ready": 1361,
+      "n_raw_unavailable": 220,
+      "n_uncalibrated_insufficient_history": 114,
+      "readiness": {
+        "last_2025_calibration_status": "CALIBRATED",
+        "n_2025_rows": 264,
+        "ready_by_end_2025": true
+      }
+    },
+    "ATS_TUE": {
+      "audit_2025": {
+        "calibrated_brier": 0.2519493441335756,
+        "calibrated_ece": 0.10587773492240131,
+        "calibrated_log_loss": 0.6970485557120918,
+        "label": "DESCRIPTIVE / NON-SELECTION ONLY",
+        "n_pushes_excluded": 5,
+        "n_scored": 172,
+        "raw_brier": 0.26284493619474836,
+        "raw_ece": 0.1460209664786439,
+        "raw_log_loss": 0.7193923395955295
+      },
+      "n_calibrated": 698,
+      "n_raw_ready": 800,
+      "n_raw_unavailable": 893,
+      "n_uncalibrated_insufficient_history": 102,
+      "readiness": {
+        "last_2025_calibration_status": "CALIBRATED",
+        "n_2025_rows": 285,
+        "ready_by_end_2025": true
+      }
+    },
+    "TOTAL_FRI": {
+      "audit_2025": {
+        "calibrated_brier": 0.25106642579965327,
+        "calibrated_ece": 0.09176739783863933,
+        "calibrated_log_loss": 0.6952817511697259,
+        "label": "DESCRIPTIVE / NON-SELECTION ONLY",
+        "n_pushes_excluded": 3,
+        "n_scored": 239,
+        "raw_brier": 0.2633263406549837,
+        "raw_ece": 0.12419135383673288,
+        "raw_log_loss": 0.7223349599501759
+      },
+      "n_calibrated": 1247,
+      "n_raw_ready": 1359,
+      "n_raw_unavailable": 222,
+      "n_uncalibrated_insufficient_history": 112,
+      "readiness": {
+        "last_2025_calibration_status": "CALIBRATED",
+        "n_2025_rows": 264,
+        "ready_by_end_2025": true
+      }
+    },
+    "TOTAL_TUE": {
+      "audit_2025": {
+        "calibrated_brier": 0.2529539086267652,
+        "calibrated_ece": 0.08751633419358022,
+        "calibrated_log_loss": 0.6991310080896278,
+        "label": "DESCRIPTIVE / NON-SELECTION ONLY",
+        "n_pushes_excluded": 1,
+        "n_scored": 175,
+        "raw_brier": 0.26271395225960176,
+        "raw_ece": 0.12441208687416676,
+        "raw_log_loss": 0.7198380917501411
+      },
+      "n_calibrated": 684,
+      "n_raw_ready": 784,
+      "n_raw_unavailable": 909,
+      "n_uncalibrated_insufficient_history": 100,
+      "readiness": {
+        "last_2025_calibration_status": "CALIBRATED",
+        "n_2025_rows": 285,
+        "ready_by_end_2025": true
+      }
+    }
+  },
+  "production_calibration_seed_summary": {
+    "ATS_FRI": {
+      "calibrator_config_hash": "dd522c2aad5ee5013bf7ba625d1eea09cc5235d46a7ed0c214597c979e51395c",
+      "calibrator_family": "three_way.logistic_on_logit_conditional_calibrator",
+      "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+      "latest_included_result_available_at_utc": "2026-02-09 04:30:00+00:00",
+      "market": "ATS",
+      "n_labeled_non_push": 1332,
+      "n_raw_ready": 1361,
+      "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722",
+      "preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+      "push_calibration_config_hash": "0453e516f6716b3a28b0bcaa0f5bf4d2c9073d5e8ab7f52a8fa7c097c4adca6e",
+      "twenty_twenty_six_outcome_used": false
+    },
+    "ATS_TUE": {
+      "calibrator_config_hash": "dd522c2aad5ee5013bf7ba625d1eea09cc5235d46a7ed0c214597c979e51395c",
+      "calibrator_family": "three_way.logistic_on_logit_conditional_calibrator",
+      "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+      "latest_included_result_available_at_utc": "2026-02-09 04:30:00+00:00",
+      "market": "ATS",
+      "n_labeled_non_push": 782,
+      "n_raw_ready": 800,
+      "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722",
+      "preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+      "push_calibration_config_hash": "0453e516f6716b3a28b0bcaa0f5bf4d2c9073d5e8ab7f52a8fa7c097c4adca6e",
+      "twenty_twenty_six_outcome_used": false
+    },
+    "TOTAL_FRI": {
+      "calibrator_config_hash": "dd522c2aad5ee5013bf7ba625d1eea09cc5235d46a7ed0c214597c979e51395c",
+      "calibrator_family": "three_way.logistic_on_logit_conditional_calibrator",
+      "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+      "latest_included_result_available_at_utc": "2026-02-09 04:30:00+00:00",
+      "market": "TOTAL",
+      "n_labeled_non_push": 1338,
+      "n_raw_ready": 1359,
+      "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722",
+      "preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+      "push_calibration_config_hash": "111b925f696c1dcca5ac790823845030fcaef8541fb69dc9fec9552fdb460c03",
+      "twenty_twenty_six_outcome_used": false
+    },
+    "TOTAL_TUE": {
+      "calibrator_config_hash": "dd522c2aad5ee5013bf7ba625d1eea09cc5235d46a7ed0c214597c979e51395c",
+      "calibrator_family": "three_way.logistic_on_logit_conditional_calibrator",
+      "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+      "latest_included_result_available_at_utc": "2026-02-09 04:30:00+00:00",
+      "market": "TOTAL",
+      "n_labeled_non_push": 770,
+      "n_raw_ready": 784,
+      "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722",
+      "preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+      "push_calibration_config_hash": "111b925f696c1dcca5ac790823845030fcaef8541fb69dc9fec9552fdb460c03",
+      "twenty_twenty_six_outcome_used": false
+    }
+  },
+  "repo": {
+    "branch": "fix/official-oof-tue-fri-calibration-2026",
+    "head_sha": "404f126cf887aca6d7a991d5d8338db2486a4b12",
+    "required_base_sha": "404f126cf887aca6d7a991d5d8338db2486a4b12"
+  },
+  "ridge_alpha_100_candidate_spec_hash": "27b3eec6554e1bdefdcdda3f6a6bb9311efa675c850f059aa71881d6c77978d7",
+  "schema_version": "fix8-official-oof-tue-fri-calibration-v1",
+  "twenty_twenty_five_role": {
+    "used_2025_for_postfreeze_chronological_replay": true,
+    "used_2025_for_rule_tuning": false,
+    "used_2025_for_selection": false
+  }
+}
