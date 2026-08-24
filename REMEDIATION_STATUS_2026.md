@@ -81,3 +81,5 @@ did not touch the original Fix 7 artifacts, did not re-select, and verified
 `selected_family=RIDGE`/`final_model_spec_hash` unchanged
 (`FIX 7 EVIDENCE REPLAY HARDENED`). See `docs/MODEL_FAMILY_SELECTION_2026.md`
 §12.
+
+Fix 8 (official chronological TUE/FRI OOF + ATS/TOTAL calibration) produced the Mike Shackelford audit handoff package -- see `docs/MIKE_HANDOFF.md`.
