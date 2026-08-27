@@ -203,11 +203,15 @@ def env_var_presence(repo_root: Path = REPO_ROOT) -> dict[str, str]:
 
 def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | None = None) -> dict:
     """Verifies live infrastructure without ever printing a secret value.
-    ``artifact_root_path`` is injectable so a test can point the
-    writable-output-directory check at an isolated root; the certified hash
-    sources, the calibration seed, the games/schedule source, and the raw
-    market estate are always the real certified inputs (never overridable --
-    they are read-only certified/live sources, not operational output)."""
+    ``artifact_root_path`` is injectable so a test can point EVERY
+    generated-artifact lookup this call performs -- the writable-output-
+    directory check AND the Fix-8 production calibration seed lookup --
+    at one isolated root (``aroot``), consistently, for the whole
+    invocation. Only the certified hash sources, the games/schedule
+    source, and the raw market estate remain the real certified/live
+    inputs regardless of ``artifact_root_path`` (they are read-only
+    scientific evidence and live data feeds, not generated-artifact
+    output, so there is nothing operational to isolate for them)."""
     aroot = artifact_root_path if artifact_root_path is not None else artifact_root()
     checks: dict[str, object] = {}
     blocking: list[str] = []
@@ -231,7 +235,7 @@ def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | Non
         checks["certified_hashes"] = {"status": "MISMATCH", "detail": str(exc)}
         blocking.append("hash_mismatch")
 
-    seed_path = artifact_root() / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
+    seed_path = aroot / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
     checks["fix8_calibration_seed"] = {"status": "OK" if seed_path.is_file() else "MISSING", "path": str(seed_path)}
     if not seed_path.is_file():
         blocking.append("calibration_seed_missing")
@@ -592,12 +596,19 @@ def run_horizon_batch(
     manifest (Section 15), even on a fail-closed status, and returns it.
 
     ``operational_root`` is where ``production-2026/{forecast-ledger,
-    run-manifests, evaluation-ledger}`` get written -- injectable so the
-    historical integration test never touches real production state
-    (Section 22). The certified hash sources, the calibration seed, the
-    games/schedule source (unless ``games`` is supplied), and the raw market
-    estate always resolve against the real certified/live locations --
-    they are read-only certified inputs, not operational output.
+    run-manifests, evaluation-ledger}`` get WRITTEN -- injectable so tests
+    (including the real historical integration test, Section 22) never
+    touch real production state. It does not redirect any READ of a
+    certified/live input: the certified hash sources, the Fix-8
+    calibration seed, the games/schedule source (unless ``games`` is
+    supplied), and the raw market estate always resolve against the real
+    certified/live locations regardless of ``operational_root`` -- they
+    are read-only scientific evidence and live data feeds, not
+    generated-artifact output, so there is nothing operational to isolate
+    for them. The calibration-seed lookup degrades gracefully (never
+    crashes) to an empty/uncalibrated seed when the real artifact root
+    itself is unavailable (e.g. a hermetic test with no
+    ``NFL_MODEL_ARTIFACT_ROOT``).
 
     ``games`` is injectable so a test can pin the exact historical games
     population; production leaves it ``None`` (uses
@@ -703,8 +714,20 @@ def run_horizon_batch(
             result = rmr.reconstruct_market_at_cutoffs(coherent, targets, market=raw_key)
             consensus_by_market[market] = result.consensus
 
-    seed_path = artifact_root() / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
-    calibration_seed: dict[str, dict] = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
+    # The Fix-8 calibration seed is a read-only certified input, not
+    # generated-artifact output -- unlike ``run_preflight``'s
+    # ``artifact_root_path``, ``operational_root`` here exists ONLY to
+    # isolate this call's forecast-ledger/run-manifest/evaluation-ledger
+    # WRITES (see the docstring above), never to redirect where the real
+    # certified seed is read from. Always resolved against the real
+    # artifact root; gracefully degrades to an empty (uncalibrated) seed
+    # -- never a crash -- when that root itself is unavailable (e.g. a
+    # hermetic test, or a host with no NFL_MODEL_ARTIFACT_ROOT configured).
+    try:
+        seed_path = artifact_root() / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
+        calibration_seed: dict[str, dict] = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
+    except Exception:
+        calibration_seed = {}
 
     priced = price_and_calibrate(
         batch_resid, horizon=horizon, market_consensus=consensus_by_market, calibration_seed=calibration_seed,
