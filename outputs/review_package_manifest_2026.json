@@ -1,0 +1,44 @@
+{
+  "schema_version": "final-review-certification-2026-v1",
+  "baseline_tag": "v2026.1-fix8-certified",
+  "baseline_commit": "d24e4ce57294dc6572cbb17a4ee6c24e08c80ad7",
+  "review_package_commit_placeholder": "FILLED_AT_PACKAGING_TIME_BY_git_rev-parse_HEAD",
+  "scientific_hashes": {
+    "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+    "horizon_membership_ledger_hash": "b095a2bf9177029eb67e1516fbc79b080ef800cfe18b86989254dd4d0a8dae49",
+    "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722",
+    "fix8_preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e"
+  },
+  "final_review_certification_preregistration_hash": "5076b0caa55b11d4a44d3d18ab187879ee0fbb98a5286b0fbd1315421703e66a",
+  "production_seed_hash": "4a20806dccb9e8925c9232aaefb00df52328f3d91af02b3cc2da1867d9117b47",
+  "review_docs": [
+    "docs/MODEL_STRENGTH_AND_LIMITATIONS.md",
+    "docs/PRODUCTION_RUNBOOK_2026.md",
+    "docs/MIKE_HANDOFF.md"
+  ],
+  "production_entrypoint": "scripts/run_2026_production_card.py",
+  "test_commands": [
+    "python3 -m pytest -q tests/test_final_review_certification_2026.py",
+    "python3 -m pytest -q tests/test_production_card_2026.py",
+    "python3 -m pytest -q -W error::FutureWarning",
+    "python3 scripts/run_2026_production_card.py --preflight",
+    "python3 scripts/verify_review_package.py --require-clean"
+  ],
+  "test_commands_files": [
+    "tests/test_final_review_certification_2026.py",
+    "tests/test_production_card_2026.py"
+  ],
+  "large_external_artifact_locations": [
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/final_review_certification_preregistration.json",
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/diagnostic_fits/",
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/model_family_robustness_summary.json",
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/calibration_robustness_summary.json",
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/absolute_quality_and_market_comparison.json",
+    "$NFL_MODEL_ARTIFACT_ROOT/final-review-certification-2026/FINAL_STATUS_SCORECARD.md",
+    "$NFL_MODEL_ARTIFACT_ROOT/fix8-official-oof-calibration-2026/ (certified raw/calibrated ledgers, reused not modified)",
+    "$NFL_MODEL_ARTIFACT_ROOT/production-2026/forecast-ledger/ (immutable, created only by live/production runs)",
+    "$NFL_MODEL_ARTIFACT_ROOT/production-2026/run-manifests/",
+    "$NFL_MODEL_ARTIFACT_ROOT/production-2026/evaluation-ledger/"
+  ],
+  "private_data_exclusion_statement": "This repository never tracks the private historical data estate (NFL_MODEL_DATA_ROOT: nflverse backfill parquets, timestamped Odds API bookmaker-quote history) or the derived artifact root (NFL_MODEL_ARTIFACT_ROOT). Both are resolved via environment variables (see .env.example) and referenced by path/hash only. Large certification and production evidence is written under NFL_MODEL_ARTIFACT_ROOT, never committed to git. No API key or credential value is ever written to a tracked file."
+}

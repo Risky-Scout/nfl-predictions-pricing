@@ -1,0 +1,103 @@
+{
+  "ats_calibration_evidence": "STRONG",
+  "bootstrap_summary": {
+    "family_selected_frequency": {
+      "HGBR": 0.0,
+      "HUBER": 0.3193,
+      "RIDGE": 0.6807
+    },
+    "probability_hgbr_in_one_se_set": 0.0,
+    "probability_ridge_alpha_100_selected": 0.6704,
+    "probability_ridge_family_in_one_se_set": 0.6757
+  },
+  "calibration_status": "MET_STRONGLY",
+  "certified_hashes": {
+    "fix8_preregistration_hash": "0d0a1eefffdbb6878e3246d2b5b0fb8f091bebc0eeb9f3869624620fb9e2847e",
+    "horizon_feature_semantics_hash": "bf0b136dd9b7c7f3741617b6c088926e539406d60b82563839eb1825de9fc72d",
+    "horizon_membership_ledger_hash": "b095a2bf9177029eb67e1516fbc79b080ef800cfe18b86989254dd4d0a8dae49",
+    "operational_model_spec_hash": "3b230bfeee3279c0e3ed9b6a7118931c1a5cf08203155be011f362c66ee8d722"
+  },
+  "final_review_certification_preregistration_hash": "5076b0caa55b11d4a44d3d18ab187879ee0fbb98a5286b0fbd1315421703e66a",
+  "model_family_stability_status": "MIXED",
+  "repo_gate": {
+    "branch": "cert/robustness-production-readiness-2026",
+    "dirty_paths": [
+      "scripts/run_final_review_certification.py",
+      "src/nfl_hybrid/certification/"
+    ],
+    "head_sha": "d24e4ce57294dc6572cbb17a4ee6c24e08c80ad7",
+    "tag": "v2026.1-fix8-certified",
+    "tag_commit_sha": "d24e4ce57294dc6572cbb17a4ee6c24e08c80ad7"
+  },
+  "schema_version": "final-review-certification-2026-v1",
+  "scope_summary": {
+    "S1": {
+      "one_se_family_set": [
+        "RIDGE",
+        "HUBER"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S2": {
+      "one_se_family_set": [
+        "RIDGE",
+        "HUBER"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S3": {
+      "one_se_family_set": [
+        "RIDGE",
+        "HUBER"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S4": {
+      "one_se_family_set": [
+        "RIDGE"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S5": {
+      "one_se_family_set": [
+        "HUBER"
+      ],
+      "selected_family": "HUBER",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S6": {
+      "one_se_family_set": [
+        "RIDGE",
+        "HUBER"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S7": {
+      "one_se_family_set": [
+        "HUBER"
+      ],
+      "selected_family": "HUBER",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S8": {
+      "one_se_family_set": [
+        "RIDGE"
+      ],
+      "selected_family": "RIDGE",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    },
+    "S9": {
+      "one_se_family_set": [
+        "HUBER"
+      ],
+      "selected_family": "HUBER",
+      "selected_ridge_alpha": "RIDGE_ALPHA_100"
+    }
+  },
+  "total_calibration_evidence": "SUGGESTIVE"
+}
