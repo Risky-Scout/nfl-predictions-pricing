@@ -147,3 +147,92 @@ JSON summaries under `outputs/` are.
   season; it has not yet priced or seen any 2026 game.
 - No guarantee of profitability is made or implied by this model, its
   calibration, or its descriptive 2025 post-freeze diagnostics.
+
+---
+
+# FINAL REVIEW CERTIFICATION addendum (2026-08-26)
+
+The sections above are Fix 8's own auto-generated handoff and are left
+unchanged. This addendum summarizes the subsequent robustness,
+calibration-improvement, and production-readiness certification
+(`cert/robustness-production-readiness-2026`, preregistration hash
+`5076b0caa55b11d4a44d3d18ab187879ee0fbb98a5286b0fbd1315421703e66a`). It
+performed **no feature selection, no re-estimation, and no
+recalibration** -- RIDGE_ALPHA_100 on the six frozen Elo features remains
+the certified production model regardless of this audit's findings.
+
+## Statistical Strength
+
+- **Model-family stability**: `MIXED`. Ridge is selected by the frozen
+  Fix-7 procedure (and stays within one standard error of the best
+  candidate) in 6 of 9 predeclared robustness scopes, including all three
+  primary scopes (TUE-only, FRI-only, TUE+FRI pooled). Huber wins the
+  other 3 (single-fold/season-restricted) scopes. HGBR is never selected
+  and never inside the one-SE set in any of the 9 scopes, and is selected
+  in 0% of 10,000 game_id-cluster bootstrap replicates. Bootstrap:
+  P(Ridge family selected) = 68.1%, P(Ridge in the one-SE set) = 67.6%,
+  P(HGBR selected) = 0.0%.
+- **Calibration improves raw probabilities**: `MET_STRONGLY`. All four
+  streams (ATS_TUE, ATS_FRI, TOTAL_TUE, TOTAL_FRI) show calibrated
+  log-loss, Brier, and ECE point estimates below raw on the 2025
+  post-freeze audit population, and the pooled ALL_FOUR 95% bootstrap CI
+  (10,000 game_id-cluster resamples, seed 20260826) for calibrated-minus-raw
+  is entirely below zero for both log-loss (`[-0.039, -0.010]`) and Brier
+  (`[-0.018, -0.004]`). ATS calibration evidence: `STRONG`. TOTAL
+  calibration evidence: `SUGGESTIVE` (pooled TOTAL-only CI includes zero
+  even though both TOTAL streams' point estimates improve).
+- Full detail, absolute probability-quality labels (log loss/Brier/ECE/AUC/
+  calibration slope/sharpness by stream), and the market-relative scorecard:
+  see [`MODEL_STRENGTH_AND_LIMITATIONS.md`](MODEL_STRENGTH_AND_LIMITATIONS.md).
+
+## Known Limitations
+
+- Model-family selection is genuinely close between Ridge and Huber; the
+  frozen complexity-tiebreak rule (not raw score) is what keeps Ridge
+  selected in the certified baseline.
+- TOTAL-market calibration improvement, while directionally consistent
+  across both streams, is not yet CI-robust when TUE and FRI are pooled.
+- No sportsbook probability edge or point-forecasting advantage over the
+  market is claimed -- see `MODEL_STRENGTH_AND_LIMITATIONS.md` for the
+  honest market-comparison result.
+- No profitability claim is made; none is establishable from historical/
+  backtest evidence alone (see "2026 Prospective Validation" below).
+
+## Rejected vNext Research
+
+Three lines of post-freeze research were tested and did **not** displace
+the certified baseline: Ridge/Huber blending + market anchoring +
+alternative calibration (`vnext-sprint-2026`), QB lagged-depth features
+(`qb-lagged-depth-feature-selection-2026`), and `TEAM_SCORE_STATE_V1.1`
+(`team-score-state-v1-2026`). Full detail:
+[`MODEL_STRENGTH_AND_LIMITATIONS.md`](MODEL_STRENGTH_AND_LIMITATIONS.md#rejected-post-freeze-research).
+
+## 2026 Prospective Validation
+
+An immutable forecast ledger, append-only run manifest, and a separate
+"no future outcome columns at forecast time" evaluation ledger are now
+live under `NFL_MODEL_ARTIFACT_ROOT/production-2026/`. Results may only be
+attached after they are genuinely available
+(`result_available_at_utc < attachment_run_time`, strict), and attachment
+never mutates the original forecast. This ledger -- accumulated honestly,
+forecast-before-result, across the 2026 season -- is the only path to a
+legitimate future claim of sportsbook edge or profitability; none exists
+yet. `scripts/report_2026_prospective_performance.py` reports
+`INSUFFICIENT_PROSPECTIVE_SAMPLE` until enough games have been scored.
+
+## Production Operation
+
+Canonical entrypoint: `scripts/run_2026_production_card.py` (`--preflight`,
+`--horizon TUE|FRI`, `--run-due`, `--attach-results`). Full operator
+instructions: [`PRODUCTION_RUNBOOK_2026.md`](PRODUCTION_RUNBOOK_2026.md).
+As of this certification, a real preflight in this environment reports
+`READY_WAITING_FOR_FIRST_DUE_CUTOFF` -- all infrastructure needed right
+now (hashes, calibration seed, historical data, writable ledgers) is
+genuinely ready; only the live 2026 schedule/market isn't available yet,
+which is expected pre-season. `THE_ODDS_API_KEY`/`NFL_LIVE_DATA_ROOT`
+still need to be set before the first live forecast. Scheduling is
+`OPERATOR_SCHEDULE_READY` (a GitHub Actions workflow and a launchd/cron
+fallback are both documented and ready), not yet `AUTOMATED`.
+
+This certification does not claim sportsbook edge, and does not claim
+profitability.

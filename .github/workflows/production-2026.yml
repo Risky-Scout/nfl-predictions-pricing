@@ -1,0 +1,107 @@
+name: 2026 production card (TUE/FRI)
+
+# ============================================================================
+# OPERATOR_SCHEDULE_READY, not AUTOMATED (Section 21/24 of the 2026 final
+# review certification).
+#
+# This workflow is documented and wired up, but it is NOT currently relied
+# upon to run anything: `runs-on: [self-hosted, nfl-production-2026]` names a
+# runner label that has no self-hosted runner registered against this repo
+# today (only `.github/workflows/tests.yml`'s `ubuntu-latest` GitHub-hosted
+# runner exists). A GitHub-hosted runner cannot do this job:
+#   - it has no access to $NFL_MODEL_ARTIFACT_ROOT (the local filesystem
+#     artifact root holding the frozen production_calibration_seed.json and
+#     the immutable forecast/evaluation ledgers -- see
+#     src/nfl_hybrid/production/run_2026.py);
+#   - it has no access to $NFL_MODEL_DATA_ROOT (the private, git-ignored
+#     historical backfill + raw timestamped Odds API snapshot estate the
+#     certified pipeline reads via nfl_hybrid.data.external_data.resolve);
+#   - live odds/data credentials (THE_ODDS_API_KEY, etc.) are operator
+#     secrets never meant to sit in a GitHub-hosted runner's environment for
+#     this pipeline.
+#
+# To promote this to AUTOMATED, an operator must:
+#   1. Provision and register a self-hosted runner (label
+#      "nfl-production-2026") on a host that has NFL_MODEL_ARTIFACT_ROOT and
+#      NFL_MODEL_DATA_ROOT mounted/populated, per docs/PRODUCTION_RUNBOOK_2026.md.
+#   2. Confirm `python3 scripts/run_2026_production_card.py --preflight`
+#      exits 0 on that host.
+#   3. Only then does the `schedule:` trigger below actually execute
+#      anything -- until a matching runner exists, GitHub simply never
+#      dispatches these scheduled events to any machine.
+#
+# Until then, the equivalent of this schedule should be run via the host's
+# own OS scheduler (cron or launchd) directly against
+# scripts/run_2026_production_card.py --run-due -- see the two candidate
+# schedules below, and docs/PRODUCTION_RUNBOOK_2026.md for the exact
+# launchd plist / crontab lines.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      as_of:
+        description: "Optional ISO8601 --as-of override (deterministic testing only; leave blank for real current time)"
+        required: false
+        default: ""
+
+  # Two DST-redundant candidate UTC times for the 12:00 America/New_York
+  # due-window (Tuesdays and Fridays): 16:05 UTC covers EDT (UTC-4,
+  # roughly mid-March through early November) and 17:05 UTC covers EST
+  # (UTC-5, the rest of the year). Both fire every week; `--run-due` is the
+  # actual gate -- it computes the real DST-aware America/New_York cutoff
+  # itself (nfl_hybrid.features.horizon_elo's certified
+  # _card_monday_date/_card_noon_cutoff_utc) and exits 0 with NOT_DUE
+  # (no writes) for whichever of the two firings falls outside the real
+  # 12:00-12:20 local window that week. Never relies on the cron expression
+  # alone to know which offset currently applies.
+  schedule:
+    - cron: "5 16 * * 2,5"  # 16:05 UTC Tue/Fri -- correct instant during EDT
+    - cron: "5 17 * * 2,5"  # 17:05 UTC Tue/Fri -- correct instant during EST
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-2026-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  run-due-card:
+    name: Run due TUE/FRI production card
+    # NOTE: no self-hosted runner with this label is registered yet (see
+    # header comment). This job definition is correct and ready; it simply
+    # has nowhere to execute until an operator registers one.
+    runs-on: [self-hosted, nfl-production-2026]
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e ".[data,dev]"
+
+      - name: Live-source preflight (no secret values printed)
+        shell: bash
+        run: |
+          python3 scripts/run_2026_production_card.py --preflight
+
+      - name: Run due card (NOT_DUE outside the 12:00-12:20 America/New_York window)
+        shell: bash
+        env:
+          AS_OF_OVERRIDE: ${{ github.event.inputs.as_of }}
+        run: |
+          if [ -n "$AS_OF_OVERRIDE" ]; then
+            python3 scripts/run_2026_production_card.py --run-due --as-of "$AS_OF_OVERRIDE"
+          else
+            python3 scripts/run_2026_production_card.py --run-due
+          fi
