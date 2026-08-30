@@ -644,3 +644,198 @@ def test_no_ats_total_probability_selection_path():
     lowered = source.lower()
     for token in banned:
         assert token not in lowered
+
+
+# ---------------------------------------------------------------------------
+# Feature-cache ID-reuse remediation.
+#
+# ``fd._MATRIX_CACHE`` and ``fd._TEAM_STATE_CACHE`` must be keyed by a
+# deterministic CONTENT fingerprint of the games frame, never by
+# ``id(games)``. ``id()`` is a CPython memory address that is recycled once a
+# frame is garbage-collected, so an ``id(games)`` key allowed a brand-new,
+# different frame to be handed a stale cached matrix belonging to a freed
+# object (process-lifetime cache corruption; a forced id-reuse reproduction
+# returned a stale Elo matrix with a 73.333% ``home_elo_pregame_rating``
+# mismatch, which is the shape of the Python 3.14 CI failure).
+# ---------------------------------------------------------------------------
+CACHE_CFG = Week1PriorConfig(k=8.0)
+
+
+def _reset_feature_caches() -> None:
+    fd._MATRIX_CACHE.clear()
+    fd._TEAM_STATE_CACHE.clear()
+
+
+def _variant_games(*, score_delta: int = 0, drop_last: bool = False, extra_col: bool = False) -> pd.DataFrame:
+    """A games frame with the exact shape/schema of ``_synthetic_games()``
+    unless asked otherwise -- ``score_delta`` keeps the row count and schema
+    identical while changing scores/results (and therefore downstream Elo)."""
+    g = _synthetic_games()
+    if score_delta:
+        g["home_score"] = g["home_score"] + int(score_delta)
+    if drop_last:
+        g = g.iloc[:-1].reset_index(drop=True)
+    if extra_col:
+        g["home_spread"] = -3.5
+    return g
+
+
+def _elo_ratings(matrix: pd.DataFrame) -> np.ndarray:
+    return matrix.sort_values("game_id")["home_elo_pregame_rating"].to_numpy()
+
+
+# --- A: identity-independent fingerprint + identical feature output --------
+def test_content_fingerprint_is_object_identity_independent(week1_config):
+    g1 = _synthetic_games()
+    g2 = _synthetic_games()  # distinct object, byte-identical content
+    assert g1 is not g2 and id(g1) != id(g2)
+
+    fp1 = fd._games_content_fingerprint(g1)
+    fp2 = fd._games_content_fingerprint(g2)
+    assert fp1 == fp2
+    assert isinstance(fp1, str) and len(fp1) == 64  # sha-256 hexdigest
+
+    _reset_feature_caches()
+    m1, f1 = fd.build_candidate_matrix(g1, ["ELO_STRENGTH"], week1_config=week1_config)
+    m2, f2 = fd.build_candidate_matrix(g2, ["ELO_STRENGTH"], week1_config=week1_config)  # content cache hit
+    assert f1 == f2
+    pd.testing.assert_frame_equal(
+        m1.sort_values("game_id").reset_index(drop=True),
+        m2.sort_values("game_id").reset_index(drop=True),
+    )
+    assert len(fd._MATRIX_CACHE) == 1  # no duplicate entry for identical content
+
+
+# --- B: same length, different content => different fingerprint -----------
+def test_content_fingerprint_changes_for_same_length_different_content():
+    g1 = _synthetic_games()
+    g2 = _variant_games(score_delta=17)
+    assert g1.shape == g2.shape and list(g1.columns) == list(g2.columns)
+    assert fd._games_content_fingerprint(g1) != fd._games_content_fingerprint(g2)
+
+    # schema change (extra column) is also detected
+    g3 = _variant_games(extra_col=True)
+    assert len(g3) == len(g1)
+    assert fd._games_content_fingerprint(g3) != fd._games_content_fingerprint(g1)
+
+
+# --- C: in-place mutation changes fingerprint, no stale state ------------
+def test_inplace_mutation_changes_fingerprint_and_gets_no_stale_state(week1_config):
+    g = _synthetic_games()
+    fp_before = fd._games_content_fingerprint(g)
+
+    _reset_feature_caches()
+    m_before, feats = fd.build_candidate_matrix(g, ["ELO_STRENGTH"], week1_config=week1_config)
+
+    g.loc[0, "home_score"] = int(g.loc[0, "home_score"]) + 40  # same object, same length
+    fp_after = fd._games_content_fingerprint(g)
+    assert fp_after != fp_before
+
+    m_after, _ = fd.build_candidate_matrix(g, ["ELO_STRENGTH"], week1_config=week1_config)
+
+    _reset_feature_caches()  # pristine recompute of the post-mutation frame
+    m_ref, _ = fd.build_candidate_matrix(g, ["ELO_STRENGTH"], week1_config=week1_config)
+    pd.testing.assert_frame_equal(
+        m_after.sort_values("game_id").reset_index(drop=True),
+        m_ref.sort_values("game_id").reset_index(drop=True),
+    )
+    # the mutation genuinely moved the Elo matrix -- so a stale hit would have been observable
+    assert not np.array_equal(_elo_ratings(m_before), _elo_ratings(m_after))
+
+
+# --- D: _MATRIX_CACHE cannot return a stale matrix for different content --
+def test_matrix_cache_no_stale_after_gc_and_realloc(week1_config):
+    import gc
+
+    _reset_feature_caches()
+    g1 = _synthetic_games()
+    m1, _ = fd.build_candidate_matrix(g1, ["ELO_STRENGTH"], week1_config=week1_config)
+    elo1 = _elo_ratings(m1)
+
+    del g1, m1
+    gc.collect()  # free the frame; its id() may now be handed to a new object
+
+    g2 = _variant_games(score_delta=25)  # different content
+    m2, _ = fd.build_candidate_matrix(g2, ["ELO_STRENGTH"], week1_config=week1_config)
+    elo2 = _elo_ratings(m2)
+
+    _reset_feature_caches()
+    m2_ref, _ = fd.build_candidate_matrix(_variant_games(score_delta=25), ["ELO_STRENGTH"], week1_config=week1_config)
+    np.testing.assert_array_equal(elo2, _elo_ratings(m2_ref))
+    assert not np.array_equal(elo1, elo2)
+
+
+def test_matrix_cache_key_is_content_addressed_not_identity(week1_config):
+    _reset_feature_caches()
+    g = _synthetic_games()
+    fd.build_candidate_matrix(g, ["ELO_STRENGTH"], week1_config=week1_config)
+    (key,) = list(fd._MATRIX_CACHE)
+    fingerprint, groups, cfg_hash = key
+    assert fingerprint == fd._games_content_fingerprint(g)
+    assert groups == ("ELO_STRENGTH",)
+    assert isinstance(fingerprint, str) and isinstance(cfg_hash, str)
+    assert id(g) not in key and len(g) not in key  # no object-identity / length component
+
+
+# --- E: _TEAM_STATE_CACHE cannot return stale state for different content -
+def test_team_state_cache_no_stale_for_different_content(week1_config):
+    import gc
+
+    _reset_feature_caches()
+    g1 = _synthetic_games()
+    ts1 = fd.build_production_team_state(g1, week1_config=week1_config)
+    r1 = ts1.sort_values(["game_id", "team_id"])["elo_pregame_rating"].to_numpy()
+
+    (key1,) = list(fd._TEAM_STATE_CACHE)
+    assert key1[0] == fd._games_content_fingerprint(g1)
+    assert id(g1) not in key1 and len(g1) not in key1
+
+    del g1
+    gc.collect()
+
+    g2 = _variant_games(score_delta=19)
+    ts2 = fd.build_production_team_state(g2, week1_config=week1_config)
+    r2 = ts2.sort_values(["game_id", "team_id"])["elo_pregame_rating"].to_numpy()
+
+    _reset_feature_caches()
+    ts2_ref = fd.build_production_team_state(_variant_games(score_delta=19), week1_config=week1_config)
+    r2_ref = ts2_ref.sort_values(["game_id", "team_id"])["elo_pregame_rating"].to_numpy()
+    np.testing.assert_array_equal(r2, r2_ref)
+    assert not np.array_equal(r1, r2)
+
+
+def test_team_state_cache_key_separates_rolling_config(week1_config):
+    _reset_feature_caches()
+    g = _synthetic_games()
+    fd.build_production_team_state(g, week1_config=week1_config)  # None -> normalises to windows=(8,)
+    fd.build_production_team_state(g, week1_config=week1_config, rolling_config=fd.PregameRollingConfig(windows=(8,)))
+    assert len(fd._TEAM_STATE_CACHE) == 1  # None and explicit (8,) collapse to one entry
+    # a genuinely different config (keeps window 8 so the last8 columns still
+    # exist) is a distinct cache entry rather than a stale hit
+    fd.build_production_team_state(
+        g, week1_config=week1_config, rolling_config=fd.PregameRollingConfig(windows=(8, 4))
+    )
+    assert len(fd._TEAM_STATE_CACHE) == 2
+
+
+# --- H: high-churn transient copies stay correct without manual clearing --
+def test_high_churn_transient_copies_stay_correct_without_clearing(week1_config):
+    _reset_feature_caches()
+    ref_matrix, _ = fd.build_candidate_matrix(_synthetic_games(), ["ELO_STRENGTH"], week1_config=week1_config)
+    ref_elo = _elo_ratings(ref_matrix)
+
+    seen: dict[int, np.ndarray] = {}
+    for delta in (0, 5, 0, 11, 5, 0, 23, 11, 0):
+        g = _variant_games(score_delta=delta)  # fresh transient object every iteration
+        m, _ = fd.build_candidate_matrix(g, ["ELO_STRENGTH"], week1_config=week1_config)
+        elo = _elo_ratings(m)
+        if delta in seen:
+            np.testing.assert_array_equal(elo, seen[delta])
+        else:
+            seen[delta] = elo
+        if delta == 0:
+            np.testing.assert_array_equal(elo, ref_elo)
+        del g, m
+
+    # one entry per DISTINCT content, not one per call -> no unbounded growth
+    assert len(fd._MATRIX_CACHE) == len({0, 5, 11, 23})
