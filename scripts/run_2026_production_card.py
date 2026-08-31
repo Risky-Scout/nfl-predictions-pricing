@@ -45,7 +45,12 @@ def _resolve_as_of(args: argparse.Namespace) -> pd.Timestamp:
 def cmd_preflight(args: argparse.Namespace) -> int:
     result = prod.run_preflight()
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
-    return 0 if result["overall_status"] in ("READY", "READY_WAITING_FOR_FIRST_DUE_CUTOFF") else 1
+    # Exit 0 ONLY when a real live production run could actually be
+    # performed -- i.e. infrastructure is ready AND every required live 2026
+    # input (schedule, registered market source) is genuinely available.
+    # Infra-ready-but-no-live-inputs is BLOCKED_ON_LIVE_INPUTS and exits 1:
+    # it must not be mistaken for readiness by an operator or a scheduler.
+    return 0 if result.get("production_run_ready") else 1
 
 
 def cmd_horizon(args: argparse.Namespace) -> int:

@@ -113,12 +113,85 @@ def synthetic_games() -> pd.DataFrame:
 
 # ===========================================================================
 # Preflight (Section 17). Hermetic: the calibration-seed override and
-# secret-leak checks need no real data at all. The overall READY/
-# READY_WAITING_FOR_FIRST_DUE_CUTOFF verdict genuinely requires the real
-# backfill.games source (schedule_source is never overridable -- it is a
-# read-only live data feed, not a generated artifact) and is therefore
-# covered in TestRealHistoricalIntegration below instead.
+# secret-leak checks need no real data at all. The overall READY /
+# BLOCKED_ON_LIVE_INPUTS verdict against the real environment (real
+# backfill.games -- schedule_source is never overridable, it is a read-only
+# live data feed) is covered in TestRealHistoricalIntegration below; the
+# pure readiness decision itself (all four required-input combinations) is
+# covered hermetically by TestPreflightReadinessSemantics.
 # ===========================================================================
+
+
+class TestPreflightReadinessSemantics:
+    """`summarize_preflight_readiness` -- infrastructure readiness is
+    reported separately from live-input readiness, and `production_run_ready`
+    is true ONLY when infra is ready AND every required live 2026 input
+    (schedule, registered market source) is actually available. No
+    `READY_WAITING_FOR_FIRST_DUE_CUTOFF` status is ever emitted, and a
+    blocked verdict always names its blockers."""
+
+    def test_both_live_inputs_available_and_infra_ready_is_production_run_ready(self):
+        r = prod.summarize_preflight_readiness(
+            infra_blocking=[], schedule_2026_available=True, live_2026_market_source_registered=True,
+        )
+        assert r["production_run_ready"] is True
+        assert r["overall_status"] == "READY"
+        assert r["blocking_problems"] == []
+
+    def test_schedule_2026_unavailable_blocks_production_run_ready(self):
+        r = prod.summarize_preflight_readiness(
+            infra_blocking=[], schedule_2026_available=False, live_2026_market_source_registered=True,
+        )
+        assert r["production_run_ready"] is False
+        assert r["overall_status"] == "BLOCKED_ON_LIVE_INPUTS"
+        assert "schedule_2026_unavailable" in r["blocking_problems"]
+
+    def test_live_market_source_unregistered_blocks_production_run_ready(self):
+        r = prod.summarize_preflight_readiness(
+            infra_blocking=[], schedule_2026_available=True, live_2026_market_source_registered=False,
+        )
+        assert r["production_run_ready"] is False
+        assert r["overall_status"] == "BLOCKED_ON_LIVE_INPUTS"
+        assert "live_2026_market_source_unregistered" in r["blocking_problems"]
+
+    def test_infra_blocker_forces_not_ready_regardless_of_live_inputs(self):
+        r = prod.summarize_preflight_readiness(
+            infra_blocking=["calibration_seed_missing"],
+            schedule_2026_available=True, live_2026_market_source_registered=True,
+        )
+        assert r["infra_ready"] is False
+        assert r["production_run_ready"] is False
+        assert r["overall_status"] == "NOT_READY"
+        assert "calibration_seed_missing" in r["blocking_problems"]
+
+    def test_no_misleading_ready_waiting_status_ever_emitted(self):
+        for sched in (True, False):
+            for mkt in (True, False):
+                for infra in ([], ["x"]):
+                    r = prod.summarize_preflight_readiness(
+                        infra_blocking=infra, schedule_2026_available=sched,
+                        live_2026_market_source_registered=mkt,
+                    )
+                    assert r["overall_status"] in ("READY", "BLOCKED_ON_LIVE_INPUTS", "NOT_READY")
+                    assert r["overall_status"] != "READY_WAITING_FOR_FIRST_DUE_CUTOFF"
+                    if r["overall_status"] != "READY":
+                        assert r["production_run_ready"] is False
+                        assert r["blocking_problems"], "a non-READY verdict must name its blockers"
+
+    def test_run_preflight_hermetic_never_claims_production_ready_without_live_market(self, tmp_path):
+        # live_2026_market_source_registered is structurally False (no
+        # odds_history.2026 key exists), so a hermetic run can never be
+        # production_run_ready no matter what the schedule check returns.
+        _write_synthetic_calibration_seed(tmp_path)
+        result = prod.run_preflight(artifact_root_path=tmp_path)
+        assert result["live_2026_market_source_registered"] is False
+        assert result["production_run_ready"] is False
+        assert result["overall_status"] in ("BLOCKED_ON_LIVE_INPUTS", "NOT_READY")
+        assert "live_2026_market_source_unregistered" in result["blocking_problems"]
+
+    def test_no_live_2026_market_key_registered_in_rmr(self):
+        from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
+        assert not any("2026" in key for key in rmr.RAW_ODDS_HISTORY_KEYS)
 def test_preflight_calibration_seed_check_respects_artifact_root_path_override(tmp_path):
     """The bug this test guards against: run_preflight(artifact_root_path=...)
     must resolve the Fix-8 calibration seed under the SAME injected root it
@@ -232,6 +305,51 @@ def test_tue_batch_succeeds_and_writes_forecasts(tmp_path, synthetic_games):
     assert sample["horizon"] == "TUE"
     assert sample["prediction"]["certified_baseline_sha"] == prod.CERTIFIED_SHA
     assert sample["prediction"]["operational_model_spec_hash"] == manifest["input_hashes"]["operational_model_spec_hash"]
+
+
+def test_preseason_games_are_excluded_from_the_production_card(tmp_path, synthetic_games):
+    """PRESEASON never enters the card. A live 2026 schedule source (BDL /
+    nflverse) exposes preseason games; feeding them to run_horizon_batch
+    must produce ZERO PRESEASON forecasts and leave the REG card identical
+    to a preseason-free run."""
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    as_of = cutoffs["TUE"] + pd.Timedelta(minutes=1)
+
+    pre = synthetic_games.copy()
+    pre["season_type"] = "PRE"
+    pre["game_id"] = pre["game_id"].astype(str) + "_PRE"
+    mixed = pd.concat([synthetic_games, pre], ignore_index=True)
+
+    reg_only = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=as_of, force=True,
+        operational_root=tmp_path / "reg", games=synthetic_games,
+    )
+    with_pre = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=as_of, force=True,
+        operational_root=tmp_path / "mixed", games=mixed,
+    )
+    assert with_pre["status"] == "SUCCESS"
+    assert with_pre["game_count"] == reg_only["game_count"]
+
+    for sub in ("forecast-ledger", "evaluation-ledger"):
+        for path in (tmp_path / "mixed" / "production-2026" / sub / "TUE").glob("*.json"):
+            rec = json.loads(path.read_text())
+            payload = rec.get("prediction", rec)
+            assert payload.get("season_type") in ("REG", "POST")
+            assert not str(rec["game_id"]).endswith("_PRE")
+
+
+def test_live_schedule_missing_season_type_fails_closed(tmp_path, synthetic_games):
+    """A schedule source that cannot prove it excludes preseason (no
+    season_type column) is a fail-closed SCHEDULE_UNAVAILABLE, never a
+    silent 'assume REG' pass."""
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    no_type = synthetic_games.drop(columns=["season_type"])
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=no_type,
+    )
+    assert manifest["status"] == "SCHEDULE_UNAVAILABLE"
 
 
 def test_fri_batch_succeeds_independently_of_tue(tmp_path, synthetic_games):
@@ -1107,7 +1225,7 @@ class TestRealHistoricalIntegration:
             horizon="FRI", as_of_utc=self.FRI_AS_OF, force=True, operational_root=operational_root, games=games_population,
         )
 
-    def test_preflight_reports_ready_waiting_or_ready(self):
+    def test_preflight_separates_infra_readiness_from_live_input_readiness(self):
         # Deliberately NO artifact_root_path override here -- this test
         # verifies genuine real-environment readiness (including the real
         # Fix-8 calibration seed), unlike the hermetic preflight tests
@@ -1116,10 +1234,25 @@ class TestRealHistoricalIntegration:
         # probes are harmless (a file is written then immediately
         # unlinked) and never touch the forecast/evaluation ledgers.
         result = prod.run_preflight()
-        assert result["overall_status"] in ("READY", "READY_WAITING_FOR_FIRST_DUE_CUTOFF")
         assert result["infra_ready"] is True
         assert result["checks"]["certified_hashes"]["status"] == "MATCH"
         assert result["checks"]["fix8_calibration_seed"]["status"] == "OK"
+        # A misleading "waiting" status must never appear.
+        assert result["overall_status"] in ("READY", "BLOCKED_ON_LIVE_INPUTS")
+        assert result["overall_status"] != "READY_WAITING_FOR_FIRST_DUE_CUTOFF"
+        if result["production_run_ready"]:
+            assert result["overall_status"] == "READY"
+            assert result["schedule_2026_available"] is True
+            assert result["live_2026_market_source_registered"] is True
+        else:
+            # Infra ready, but at least one required live 2026 input is not
+            # -- a hard block, with the missing inputs named explicitly.
+            assert result["overall_status"] == "BLOCKED_ON_LIVE_INPUTS"
+            assert result["blocking_problems"]
+            if not result["schedule_2026_available"]:
+                assert "schedule_2026_unavailable" in result["blocking_problems"]
+            if not result["live_2026_market_source_registered"]:
+                assert "live_2026_market_source_unregistered" in result["blocking_problems"]
 
     def test_real_calibration_seed_round_trips_through_production_loader(self):
         """Narrow, real-artifact-only assertion: the actual certified seed

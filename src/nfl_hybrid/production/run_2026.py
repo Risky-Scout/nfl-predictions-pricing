@@ -201,6 +201,64 @@ def env_var_presence(repo_root: Path = REPO_ROOT) -> dict[str, str]:
     return {name: ("SET" if os.environ.get(name) else "UNSET") for name in env_var_names_from_env_example(repo_root)}
 
 
+# Fail-closed blocking reasons for the two REQUIRED live 2026 production
+# inputs. Kept distinct from the infrastructure blockers so a caller can
+# always tell "the host is broken" apart from "the season's live feeds are
+# not wired/available yet" -- both block live production, neither is ever
+# silently absorbed into a benign "waiting" status.
+SCHEDULE_2026_BLOCKER = "schedule_2026_unavailable"
+LIVE_MARKET_2026_BLOCKER = "live_2026_market_source_unregistered"
+
+
+def summarize_preflight_readiness(
+    *,
+    infra_blocking: list[str],
+    schedule_2026_available: bool,
+    live_2026_market_source_registered: bool,
+) -> dict:
+    """Pure readiness verdict. INFRASTRUCTURE readiness (certified hashes,
+    calibration seed, writable ledgers, git commit) is reported SEPARATELY
+    from LIVE-INPUT readiness (a real 2026 schedule, a registered live 2026
+    market source).
+
+    ``production_run_ready`` is ``True`` only when infrastructure is ready
+    AND every required live production input is actually available. A host
+    that is missing either live input is ``BLOCKED_ON_LIVE_INPUTS`` -- it
+    NEVER reports ``READY`` or any "waiting for the first due cutoff"
+    status, and ``blocking_problems`` always names the missing inputs.
+    This does not weaken any existing fail-closed behaviour: an
+    infrastructure blocker still forces ``NOT_READY`` regardless of the
+    live inputs.
+    """
+    infra_ready = not infra_blocking
+
+    live_input_blocking: list[str] = []
+    if not schedule_2026_available:
+        live_input_blocking.append(SCHEDULE_2026_BLOCKER)
+    if not live_2026_market_source_registered:
+        live_input_blocking.append(LIVE_MARKET_2026_BLOCKER)
+
+    production_run_ready = infra_ready and not live_input_blocking
+
+    if not infra_ready:
+        overall_status = "NOT_READY"
+    elif production_run_ready:
+        overall_status = "READY"
+    else:
+        overall_status = "BLOCKED_ON_LIVE_INPUTS"
+
+    return {
+        "overall_status": overall_status,
+        "infra_ready": infra_ready,
+        "schedule_2026_available": bool(schedule_2026_available),
+        "live_2026_market_source_registered": bool(live_2026_market_source_registered),
+        "production_run_ready": production_run_ready,
+        "blocking_problems": list(infra_blocking) + live_input_blocking,
+        "infra_blocking_problems": list(infra_blocking),
+        "live_input_blocking_problems": live_input_blocking,
+    }
+
+
 def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | None = None) -> dict:
     """Verifies live infrastructure without ever printing a secret value.
     ``artifact_root_path`` is injectable so a test can point EVERY
@@ -283,23 +341,12 @@ def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | Non
         if not writable:
             blocking.append(f"{name}_not_writable")
 
-    infra_ready = not blocking
-    market_2026_ready = schedule_2026_available and live_2026_market_source_registered
-    if infra_ready and market_2026_ready:
-        overall_status = "READY"
-    elif infra_ready:
-        overall_status = "READY_WAITING_FOR_FIRST_DUE_CUTOFF"
-    else:
-        overall_status = "NOT_READY"
-
-    return {
-        "overall_status": overall_status,
-        "infra_ready": infra_ready,
-        "schedule_2026_available": schedule_2026_available,
-        "live_2026_market_source_registered": live_2026_market_source_registered,
-        "blocking_problems": blocking,
-        "checks": checks,
-    }
+    readiness = summarize_preflight_readiness(
+        infra_blocking=blocking,
+        schedule_2026_available=schedule_2026_available,
+        live_2026_market_source_registered=live_2026_market_source_registered,
+    )
+    return {**readiness, "checks": checks}
 
 
 # ===========================================================================
@@ -465,14 +512,38 @@ def attach_result(
 # ===========================================================================
 _EPSILON = 1e-6
 
+# Prospective scoring -- and therefore the production card -- is REG+POST
+# only; PRESEASON never enters (contract:
+# :mod:`nfl_hybrid.evaluation.prospective_strength_2026`,
+# ``PROSPECTIVE_SEASON_TYPES``). The historical ``backfill.games``
+# population already contains no PRESEASON rows, so this is a structural
+# guard for the day a live 2026 schedule source is wired in (BDL / nflverse
+# both expose preseason games), not a change to the current population or
+# to any prediction on it.
+REG_POST_SEASON_TYPES = ("REG", "POST")
+
+
+def filter_reg_post(games: pd.DataFrame) -> pd.DataFrame:
+    """Restrict a games population to ``season_type in {REG, POST}``.
+    Idempotent; a no-op on the historical backfill (which has no PRESEASON
+    rows). Fails closed if ``season_type`` is absent -- a schedule source
+    without it cannot prove it excludes preseason."""
+    if "season_type" not in games.columns:
+        raise ProductionHardStop(
+            "SCHEDULE_UNAVAILABLE", "games population is missing the season_type column (cannot exclude PRESEASON)"
+        )
+    keep = games["season_type"].astype(str).str.upper().isin(REG_POST_SEASON_TYPES)
+    return games.loc[keep].reset_index(drop=True)
+
 
 def load_games_population() -> pd.DataFrame:
     """The one canonical games/schedule source (per certification GROUNDING):
-    :func:`nfl_hybrid.data.external_data.resolve` ``"backfill.games"``.
-    Currently covers seasons 2020-2025 only -- see :func:`run_preflight`'s
-    ``schedule_2026_status`` check, which reports this honestly instead of
-    fabricating 2026 rows."""
-    return pd.read_parquet(resolve("backfill.games"))
+    :func:`nfl_hybrid.data.external_data.resolve` ``"backfill.games"``,
+    restricted to REG+POST via :func:`filter_reg_post` (PRESEASON is never
+    part of the 2026 production card). Currently covers seasons 2020-2025
+    only -- see :func:`run_preflight`'s ``schedule_2026_status`` check, which
+    reports this honestly instead of fabricating 2026 rows."""
+    return filter_reg_post(pd.read_parquet(resolve("backfill.games")))
 
 
 def apply_frozen_conditional_calibrator(raw_probability: np.ndarray, seed_state: dict) -> np.ndarray:
@@ -731,7 +802,7 @@ def run_horizon_batch(
         )
 
     try:
-        games_df = games if games is not None else load_games_population()
+        games_df = load_games_population() if games is None else filter_reg_post(games)
     except Exception as exc:
         return _finish("SCHEDULE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc), detail=str(exc))
 

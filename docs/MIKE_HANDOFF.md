@@ -240,14 +240,21 @@ sample. The certified model is unchanged.
 Canonical entrypoint: `scripts/run_2026_production_card.py` (`--preflight`,
 `--horizon TUE|FRI`, `--run-due`, `--attach-results`). Full operator
 instructions: [`PRODUCTION_RUNBOOK_2026.md`](PRODUCTION_RUNBOOK_2026.md).
-As of this certification, a real preflight in this environment reports
-`READY_WAITING_FOR_FIRST_DUE_CUTOFF` -- all infrastructure needed right
-now (hashes, calibration seed, historical data, writable ledgers) is
-genuinely ready; only the live 2026 schedule/market isn't available yet,
-which is expected pre-season. `THE_ODDS_API_KEY`/`NFL_LIVE_DATA_ROOT`
-still need to be set before the first live forecast. Scheduling is
-`OPERATOR_SCHEDULE_READY` (a GitHub Actions workflow and a launchd/cron
-fallback are both documented and ready), not yet `AUTOMATED`.
+A real preflight in this environment reports `BLOCKED_ON_LIVE_INPUTS`
+(`production_run_ready: false`): infrastructure readiness is reported
+separately (`infra_ready: true` -- hashes, calibration seed, historical
+data, writable ledgers all genuinely ready), but the two REQUIRED live
+2026 inputs are not yet available -- `blocking_problems` lists
+`schedule_2026_unavailable` (the historical `backfill.games` source tops
+out at season 2025; no live 2026 schedule adapter is wired into
+`run_horizon_batch`) and `live_2026_market_source_unregistered` (no
+`odds_history.2026` key is registered in
+`nfl_hybrid.data.external_data`, so `raw_market_reconstruction` has no
+live source). `--preflight` exits non-zero while blocked. `THE_ODDS_API_KEY`
+and `NFL_LIVE_DATA_ROOT` are also unset here and are needed before the
+first live forecast. Scheduling is `OPERATOR_SCHEDULE_READY` (a GitHub
+Actions workflow and a launchd/cron fallback are both documented and
+ready), not yet `AUTOMATED`.
 
 This certification does not claim sportsbook edge, and does not claim
 profitability.
