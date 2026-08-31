@@ -220,6 +220,21 @@ legitimate future claim of sportsbook edge or profitability; none exists
 yet. `scripts/report_2026_prospective_performance.py` reports
 `INSUFFICIENT_PROSPECTIVE_SAMPLE` until enough games have been scored.
 
+The exact rules that will decide whether any strength status can be
+*promoted* on 2026 evidence are frozen ahead of the results in
+[`PROSPECTIVE_VALIDATION_2026.md`](PROSPECTIVE_VALIDATION_2026.md) /
+`outputs/prospective_2026_strength_preregistration.json` (schema
+`PROSPECTIVE_2026_STRENGTH_V1`, hash
+`a8bfca90d97c54ad42064854d4ed0a1c7115820cae998c5b282a2f9a0dd468e9`):
+sample-maturity firewall, one frozen game-cluster bootstrap, fixed-bin
+ECE, per-gate `MET_STRONGLY` conditions, and a betting rule whose
+profitability path stays disabled until a deterministic executable-book
+policy is separately hash-frozen. Applied by
+`scripts/report_2026_strength_scorecard.py`
+(`nfl_hybrid.evaluation.prospective_strength_2026`), which reads only the
+immutable prospective ledgers and never promotes an empty/immature
+sample. The certified model is unchanged.
+
 ## Production Operation
 
 Canonical entrypoint: `scripts/run_2026_production_card.py` (`--preflight`,

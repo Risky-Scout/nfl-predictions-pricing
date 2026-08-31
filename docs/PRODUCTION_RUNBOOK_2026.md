@@ -245,3 +245,56 @@ launchctl load ~/Library/LaunchAgents/com.nfl-hybrid.production-2026.plist
 ```cron
 5 * * * 2,5 cd /Users/josephshackelford/actions-runner-nfl-2.335.1/_work/nfl-predictions-pricing/nfl-predictions-pricing && /usr/bin/python3 scripts/run_2026_production_card.py --run-due >> ~/Library/Logs/nfl-hybrid-production-2026.log 2>&1
 ```
+
+## 12. Prospective 2026 strength scorecard + shadow ledger
+
+The frozen promotion contract is
+[`PROSPECTIVE_VALIDATION_2026.md`](PROSPECTIVE_VALIDATION_2026.md) /
+`outputs/prospective_2026_strength_preregistration.json` (schema
+`PROSPECTIVE_2026_STRENGTH_V1`, hash
+`a8bfca90d97c54ad42064854d4ed0a1c7115820cae998c5b282a2f9a0dd468e9`).
+
+### 12a. Prospective strength scorecard
+
+```bash
+# Applies the frozen contract to the immutable prospective ledgers and
+# writes $NFL_MODEL_ARTIFACT_ROOT/production-2026/prospective-strength/
+#   PROSPECTIVE_2026_STATUS_SCORECARD.{json,md}
+# Safe to run now: with no attached results every performance row reads
+# INSUFFICIENT_PROSPECTIVE_SAMPLE / NOT_DEMONSTRATED / NOT_ESTABLISHED and
+# no row is promoted. Runs even with $NFL_MODEL_ARTIFACT_ROOT unset
+# (prints the empty-estate scorecard, writes nothing).
+PYTHONPATH=src python3 scripts/report_2026_strength_scorecard.py \
+  --data-through-utc "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+```
+
+### 12b. Shadow model-family ledger (already-elapsed games only)
+
+```bash
+# Replays the certified chronological OOF batching for the six frozen
+# Fix-7 candidates and writes immutable first-write-wins records under
+# $NFL_MODEL_ARTIFACT_ROOT/production-2026/shadow-model-family-ledger/.
+# NEVER touches the forecast / evaluation ledger or the calibration seed;
+# shadow output has no production-selection authority.
+PYTHONPATH=src python3 scripts/run_2026_shadow_model_family.py --horizon ALL
+```
+
+### 12c. Executable-book policy activation (profitability gate)
+
+Profitability is DISABLED (`BETTING_RULE_STATUS =
+NOT_ACTIVATED_FOR_PROFITABILITY`) until `config/executable_books_2026.json`
+exists and is hash-frozen. That file is **not** committed here and must
+not invent a sportsbook. When ready, author it as a fixed ordered list of
+eligible books (or another deterministic predeclared selection rule); the
+reporter records its SHA-256, and the hash locks on the first eligible
+live wager and is immutable for the season. Until then the reporter
+reports `NOT_ESTABLISHED` / `EXECUTABLE_BOOK_POLICY_NOT_FROZEN`.
+
+### 12d. Result attachment (unchanged)
+
+Outcomes still attach only through the certified immutable path
+(`scripts/run_2026_production_card.py --attach-results` /
+`nfl_hybrid.production.run_2026.attach_result`): strict
+`result_available_at_utc < attachment_run_time`, a separate sibling
+`*.result.json`, never a rewrite of the original forecast. The prospective
+strength scorecard reads those attached results; it never writes them.
