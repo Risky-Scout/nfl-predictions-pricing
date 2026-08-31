@@ -307,6 +307,34 @@ forecast-before-result across the 2026 season, reported by
 `INSUFFICIENT_PROSPECTIVE_SAMPLE` rather than force a conclusion from too
 few games.
 
+## Prospective 2026 strength promotion contract
+
+The exact rules that will decide whether any row above can be *promoted*
+on 2026 evidence are now frozen -- before meaningful 2026 regular-season
+results exist -- in
+[`PROSPECTIVE_VALIDATION_2026.md`](PROSPECTIVE_VALIDATION_2026.md) and
+[`outputs/prospective_2026_strength_preregistration.json`](../outputs/prospective_2026_strength_preregistration.json)
+(schema `PROSPECTIVE_2026_STRENGTH_V1`, preregistration hash
+`a8bfca90d97c54ad42064854d4ed0a1c7115820cae998c5b282a2f9a0dd468e9`). It
+freezes the sample-maturity firewall (no edge/profitability status
+`MET_STRONGLY` before 200 unique completed prospective games), one
+game-cluster bootstrap (10,000 resamples, seed `20260829`, cluster
+`game_id`, percentile 95% CI), fixed-bin ECE (10 fixed `[0.0,0.1) ...
+[0.9,1.0]` bins), the per-gate `MET_STRONGLY` conditions for calibration
+improvement / absolute probability quality / point-forecasting-vs-book /
+sportsbook probability edge / model-family stability / profitability, and
+the `BETTING_RULE_2026_V1` betting rule (profitability DISABLED until a
+deterministic executable-book policy is separately hash-frozen). It does
+**not** change the certified model -- no feature selection, model
+selection, calibration tuning, betting-threshold tuning, or retrospective
+optimisation. The reporter
+(`scripts/report_2026_strength_scorecard.py` /
+`nfl_hybrid.evaluation.prospective_strength_2026`) reads only the
+immutable prospective ledgers, never a retrospective 2020-2025 artifact,
+and never turns an empty or immature sample into a `MET` / `MET_STRONGLY`.
+The labels in this document are preserved as historical context until
+prospective evidence legitimately changes them.
+
 ## Production readiness
 
 Canonical entrypoint `scripts/run_2026_production_card.py`. As of this

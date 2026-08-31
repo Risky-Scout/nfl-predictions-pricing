@@ -743,6 +743,13 @@ def run_horizon_batch(
     h = horizon.lower()
     card_rows = membership_ledger[membership_ledger[f"{h}_cutoff_utc"] == target_cutoff_utc]
     eligible_ids = set(card_rows.loc[card_rows[f"{h}_eligible"], "game_id"].astype(str))
+    # Operational provenance only (no scientific-model behaviour change): the
+    # canonical (season, week, season_type) card key is persisted with every
+    # forecast so the prospective-strength contract can freeze its 2026
+    # REG+POST population and exclude PRESEASON.
+    season_type_by_game = {
+        str(g): st for g, st in zip(card_rows["game_id"].astype(str), card_rows["season_type"])
+    }
     if not eligible_ids:
         return _finish(
             "SCHEDULE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc),
@@ -865,10 +872,32 @@ def run_horizon_batch(
                     }
             markets_payload[market] = entry
 
+        # Operational provenance only (no scientific-model behaviour change):
+        # the explicit deterministic market-state hash, persisted AT FORECAST
+        # TIME over the EXACT {ATS, TOTAL} consensus market payload used for
+        # pricing -- SHA-256 of canonical_json({"ATS": <consensus market dict
+        # or null>, "TOTAL": <consensus market dict or null>}). Volatile
+        # provenance (created_at_utc / run_id / git_commit), the model's
+        # probabilities and any outcome are excluded by construction. The
+        # prospective-strength reporter reconstructs this payload from the
+        # immutable record alone and requires exact equality before any
+        # market-relative metric. ``None`` when no market state exists.
+        market_state_payload = {
+            m: (markets_payload[m].get("market")
+                if isinstance(markets_payload.get(m), dict) else None)
+            for m in (MARKET_ATS, MARKET_TOTAL)
+        }
+        market_state_hash = (
+            _sha256_hex(market_state_payload)
+            if any(v is not None for v in market_state_payload.values()) else None
+        )
+
         deterministic_payload = {
             "game_id": game_id, "horizon": horizon, "target_cutoff_utc": str(target_cutoff_utc),
             "season": int(row["season"]), "week": (None if pd.isna(row["week"]) else str(row["week"])),
+            "season_type": season_type_by_game.get(game_id),
             "prediction": prediction_payload, "markets": markets_payload,
+            "market_state_hash": market_state_hash,
             "certified_baseline_sha": CERTIFIED_SHA, "horizon_feature_semantics_hash": feature_state_hash,
             "operational_model_spec_hash": hash_checks["operational_model_spec_hash"],
             "fix8_preregistration_hash": hash_checks["fix8_preregistration_hash"],
@@ -885,7 +914,9 @@ def run_horizon_batch(
 
         write_evaluation_record(evaluation_root, {
             "game_id": game_id, "horizon": horizon, "target_cutoff_utc": str(target_cutoff_utc),
-            "season": int(row["season"]), "forecast": prediction_payload, "markets": markets_payload,
+            "season": int(row["season"]), "season_type": season_type_by_game.get(game_id),
+            "forecast": prediction_payload, "markets": markets_payload,
+            "market_state_hash": market_state_hash,
             "market_state": {"snapshot_available": market_snapshot_available, "error": market_error},
             "provenance": {"git_commit": git_commit, "run_id": run_id, "created_at_utc": utc_now().isoformat(), **hash_checks},
         })

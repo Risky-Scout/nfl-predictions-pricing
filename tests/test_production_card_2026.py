@@ -597,6 +597,92 @@ def test_run_horizon_batch_market_payload_fail_closed_without_frozen_seed(tmp_pa
     assert any_record["prediction"]["prediction"]["predicted_total"] is not None
 
 
+def _mk_market_batch(tmp_path, synthetic_games, monkeypatch):
+    """Run a REAL run_horizon_batch with a synthetic-but-complete market
+    consensus available (mirrors the fail-closed market test's setup)."""
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    monkeypatch.setattr(prod.rmr, "load_raw_bookmaker_quotes", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(prod.rmr, "build_coherent_book_observations", lambda quotes, market: pd.DataFrame())
+
+    def _synthetic_reconstruct(coherent, targets, *, market):
+        consensus = targets[["game_id", "target_cutoff_utc"]].copy()
+        consensus["consensus_line"] = -2.5 if market == prod.rmr.MARKET_SPREADS else 44.5
+        consensus["line_sd"] = 0.0
+        consensus["consensus_novig_probability"] = 0.5
+        consensus["probability_sd"] = 0.0
+        consensus["eligible_books"] = 5
+        consensus["bookmaker_keys"] = [["a", "b"]] * len(consensus)
+        consensus["selected_returned_snapshot_timestamps"] = [["2024-01-01T00:00:00Z"]] * len(consensus)
+        consensus["min_observation_age_hours"] = 1.0
+        consensus["max_observation_age_hours"] = 2.0
+        consensus["consensus_method"] = "median"
+        consensus = consensus[list(prod.rmr.CONSENSUS_COLUMNS)]
+        return prod.rmr.MarketReconstructionResult(market=market, consensus=consensus, coverage={})
+
+    monkeypatch.setattr(prod.rmr, "reconstruct_market_at_cutoffs", _synthetic_reconstruct)
+    monkeypatch.setattr(prod, "artifact_root", lambda: tmp_path)
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=synthetic_games,
+    )
+    assert manifest["status"] == "SUCCESS"
+    assert manifest["market_ready_counts"]["ATS"] > 0
+    return tmp_path
+
+
+def test_market_state_hash_persisted_at_forecast_time_and_ledgers_agree(tmp_path, synthetic_games, monkeypatch):
+    from nfl_hybrid.evaluation import prospective_strength_2026 as ps
+
+    root = _mk_market_batch(tmp_path, synthetic_games, monkeypatch)
+    fdir = root / "production-2026" / "forecast-ledger" / "TUE"
+    edir = root / "production-2026" / "evaluation-ledger"
+
+    forecast_by_game = {}
+    for path in fdir.glob("*.json"):
+        rec = json.loads(path.read_text())
+        h = rec["prediction"]["market_state_hash"]
+        assert isinstance(h, str) and len(h) == 64  # explicit, persisted at forecast time
+        forecast_by_game[rec["game_id"]] = h
+
+    checked = 0
+    for path in edir.glob("*/*.json"):
+        if path.name.endswith((".result.json", ".json.tmp")):
+            continue
+        erec = json.loads(path.read_text())
+        gid = erec["game_id"]
+        # forecast-ledger and evaluation-ledger hashes agree
+        assert erec["market_state_hash"] == forecast_by_game[gid]
+        # the reporter's recompute over the immutable record matches exactly
+        assert ps.compute_market_state_hash(erec) == erec["market_state_hash"]
+        # volatile provenance is not in the hashed payload
+        payload = ps.build_market_state_payload(erec)
+        for mkt in ("ATS", "TOTAL"):
+            if payload[mkt] is not None:
+                assert "created_at_utc" not in payload[mkt]
+                assert "run_id" not in payload[mkt]
+        # tampering a persisted consensus field breaks the recompute
+        erec["markets"]["ATS"]["market"]["consensus_line"] = 999.0
+        assert ps.compute_market_state_hash(erec) != erec["market_state_hash"]
+        checked += 1
+    assert checked > 0
+
+
+def test_market_state_hash_is_idempotent_across_reruns(tmp_path, synthetic_games, monkeypatch):
+    root = _mk_market_batch(tmp_path, synthetic_games, monkeypatch)
+    fdir = root / "production-2026" / "forecast-ledger" / "TUE"
+    first = {json.loads(p.read_text())["game_id"]: json.loads(p.read_text())["prediction"]["market_state_hash"]
+             for p in fdir.glob("*.json")}
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    rerun = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=synthetic_games,
+    )
+    assert rerun["status"] == "SUCCESS"
+    second = {json.loads(p.read_text())["game_id"]: json.loads(p.read_text())["prediction"]["market_state_hash"]
+              for p in fdir.glob("*.json")}
+    assert first == second and len(first) > 0
+
+
 def test_calibrated_path_values_unchanged_by_fail_closed_hardening():
     """A valid frozen seed still produces the exact previously verified
     calibrated values -- byte-for-byte identical to reconstructing them from
