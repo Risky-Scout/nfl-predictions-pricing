@@ -433,8 +433,60 @@ def _assert_registry_unchanged() -> None:
 # Team-state construction (Elo, unmodified + Week1-blended game-result state
 # + the shared days_since_last_game rest transform).
 # ---------------------------------------------------------------------------
-_TEAM_STATE_CACHE: dict[tuple[int, str, int], pd.DataFrame] = {}
-_MATRIX_CACHE: dict[tuple[int, tuple[str, ...], str], tuple[pd.DataFrame, list[str]]] = {}
+# Process-lifetime memoization caches. Keyed by a CONTENT fingerprint of the
+# games frame (:func:`_games_content_fingerprint`), never by ``id(games)``:
+# ``id()`` is a CPython memory address that is recycled once a frame is
+# garbage-collected, so an ``id(games)`` key let a brand-new, different frame
+# be handed a stale cached matrix belonging to a freed object (confirmed
+# process-lifetime cache corruption; a forced id-reuse reproduction returned
+# a stale Elo matrix with a 73.333% home_elo_pregame_rating mismatch). A
+# content fingerprint makes the memoization identity-independent: identical
+# content always hits the same entry, any content/schema change always
+# misses. This is a software-correctness fix only -- no formula, feature, or
+# certified hash changes, and the fingerprint is never persisted as
+# evidence.
+_TEAM_STATE_CACHE: dict[tuple[str, str, str], pd.DataFrame] = {}
+_MATRIX_CACHE: dict[tuple[str, tuple[str, ...], str], tuple[pd.DataFrame, list[str]]] = {}
+
+
+def _games_content_fingerprint(games: pd.DataFrame) -> str:
+    """Deterministic, object-identity-independent content digest of a games
+    frame, used ONLY as an in-process memoization key.
+
+    SHA-256 over: the ordered ``(column name, dtype)`` schema, the frame
+    shape, and pandas' stable per-row/value hash
+    (:func:`pandas.util.hash_pandas_object`, which uses a FIXED hash key --
+    not Python's randomized built-in :func:`hash` -- and is stable across
+    processes and interpreter versions). The index is folded in
+    (``index=True``) because row order / index labels are semantically
+    meaningful for the canonical games frame. Row-hash bytes are written
+    little-endian so the digest does not depend on host byte order.
+
+    Guarantees required of a cache fingerprint: deterministic within a
+    process and independent of ``id(games)`` / ``hash(games)`` / object
+    address; changes on any value change; changes on any schema (column
+    name / dtype) change; changes on row-count or index change. Never
+    persisted, never treated as scientific evidence.
+    """
+    digest = sha256()
+    schema = json.dumps([[str(c), str(t)] for c, t in zip(games.columns, games.dtypes)])
+    digest.update(schema.encode("utf-8"))
+    digest.update(repr(tuple(games.shape)).encode("utf-8"))
+    row_hashes = pd.util.hash_pandas_object(games, index=True).to_numpy()
+    digest.update(np.ascontiguousarray(row_hashes, dtype="<u8").tobytes())
+    return digest.hexdigest()
+
+
+def _rolling_config_fingerprint(rolling_config: PregameRollingConfig | None) -> str:
+    """Deterministic digest of the (normalized) rolling config that actually
+    affects cached team state -- ``None`` and an explicit
+    ``PregameRollingConfig(windows=(8,))`` collapse to the same value
+    because :func:`build_production_team_state` treats them identically."""
+    from dataclasses import asdict
+
+    rcfg = rolling_config or PregameRollingConfig(windows=(8,))
+    payload = json.dumps({"rolling_config": asdict(rcfg)}, sort_keys=True)
+    return sha256(payload.encode("utf-8")).hexdigest()
 
 
 def build_production_team_state(
@@ -449,7 +501,11 @@ def build_production_team_state(
     assert_production_eligible("elo_inputs")
     assert_production_eligible("game_result")
 
-    cache_key = (id(games), compute_week1_prior_config_hash(week1_config), len(games))
+    cache_key = (
+        _games_content_fingerprint(games),
+        compute_week1_prior_config_hash(week1_config),
+        _rolling_config_fingerprint(rolling_config),
+    )
     cached = _TEAM_STATE_CACHE.get(cache_key)
     if cached is not None:
         return cached
@@ -497,7 +553,11 @@ def build_candidate_matrix(
     seasons = pd.to_numeric(games["season"], errors="raise")
     assert_selection_season_allowed(seasons)
 
-    cache_key = (id(games), tuple(sorted(group_names)), compute_week1_prior_config_hash(week1_config))
+    cache_key = (
+        _games_content_fingerprint(games),
+        tuple(sorted(group_names)),
+        compute_week1_prior_config_hash(week1_config),
+    )
     cached = _MATRIX_CACHE.get(cache_key)
     if cached is not None:
         return cached[0].copy(), list(cached[1])
