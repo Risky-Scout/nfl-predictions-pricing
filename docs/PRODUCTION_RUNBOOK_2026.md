@@ -34,21 +34,40 @@ pip install -e '.[data,dev]'
 python3 scripts/run_2026_production_card.py --preflight
 ```
 
-Checks (SET/UNSET only, never a value): required env vars, `nflreadpy`
-availability, the four certified scientific hashes, Fix-8 calibration seed
-presence, `backfill.games` schema resolution, output directory
-writability, current git commit. Exits 0 only if `overall_status: READY`.
+Checks (SET/UNSET only, never a value): required env vars, the four
+certified scientific hashes, Fix-8 calibration seed presence,
+`backfill.games` schema resolution, output directory writability, current
+git commit.
 
-**As of this certification (2026-08-26), a real run of this command in
-this environment reports `READY_WAITING_FOR_FIRST_DUE_CUTOFF`**: every
-piece of infrastructure needed right now (certified hashes, the Fix-8
-calibration seed, historical data access, writable ledger directories,
-git commit) is genuinely ready, but the live 2026 schedule is not yet
-available (the historical `backfill.games` source tops out at season
-2025) and no live market source is registered -- expected, since the 2026
-season has not started. `THE_ODDS_API_KEY` and `NFL_LIVE_DATA_ROOT` are
-also unset in this environment and will need to be set before the first
-real live forecast, once the season is underway. See
+The result separates **infrastructure readiness** from **live-input
+readiness**:
+
+| Field | Meaning |
+|---|---|
+| `infra_ready` | Certified hashes match, calibration seed present, ledger dirs writable, git commit identified |
+| `schedule_2026_available` | The games/schedule source actually contains season 2026 |
+| `live_2026_market_source_registered` | A live 2026 market source is registered for `raw_market_reconstruction` (an `odds_history.2026` key) |
+| `production_run_ready` | `true` **only** when `infra_ready` **and** both live inputs above are available |
+| `blocking_problems` | Every unmet requirement, named -- infra blockers plus `schedule_2026_unavailable` / `live_2026_market_source_unregistered` |
+
+`overall_status` is `READY` (all of the above), `BLOCKED_ON_LIVE_INPUTS`
+(infra ready, a required live input missing), or `NOT_READY` (an infra
+blocker). **`--preflight` exits 0 only when `production_run_ready` is
+`true`**; `BLOCKED_ON_LIVE_INPUTS` exits non-zero so an operator or
+scheduler cannot mistake it for readiness. There is no
+`READY_WAITING_FOR_FIRST_DUE_CUTOFF` status -- a system missing a required
+live input is blocked, not "waiting".
+
+**A real run of this command in this environment currently reports
+`BLOCKED_ON_LIVE_INPUTS`** (`production_run_ready: false`): infrastructure
+is genuinely ready, but `blocking_problems` lists
+`schedule_2026_unavailable` (the historical `backfill.games` source tops
+out at season 2025; no live 2026 schedule adapter is wired into
+`run_horizon_batch`) and `live_2026_market_source_unregistered` (no
+`odds_history.2026` key is registered in
+`nfl_hybrid.data.external_data`). `THE_ODDS_API_KEY` and
+`NFL_LIVE_DATA_ROOT` are also unset here and will need to be set before
+the first real live forecast. See
 [`MODEL_STRENGTH_AND_LIMITATIONS.md`](MODEL_STRENGTH_AND_LIMITATIONS.md#production-readiness)
 for the full status.
 

@@ -337,17 +337,22 @@ prospective evidence legitimately changes them.
 
 ## Production readiness
 
-Canonical entrypoint `scripts/run_2026_production_card.py`. As of this
-certification (2026-08-26), a real `--preflight` run in this environment
-reports `READY_WAITING_FOR_FIRST_DUE_CUTOFF`: every piece of
-infrastructure needed right now is genuinely ready (certified hashes
-match, the Fix-8 calibration seed is present, historical data resolves,
-ledger directories are writable, the git commit is identified) -- the
-only thing not yet available is the live 2026 schedule/market itself,
-which is expected pre-season (the historical `backfill.games` source
-covers 2020-2025 only; no live market source is registered yet).
-`THE_ODDS_API_KEY` and `NFL_LIVE_DATA_ROOT` are also unset in this
-environment and will need to be set once the season is live. All
+Canonical entrypoint `scripts/run_2026_production_card.py`. A real
+`--preflight` run in this environment reports `BLOCKED_ON_LIVE_INPUTS`
+with `production_run_ready: false`. Infrastructure readiness is reported
+separately and is genuinely satisfied (`infra_ready: true` -- certified
+hashes match, the Fix-8 calibration seed is present, historical data
+resolves, ledger directories are writable, the git commit is
+identified), but the two REQUIRED live 2026 production inputs are not:
+`blocking_problems` names `schedule_2026_unavailable` (the historical
+`backfill.games` source covers 2020-2025 only and no live 2026 schedule
+adapter is wired into `run_horizon_batch`) and
+`live_2026_market_source_unregistered` (no `odds_history.2026` registry
+key exists, so `raw_market_reconstruction` has no live market source).
+`--preflight` exits non-zero while blocked, so a scheduler cannot mistake
+this state for readiness. `THE_ODDS_API_KEY` and `NFL_LIVE_DATA_ROOT` are
+also unset in this environment and will need to be set once the season is
+live. All
 ledger/manifest/immutability/result-attachment mechanics are implemented
 and tested (25 focused tests, including a real historical 2024
 week-3 TUE/FRI integration run -- see
