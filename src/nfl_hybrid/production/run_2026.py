@@ -496,6 +496,51 @@ def apply_frozen_conditional_calibrator(raw_probability: np.ndarray, seed_state:
     return np.clip(expit(calibrated_logit), _EPSILON, 1.0 - _EPSILON)
 
 
+def _frozen_stream_calibration_ready(seed_state: object) -> bool:
+    """A production stream is CALIBRATED only when EVERY frozen calibration
+    component the certified ``three_way`` apply path dereferences is present
+    and well-formed:
+
+      - ``seed_state`` is a mapping;
+      - ``conditional_calibrator_state`` exists, is a mapping, ``fitted`` true;
+      - its ``coefficient`` yields a finite ``[0][0]`` float and ``intercept``
+        a finite ``[0]`` float -- exactly what
+        :func:`apply_frozen_conditional_calibrator` reads;
+      - ``push_scale_state`` exists, is a mapping, with a finite numeric
+        ``global_scale`` and a mapping ``bucket_scales`` -- exactly what
+        :func:`nfl_hybrid.calibration.three_way._predict_push` reads.
+
+    Any missing/malformed component -> ``False``: the stream is fail-closed to
+    ``CALIBRATION_NOT_READY`` with NO numeric ``calibrated_`` output, and the
+    raw push probability is NEVER substituted for an absent frozen push
+    calibrator while still labelling the stream CALIBRATED. Introduces no new
+    calibration semantics -- it validates only the frozen state the existing
+    certified apply path already requires."""
+    if not isinstance(seed_state, dict):
+        return False
+    cond = seed_state.get("conditional_calibrator_state")
+    if not isinstance(cond, dict) or not cond.get("fitted", False):
+        return False
+    try:
+        coef = float(cond["coefficient"][0][0])
+        intercept = float(cond["intercept"][0])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+    if not (np.isfinite(coef) and np.isfinite(intercept)):
+        return False
+    push = seed_state.get("push_scale_state")
+    if not isinstance(push, dict):
+        return False
+    global_scale = push.get("global_scale")
+    if isinstance(global_scale, bool) or not isinstance(global_scale, (int, float)):
+        return False
+    if not np.isfinite(float(global_scale)):
+        return False
+    if not isinstance(push.get("bucket_scales"), dict):
+        return False
+    return True
+
+
 def price_and_calibrate(
     residual_ledger: pd.DataFrame, *, horizon: str, market_consensus: dict[str, pd.DataFrame],
     calibration_seed: dict[str, dict],
@@ -509,7 +554,19 @@ def price_and_calibrate(
     market-dependent, so an absent/empty ``market_consensus`` entry for a
     market means that stream is entirely omitted (the caller must treat a
     missing stream as MARKET_NOT_READY for every game in this batch, never
-    price at a synthetic line)."""
+    price at a synthetic line).
+
+    FAIL-CLOSED: a stream is CALIBRATED only when its frozen seed passes
+    :func:`_frozen_stream_calibration_ready` (fitted conditional
+    coefficient/intercept AND a valid ``push_scale_state`` with
+    ``global_scale`` + ``bucket_scales``). If ANY required component is
+    absent/malformed, or for any individual row that is not RAW_READY, every
+    ``calibrated_*`` probability column is set to NaN and
+    ``calibration_status`` is ``CALIBRATION_NOT_READY``. Raw probabilities are
+    never recombined into a ``calibrated_``-named field when the frozen
+    calibrator is incomplete -- in particular the raw push probability is
+    never substituted for a missing frozen push calibrator -- and the
+    ``raw_*`` columns remain populated for diagnostics/provenance."""
     cfg = CalibrationConfig()
     priced: dict[str, pd.DataFrame] = {}
     for market in (MARKET_ATS, MARKET_TOTAL):
@@ -533,19 +590,19 @@ def price_and_calibrate(
         raw["market_novig_probability"] = merged["consensus_novig_probability"].to_numpy(float)
 
         seed_state = calibration_seed.get(stream)
-        seed_fitted = bool(seed_state and seed_state.get("conditional_calibrator_state", {}).get("fitted"))
-        if seed_fitted:
+        seed_ready = _frozen_stream_calibration_ready(seed_state)
+        raw["calibration_status"] = np.where(
+            (raw["raw_status"] == "RAW_READY") & seed_ready, "CALIBRATED", "CALIBRATION_NOT_READY",
+        )
+
+        if seed_ready:
             raw["calibrated_conditional_upper_probability"] = apply_frozen_conditional_calibrator(
                 raw["raw_conditional_upper_probability"].to_numpy(float), seed_state,
             )
-        else:
-            raw["calibrated_conditional_upper_probability"] = np.nan
-        raw["calibration_status"] = np.where(
-            (raw["raw_status"] == "RAW_READY") & seed_fitted, "CALIBRATED", "CALIBRATION_NOT_READY",
-        )
-
-        push_state = seed_state.get("push_scale_state") if seed_fitted else None
-        if push_state is not None:
+            # seed_ready guarantees push_scale_state + global_scale + bucket_scales
+            # are all present and valid -- the raw push probability is NEVER used
+            # as a stand-in for a missing frozen push calibrator.
+            push_state = seed_state["push_scale_state"]
             legacy_market = _LEGACY_PUSH_MARKET_NAME[market]
             frame_for_push = pd.DataFrame({
                 "model_push_probability": raw["raw_push_probability"].to_numpy(float),
@@ -554,16 +611,31 @@ def price_and_calibrate(
             calibrated_push = _predict_push(
                 frame_for_push, legacy_market, push_state["global_scale"], push_state["bucket_scales"], cfg,
             )
+            lower, push_final, upper = _recombine(
+                raw["calibrated_conditional_upper_probability"].to_numpy(float), calibrated_push,
+            )
         else:
-            calibrated_push = raw["raw_push_probability"].to_numpy(float)
+            # FAIL-CLOSED: at least one required frozen calibration component
+            # (fitted conditional coefficient/intercept, or push_scale_state's
+            # global_scale/bucket_scales) is missing/malformed for this stream.
+            # No field whose name begins ``calibrated_`` may carry a number, and
+            # the raw push probability is NEVER substituted for an absent frozen
+            # push calibrator. The raw_* columns produced above are preserved
+            # untouched for diagnostics/provenance.
+            nan_col = np.full(len(raw), np.nan)
+            raw["calibrated_conditional_upper_probability"] = nan_col
+            lower = push_final = upper = nan_col
 
-        conditional_for_recombine = raw["calibrated_conditional_upper_probability"].to_numpy(float)
-        raw_conditional = raw["raw_conditional_upper_probability"].to_numpy(float)
-        conditional_for_recombine = np.where(np.isnan(conditional_for_recombine), raw_conditional, conditional_for_recombine)
-        lower, push_final, upper = _recombine(conditional_for_recombine, calibrated_push)
-        raw["calibrated_lower_probability"] = lower
-        raw["calibrated_push_probability"] = push_final
-        raw["calibrated_upper_probability"] = upper
+        # Even with a fitted seed, a row that is not RAW_READY is not genuinely
+        # CALIBRATED -- keep every ``calibrated_`` probability fail-closed (NaN)
+        # for it too, so a numeric ``calibrated_`` value always means CALIBRATED.
+        calibrated_mask = raw["calibration_status"].to_numpy() == "CALIBRATED"
+        raw["calibrated_conditional_upper_probability"] = np.where(
+            calibrated_mask, raw["calibrated_conditional_upper_probability"].to_numpy(float), np.nan,
+        )
+        raw["calibrated_lower_probability"] = np.where(calibrated_mask, lower, np.nan)
+        raw["calibrated_push_probability"] = np.where(calibrated_mask, push_final, np.nan)
+        raw["calibrated_upper_probability"] = np.where(calibrated_mask, upper, np.nan)
 
         priced[stream] = raw
     return priced
@@ -767,21 +839,27 @@ def run_horizon_batch(
                 else:
                     r = row_match.iloc[0]
                     calib_status = str(r["calibration_status"])
-                    if calib_status == "CALIBRATED":
+                    calibrated = calib_status == "CALIBRATED"
+                    # Section 24 item 5: only a genuinely calibrated stream
+                    # increments the calibration-ready count.
+                    if calibrated:
                         calibration_ready_counts[market] += 1
                     entry = {
-                        "status": "OK" if calib_status == "CALIBRATED" else "CALIBRATION_NOT_READY",
+                        "status": "OK" if calibrated else "CALIBRATION_NOT_READY",
                         "market": consensus_entry,
+                        # Raw probabilities stay available for diagnostics/provenance
+                        # regardless of calibration readiness (Section 24 item 7).
                         "raw_home_probability": float(r["raw_home_probability"]),
                         "raw_push_probability": float(r["raw_push_probability"]),
                         "raw_away_probability": float(r["raw_away_probability"]),
                         "raw_conditional_upper_probability": float(r["raw_conditional_upper_probability"]),
-                        "calibrated_lower_probability": float(r["calibrated_lower_probability"]),
-                        "calibrated_push_probability": float(r["calibrated_push_probability"]),
-                        "calibrated_upper_probability": float(r["calibrated_upper_probability"]),
+                        # FAIL-CLOSED: never expose a numeric ``calibrated_``
+                        # probability when the frozen calibrator is unavailable.
+                        "calibrated_lower_probability": float(r["calibrated_lower_probability"]) if calibrated else None,
+                        "calibrated_push_probability": float(r["calibrated_push_probability"]) if calibrated else None,
+                        "calibrated_upper_probability": float(r["calibrated_upper_probability"]) if calibrated else None,
                         "calibrated_conditional_upper_probability": (
-                            float(r["calibrated_conditional_upper_probability"])
-                            if pd.notna(r["calibrated_conditional_upper_probability"]) else None
+                            float(r["calibrated_conditional_upper_probability"]) if calibrated else None
                         ),
                         "calibration_status": calib_status,
                     }

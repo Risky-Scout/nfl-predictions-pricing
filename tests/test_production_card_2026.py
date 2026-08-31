@@ -442,6 +442,353 @@ def test_price_and_calibrate_omits_stream_when_no_market_consensus_supplied():
 
 
 # ===========================================================================
+# CALIBRATION FAIL-CLOSED HARDENING -- when the frozen Fix-8 production
+# calibration seed is missing/unfitted, price_and_calibrate must NOT
+# recombine raw conditional/push probabilities into any ``calibrated_``-named
+# field. Every ``calibrated_*`` probability is NaN, calibration_status is
+# CALIBRATION_NOT_READY, and the raw_* probabilities stay available for
+# diagnostics/provenance. Hermetic: hand-built residual ledger + consensus +
+# seed, exercising the REAL production functions (no mocks of them).
+# ===========================================================================
+_CALIBRATED_PROBABILITY_FIELDS = (
+    "calibrated_conditional_upper_probability",
+    "calibrated_lower_probability",
+    "calibrated_push_probability",
+    "calibrated_upper_probability",
+)
+_RAW_PROBABILITY_FIELDS = (
+    "raw_home_probability", "raw_push_probability", "raw_away_probability", "raw_conditional_upper_probability",
+)
+
+
+def _fail_closed_residual_ledger() -> pd.DataFrame:
+    return pd.DataFrame({
+        "game_id": ["G1", "G2", "G3"], "season": [2023, 2023, 2023], "week": [10, 10, 10],
+        "target_cutoff_utc": pd.to_datetime(["2023-11-07T17:00:00Z"] * 3, utc=True),
+        "result_available_at_utc": pd.to_datetime(["2023-11-13T00:00:00Z"] * 3, utc=True),
+        "model_config_hash": ["h"] * 3, "feature_state_hash": ["f"] * 3,
+        "status": ["OOF"] * 3, "uncertainty_eligible": [True] * 3,
+        "predicted_margin": [3.0, -2.0, 1.0], "predicted_total": [45.0, 42.0, 48.0],
+        "actual_margin": [np.nan] * 3, "actual_total": [np.nan] * 3,
+        "margin_residual_sd_oof": [7.0, 7.0, 7.0], "total_residual_sd_oof": [9.0, 9.0, 9.0],
+    })
+
+
+def _fail_closed_consensus(lines) -> pd.DataFrame:
+    return pd.DataFrame({
+        "game_id": ["G1", "G2", "G3"], "consensus_line": lines,
+        "consensus_novig_probability": [0.5, 0.52, 0.48], "eligible_books": [5, 5, 5],
+        "bookmaker_keys": [["a", "b"]] * 3, "selected_returned_snapshot_timestamps": [["2023-11-07T12:00:00Z"]] * 3,
+        "min_observation_age_hours": [1.0, 1.0, 1.0], "max_observation_age_hours": [2.0, 2.0, 2.0],
+        "consensus_method": ["median"] * 3,
+    })
+
+
+@pytest.mark.parametrize("calibration_seed", [
+    pytest.param({}, id="seed-entirely-absent"),
+    pytest.param(
+        {stream: {"conditional_calibrator_state": {"fitted": False},
+                  "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}}}
+         for stream in ("ATS_TUE", "TOTAL_TUE")},
+        id="seed-present-but-unfitted",
+    ),
+])
+def test_price_and_calibrate_fail_closed_when_frozen_seed_unavailable(calibration_seed):
+    market_consensus = {
+        "ATS": _fail_closed_consensus([-3.5, 2.0, -1.0]), "TOTAL": _fail_closed_consensus([44.5, 41.0, 47.5]),
+    }
+    priced = prod.price_and_calibrate(
+        _fail_closed_residual_ledger(), horizon="TUE", market_consensus=market_consensus,
+        calibration_seed=calibration_seed,
+    )
+    assert set(priced.keys()) == {"ATS_TUE", "TOTAL_TUE"}
+    for stream, frame in priced.items():
+        # missing/unfitted seed => CALIBRATION_NOT_READY for every row
+        assert (frame["calibration_status"] == "CALIBRATION_NOT_READY").all(), stream
+        # every calibrated_* probability field is NaN -- raw values are NEVER
+        # recombined into a calibrated_-named field when the calibrator is gone
+        for field in _CALIBRATED_PROBABILITY_FIELDS:
+            assert frame[field].isna().all(), f"{stream}.{field} must be NaN when the frozen calibrator is unavailable"
+        # raw probabilities remain available (diagnostics/provenance)
+        for field in _RAW_PROBABILITY_FIELDS:
+            assert frame[field].notna().all(), f"{stream}.{field} must stay populated"
+            assert frame[field].between(0.0, 1.0).all(), f"{stream}.{field}"
+
+
+def test_run_horizon_batch_market_payload_fail_closed_without_frozen_seed(tmp_path, synthetic_games, monkeypatch):
+    """End-to-end through the REAL ``run_horizon_batch``: a batch where the
+    market snapshot IS available but the frozen calibration seed is not.
+
+    The tiny synthetic OOF population never reaches raw-pricing readiness, so
+    ``price_and_calibrate`` is wrapped to (a) call the REAL function and (b)
+    force ``raw_status = RAW_READY`` on its output -- the calibration
+    fail-closed masking (``calibrated_* == NaN``, ``calibration_status``) is
+    left EXACTLY as the real function produced it. This isolates the
+    ``run_horizon_batch`` market-payload branch: every entry that reaches
+    pricing must be CALIBRATION_NOT_READY with all ``calibrated_*``
+    probabilities None, raw probabilities present, NO calibration_ready_count
+    increment, and the canonical margin/total point forecast still written."""
+    cutoffs = _last_card_cutoffs(synthetic_games)
+
+    monkeypatch.setattr(prod.rmr, "load_raw_bookmaker_quotes", lambda *a, **k: pd.DataFrame())
+    monkeypatch.setattr(prod.rmr, "build_coherent_book_observations", lambda quotes, market: pd.DataFrame())
+
+    def _synthetic_reconstruct(coherent, targets, *, market):
+        consensus = targets[["game_id", "target_cutoff_utc"]].copy()
+        consensus["consensus_line"] = -2.5 if market == prod.rmr.MARKET_SPREADS else 44.5
+        consensus["line_sd"] = 0.0
+        consensus["consensus_novig_probability"] = 0.5
+        consensus["probability_sd"] = 0.0
+        consensus["eligible_books"] = 5
+        consensus["bookmaker_keys"] = [["a", "b"]] * len(consensus)
+        consensus["selected_returned_snapshot_timestamps"] = [["2024-01-01T00:00:00Z"]] * len(consensus)
+        consensus["min_observation_age_hours"] = 1.0
+        consensus["max_observation_age_hours"] = 2.0
+        consensus["consensus_method"] = "median"
+        consensus = consensus[list(prod.rmr.CONSENSUS_COLUMNS)]
+        return prod.rmr.MarketReconstructionResult(market=market, consensus=consensus, coverage={})
+
+    monkeypatch.setattr(prod.rmr, "reconstruct_market_at_cutoffs", _synthetic_reconstruct)
+    # Point the seed lookup at an empty dir so this holds even when a real
+    # NFL_MODEL_ARTIFACT_ROOT with a real seed is configured on the box.
+    monkeypatch.setattr(prod, "artifact_root", lambda: tmp_path)
+
+    real_price_and_calibrate = prod.price_and_calibrate
+
+    def _raw_ready_price_and_calibrate(*args, **kwargs):
+        priced = real_price_and_calibrate(*args, **kwargs)
+        for frame in priced.values():
+            frame["raw_status"] = "RAW_READY"
+            frame["raw_home_probability"] = frame["raw_home_probability"].fillna(0.45)
+            frame["raw_away_probability"] = frame["raw_away_probability"].fillna(0.45)
+            frame["raw_push_probability"] = frame["raw_push_probability"].fillna(0.10)
+            frame["raw_conditional_upper_probability"] = frame["raw_conditional_upper_probability"].fillna(0.55)
+        return priced
+
+    monkeypatch.setattr(prod, "price_and_calibrate", _raw_ready_price_and_calibrate)
+
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=synthetic_games,
+    )
+    assert manifest["status"] == "SUCCESS"
+    assert manifest["market_ready_counts"]["ATS"] > 0  # market snapshot genuinely present
+    # no calibrated_ready_count increment for a non-calibrated stream
+    assert manifest["calibration_ready_counts"] == {"ATS": 0, "TOTAL": 0}
+
+    ledger_dir = tmp_path / "production-2026" / "forecast-ledger" / "TUE"
+    priced_entries = 0
+    for path in ledger_dir.glob("*.json"):
+        record = json.loads(path.read_text())
+        for market in ("ATS", "TOTAL"):
+            entry = record["prediction"]["markets"][market]
+            if entry["status"] != "CALIBRATION_NOT_READY":
+                continue
+            priced_entries += 1
+            assert entry["calibration_status"] == "CALIBRATION_NOT_READY"
+            for field in _CALIBRATED_PROBABILITY_FIELDS:
+                assert entry[field] is None, f"{market}.{field} must be None without a frozen calibrator"
+            for field in _RAW_PROBABILITY_FIELDS:
+                assert 0.0 <= entry[field] <= 1.0, f"{market}.{field}"
+    assert priced_entries > 0  # the fail-closed pricing path was actually exercised
+
+    any_record = json.loads(next(ledger_dir.glob("*.json")).read_text())
+    assert any_record["prediction"]["prediction"]["predicted_margin"] is not None
+    assert any_record["prediction"]["prediction"]["predicted_total"] is not None
+
+
+def test_calibrated_path_values_unchanged_by_fail_closed_hardening():
+    """A valid frozen seed still produces the exact previously verified
+    calibrated values -- byte-for-byte identical to reconstructing them from
+    three_way.py's own apply-path primitives (apply_frozen_conditional_calibrator
+    + _predict_push + _recombine). The fail-closed masking must not perturb a
+    genuinely CALIBRATED row."""
+    market_consensus = {
+        "ATS": _fail_closed_consensus([-3.5, 2.0, -1.0]), "TOTAL": _fail_closed_consensus([44.5, 41.0, 47.5]),
+    }
+    calibration_seed = {
+        "ATS_TUE": {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]},
+                    "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}}},
+        "TOTAL_TUE": {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.05]], "intercept": [0.01]},
+                      "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}}},
+    }
+    priced = prod.price_and_calibrate(
+        _fail_closed_residual_ledger(), horizon="TUE", market_consensus=market_consensus,
+        calibration_seed=calibration_seed,
+    )
+    cfg = CalibrationConfig()
+    for stream, frame in priced.items():
+        assert (frame["calibration_status"] == "CALIBRATED").all(), stream
+        seed_entry = calibration_seed[stream]
+        expected_cond = prod.apply_frozen_conditional_calibrator(
+            frame["raw_conditional_upper_probability"].to_numpy(float), seed_entry,
+        )
+        push_state = seed_entry["push_scale_state"]
+        legacy_market = prod._LEGACY_PUSH_MARKET_NAME[stream.split("_")[0]]
+        push_frame = pd.DataFrame({
+            "model_push_probability": frame["raw_push_probability"].to_numpy(float),
+            "market_line": frame["market_line"].to_numpy(float),
+        })
+        expected_push_in = prod._predict_push(
+            push_frame, legacy_market, push_state["global_scale"], push_state["bucket_scales"], cfg,
+        )
+        exp_lower, exp_push, exp_upper = prod._recombine(expected_cond, expected_push_in)
+        np.testing.assert_array_equal(
+            frame["calibrated_conditional_upper_probability"].to_numpy(float), expected_cond,
+        )
+        np.testing.assert_array_equal(frame["calibrated_lower_probability"].to_numpy(float), exp_lower)
+        np.testing.assert_array_equal(frame["calibrated_push_probability"].to_numpy(float), exp_push)
+        np.testing.assert_array_equal(frame["calibrated_upper_probability"].to_numpy(float), exp_upper)
+
+
+def _complete_seed_entry(coef: float = 0.08, intercept: float = -0.02) -> dict:
+    return {
+        "conditional_calibrator_state": {"fitted": True, "coefficient": [[coef]], "intercept": [intercept]},
+        "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}},
+    }
+
+
+# ===========================================================================
+# FULL-SEED FAIL-CLOSED HARDENING -- a stream is CALIBRATED only when EVERY
+# frozen calibration component the certified three_way apply path needs is
+# present and valid. A fitted conditional calibrator alone is NOT enough:
+# an absent/malformed push_scale_state must also fail closed, and raw_push
+# must never stand in for a missing frozen push calibrator.
+# ===========================================================================
+@pytest.mark.parametrize("seed_entry", [
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]}},
+        id="push_scale_state-missing-entirely",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]},
+         "push_scale_state": {"bucket_scales": {"NO_PUSH": 0.0}}},
+        id="push_scale_state-missing-global_scale",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]},
+         "push_scale_state": {"global_scale": 1.0}},
+        id="push_scale_state-missing-bucket_scales",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]},
+         "push_scale_state": {"global_scale": None, "bucket_scales": {"NO_PUSH": 0.0}}},
+        id="push_scale_state-null-global_scale",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]], "intercept": [-0.02]},
+         "push_scale_state": {"global_scale": 1.0, "bucket_scales": None}},
+        id="push_scale_state-null-bucket_scales",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "intercept": [-0.02]},
+         "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}}},
+        id="conditional-missing-coefficient",
+    ),
+    pytest.param(
+        {"conditional_calibrator_state": {"fitted": True, "coefficient": [[0.08]]},
+         "push_scale_state": {"global_scale": 1.0, "bucket_scales": {"NO_PUSH": 0.0}}},
+        id="conditional-missing-intercept",
+    ),
+])
+def test_price_and_calibrate_fail_closed_when_frozen_seed_incomplete(seed_entry):
+    """Any missing/malformed frozen calibration component -> CALIBRATION_NOT_READY
+    with every calibrated_* probability NaN; raw probabilities stay available
+    and raw_push is NEVER used as a substitute push calibrator."""
+    market_consensus = {
+        "ATS": _fail_closed_consensus([-3.5, 2.0, -1.0]), "TOTAL": _fail_closed_consensus([44.5, 41.0, 47.5]),
+    }
+    calibration_seed = {"ATS_TUE": seed_entry, "TOTAL_TUE": seed_entry}
+    priced = prod.price_and_calibrate(
+        _fail_closed_residual_ledger(), horizon="TUE", market_consensus=market_consensus,
+        calibration_seed=calibration_seed,
+    )
+    assert set(priced.keys()) == {"ATS_TUE", "TOTAL_TUE"}
+    for stream, frame in priced.items():
+        assert (frame["calibration_status"] == "CALIBRATION_NOT_READY").all(), stream
+        for field in _CALIBRATED_PROBABILITY_FIELDS:
+            assert frame[field].isna().all(), f"{stream}.{field} must be NaN for an incomplete frozen seed"
+        for field in _RAW_PROBABILITY_FIELDS:
+            assert frame[field].notna().all(), f"{stream}.{field} must stay populated"
+            assert frame[field].between(0.0, 1.0).all(), f"{stream}.{field}"
+
+
+def test_frozen_stream_calibration_ready_truth_table():
+    ready = _complete_seed_entry()
+    assert prod._frozen_stream_calibration_ready(ready) is True
+    assert prod._frozen_stream_calibration_ready(None) is False
+    assert prod._frozen_stream_calibration_ready({}) is False
+    assert prod._frozen_stream_calibration_ready(
+        {"conditional_calibrator_state": {"fitted": False}, "push_scale_state": ready["push_scale_state"]}
+    ) is False
+    # fitted conditional but no push state -> NOT ready (the gap this fix closes)
+    assert prod._frozen_stream_calibration_ready(
+        {"conditional_calibrator_state": ready["conditional_calibrator_state"]}
+    ) is False
+    assert prod._frozen_stream_calibration_ready(
+        {"conditional_calibrator_state": ready["conditional_calibrator_state"],
+         "push_scale_state": {"bucket_scales": {"NO_PUSH": 0.0}}}
+    ) is False
+    assert prod._frozen_stream_calibration_ready(
+        {"conditional_calibrator_state": ready["conditional_calibrator_state"],
+         "push_scale_state": {"global_scale": 1.0}}
+    ) is False
+
+
+def test_price_and_calibrate_calibrated_path_byte_identical_for_complete_seed():
+    """A complete valid Fix-8-shaped seed still produces the exact same
+    CALIBRATED values as before the full-seed readiness check was added --
+    byte-for-byte against three_way.py's own apply-path primitives."""
+    market_consensus = {
+        "ATS": _fail_closed_consensus([-3.5, 2.0, -1.0]), "TOTAL": _fail_closed_consensus([44.5, 41.0, 47.5]),
+    }
+    calibration_seed = {"ATS_TUE": _complete_seed_entry(0.08, -0.02), "TOTAL_TUE": _complete_seed_entry(0.05, 0.01)}
+    priced = prod.price_and_calibrate(
+        _fail_closed_residual_ledger(), horizon="TUE", market_consensus=market_consensus,
+        calibration_seed=calibration_seed,
+    )
+    cfg = CalibrationConfig()
+    for stream, frame in priced.items():
+        assert (frame["calibration_status"] == "CALIBRATED").all(), stream
+        seed_entry = calibration_seed[stream]
+        expected_cond = prod.apply_frozen_conditional_calibrator(
+            frame["raw_conditional_upper_probability"].to_numpy(float), seed_entry,
+        )
+        push_state = seed_entry["push_scale_state"]
+        legacy_market = prod._LEGACY_PUSH_MARKET_NAME[stream.split("_")[0]]
+        push_frame = pd.DataFrame({
+            "model_push_probability": frame["raw_push_probability"].to_numpy(float),
+            "market_line": frame["market_line"].to_numpy(float),
+        })
+        expected_push_in = prod._predict_push(
+            push_frame, legacy_market, push_state["global_scale"], push_state["bucket_scales"], cfg,
+        )
+        exp_lower, exp_push, exp_upper = prod._recombine(expected_cond, expected_push_in)
+        np.testing.assert_array_equal(
+            frame["calibrated_conditional_upper_probability"].to_numpy(float), expected_cond,
+        )
+        np.testing.assert_array_equal(frame["calibrated_lower_probability"].to_numpy(float), exp_lower)
+        np.testing.assert_array_equal(frame["calibrated_push_probability"].to_numpy(float), exp_push)
+        np.testing.assert_array_equal(frame["calibrated_upper_probability"].to_numpy(float), exp_upper)
+
+
+def test_calibration_fail_closed_hardening_leaves_certified_hashes_untouched():
+    """The hardening is an operational-only change: the certified scientific
+    hash constants and the certified hash gate still verify unchanged."""
+    fix71 = json.loads(
+        (prod.REPO_ROOT / "outputs" / "fix7_1_horizon_asof_elo_recertification_summary.json").read_text()
+    )
+    fix8 = json.loads(
+        (prod.REPO_ROOT / "outputs" / "fix8_official_oof_calibration_preregistration.json").read_text()
+    )
+    checks = prod.cert.verify_certified_hashes(fix71, fix8)
+    assert checks["horizon_feature_semantics_hash"] == prod.cert.CERTIFIED_HORIZON_FEATURE_SEMANTICS_HASH
+    assert checks["horizon_membership_ledger_hash"] == prod.cert.CERTIFIED_HORIZON_MEMBERSHIP_LEDGER_HASH
+    assert checks["operational_model_spec_hash"] == prod.cert.CERTIFIED_OPERATIONAL_MODEL_SPEC_HASH
+    assert checks["fix8_preregistration_hash"] == prod.cert.CERTIFIED_FIX8_PREREGISTRATION_HASH
+
+
+# ===========================================================================
 # Result attachment cannot mutate a forecast (Section 19) -- hermetic;
 # every test builds its OWN prerequisite evaluation-ledger record, never
 # relying on another test's execution order.
