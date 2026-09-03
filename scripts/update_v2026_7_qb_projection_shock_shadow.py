@@ -10,9 +10,11 @@ yards carry information beyond the Friday sportsbook spread?
 
 This script does NOT touch the production model, calibration, or any external
 API. It locates the official persisted TUE and FRI captures for one week,
-resolves each team's primary projected QB (max projected passing attempts),
-computes the single numerical predictor ``QB_PROJECTION_SHOCK_FRI``, and
-appends immutable rows to a shadow ledger OUTSIDE Git under
+keeps only games whose kickoff is STRICTLY after the official Friday nominal
+cutoff (v2026.7.1 chronology gate), resolves each team's primary projected QB
+(max projected passing attempts), computes the single numerical predictor
+``QB_PROJECTION_SHOCK_FRI``, and appends immutable rows to a shadow ledger
+OUTSIDE Git under
 
     $NFL_MODEL_ARTIFACT_ROOT/prospective-v2026-7-qb-projection-shock/
 
@@ -35,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 SIGNAL_NAME = "QB_PROJECTION_SHOCK_FRI"
-SIGNAL_VERSION = "v2026.7"
+SIGNAL_VERSION = "v2026.7.1"
 PRODUCTION_HORIZONS = ("TUE", "FRI")
 PROJECTIONS_GLOB = "fantasy_qb_projections.p*.json"
 GAMES_GLOB = "games.p*.json"
@@ -46,6 +48,11 @@ PREREGISTRATION_FILENAME = "v2026_7_prospective_qb_projection_shock_preregistrat
 
 STATUS_NOT_READY = "NOT_READY_WAITING_FOR_TUE_FRI_CAPTURES"
 STATUS_OK = "OK"
+
+# v2026.7.1 Friday kickoff eligibility classifications (Section 3 of the fix).
+KICKOFF_FUTURE = "FUTURE_AT_FRI_CUTOFF"
+KICKOFF_ALREADY_STARTED = "ALREADY_STARTED_AT_FRI_CUTOFF"
+KICKOFF_INVALID = "INVALID_KICKOFF"
 
 
 class FailClosedError(RuntimeError):
@@ -187,6 +194,27 @@ def load_qb_projection_records(capture_dir: Path) -> list[dict]:
     return records
 
 
+def parse_utc(raw: Any) -> datetime | None:
+    """Parse an ISO-8601 instant as timezone-aware UTC. Returns ``None`` for a
+    missing, non-string, naive, or unparseable value (caller fails closed)."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    if text.endswith(("Z", "z")):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _iso_z(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def load_games(capture_dir: Path) -> list[dict]:
     pages = sorted(capture_dir.glob(GAMES_GLOB))
     if not pages:
@@ -199,8 +227,44 @@ def load_games(capture_dir: Path) -> list[dict]:
             away = (row.get("visitor_team") or {}).get("abbreviation")
             if row.get("id") is None or not home or not away:
                 continue
-            games.append({"game_id": str(row["id"]), "home_team": home, "away_team": away})
+            games.append(
+                {
+                    "game_id": str(row["id"]),
+                    "home_team": home,
+                    "away_team": away,
+                    "kickoff_raw": row.get("date"),
+                    "scheduled_kickoff_utc": parse_utc(row.get("date")),
+                }
+            )
     return games
+
+
+def friday_nominal_cutoff_utc(fri_dir: Path) -> datetime:
+    """The official Friday nominal cutoff, taken verbatim from the Friday
+    capture's manifest.json ``nominal_cutoff_utc`` — never recomputed or
+    guessed. Fail closed if it is absent or unparseable."""
+    manifest = _read_manifest(fri_dir)
+    if manifest is None:
+        raise FailClosedError(f"no readable manifest.json in {fri_dir}")
+    cutoff = parse_utc(manifest.get("nominal_cutoff_utc"))
+    if cutoff is None:
+        raise FailClosedError(
+            f"Friday manifest in {fri_dir} has no parseable nominal_cutoff_utc "
+            f"({manifest.get('nominal_cutoff_utc')!r})"
+        )
+    return cutoff
+
+
+def classify_friday_kickoff(kickoff_utc: datetime | None, fri_cutoff_utc: datetime) -> str:
+    """A v2026.7.1 Friday shadow row is eligible only when
+    ``scheduled_kickoff_utc > official FRI nominal_cutoff_utc`` (STRICTLY
+    greater). Games at or before the cutoff, or with no valid kickoff, are
+    omitted before QB projection resolution."""
+    if kickoff_utc is None:
+        return KICKOFF_INVALID
+    if kickoff_utc > fri_cutoff_utc:
+        return KICKOFF_FUTURE
+    return KICKOFF_ALREADY_STARTED
 
 
 def team_primary_qb(records: list[dict], team_abbr: str) -> dict:
@@ -274,12 +338,31 @@ def build_signal_rows(
 
     tue_sha = manifest_sha256(tue_dir)
     fri_sha = manifest_sha256(fri_dir)
+    fri_cutoff = friday_nominal_cutoff_utc(fri_dir)
+    fri_cutoff_iso = _iso_z(fri_cutoff)
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     rows: list[dict] = []
     omitted: list[dict] = []
     for game in games:
         home, away = game["home_team"], game["away_team"]
+
+        # v2026.7.1 chronology gate: only games whose kickoff is STRICTLY after
+        # the official Friday nominal cutoff may create a shadow row. Classify
+        # BEFORE resolving QB projections.
+        kickoff_class = classify_friday_kickoff(game["scheduled_kickoff_utc"], fri_cutoff)
+        if kickoff_class != KICKOFF_FUTURE:
+            omitted.append(
+                {
+                    "game_id": game["game_id"],
+                    "reason": kickoff_class,
+                    "kickoff_raw": game["kickoff_raw"],
+                    "fri_nominal_cutoff_utc": fri_cutoff_iso,
+                }
+            )
+            continue
+        kickoff_iso = _iso_z(game["scheduled_kickoff_utc"])
+
         h_tue = team_primary_qb(tue_records, home)
         h_fri = team_primary_qb(fri_records, home)
         a_tue = team_primary_qb(tue_records, away)
@@ -291,7 +374,14 @@ def build_signal_rows(
             "away_fri": a_fri["status"],
         }
         if any(v != "OK" for v in unresolved.values()):
-            omitted.append({"game_id": game["game_id"], "reason": unresolved})
+            omitted.append(
+                {
+                    "game_id": game["game_id"],
+                    "reason": "PRIMARY_QB_UNRESOLVED",
+                    "detail": unresolved,
+                    "scheduled_kickoff_utc": kickoff_iso,
+                }
+            )
             continue
 
         home_change = team_qb_projection_change(h_tue, h_fri)
@@ -305,6 +395,8 @@ def build_signal_rows(
                 "game_id": game["game_id"],
                 "home_team": home,
                 "away_team": away,
+                "scheduled_kickoff_utc": kickoff_iso,
+                "fri_nominal_cutoff_utc": fri_cutoff_iso,
                 "tue_capture_path": str(tue_dir),
                 "fri_capture_path": str(fri_dir),
                 "tue_manifest_sha256": tue_sha,

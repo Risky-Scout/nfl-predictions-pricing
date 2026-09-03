@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -34,11 +35,19 @@ def qb_rec(player_id, team, attempts, yards, *, position="QB"):
     }
 
 
-def game_rec(gid, home, away, *, home_score=None, away_score=None):
+# Default synthetic Friday nominal cutoff (Friday noon ET == 16:00 UTC) and a
+# default kickoff safely AFTER it (Sunday), so pre-hardening row expectations
+# still hold unless a test deliberately sets an earlier kickoff.
+DEFAULT_FRI_CUTOFF = "2026-09-11T16:00:00Z"
+DEFAULT_KICKOFF = "2026-09-13T17:00:00.000Z"
+
+
+def game_rec(gid, home, away, *, home_score=None, away_score=None, kickoff=DEFAULT_KICKOFF):
     return {
         "id": gid,
         "home_team": {"abbreviation": home},
         "visitor_team": {"abbreviation": away},
+        "date": kickoff,
         "status_state": "scheduled" if home_score is None else "final",
         "home_team_score": home_score,
         "visitor_team_score": away_score,
@@ -57,6 +66,7 @@ def make_capture(
     qb_records=None,
     games=None,
     extra_files=None,
+    nominal_cutoff_utc=DEFAULT_FRI_CUTOFF,
 ) -> Path:
     cdir = (
         data_root
@@ -74,6 +84,7 @@ def make_capture(
         "manifest_sha256": hashlib.sha256(f"{horizon}:{stamp}".encode()).hexdigest(),
         "season": season,
         "week": week,
+        "nominal_cutoff_utc": nominal_cutoff_utc,
     }
     (cdir / "manifest.json").write_text(json.dumps(manifest))
     (cdir / "fantasy_qb_projections.p001.json").write_text(json.dumps({"data": qb_records or []}))
@@ -413,3 +424,169 @@ def test_no_production_model_or_external_api_touch():
     assert "run_2026" not in src
     for banned in ("requests.get", "urllib.request", "http://", "https://api"):
         assert banned not in src
+
+
+# --------------------------------------------------------------------------- #
+# V2026.7.1 — Friday kickoff eligibility hardening
+# --------------------------------------------------------------------------- #
+def _kickoff_pair(d: Path, *, kickoff, fri_cutoff=DEFAULT_FRI_CUTOFF, home="PHI", away="WAS"):
+    """One-game TUE/FRI pair with a controllable kickoff and Friday cutoff."""
+    tue = make_capture(
+        d, horizon="TUE", stamp="20260908T120000Z",
+        qb_records=_two_team_records(home, away, home_py=200.0, away_py=250.0),
+        games=[game_rec(1, home, away, kickoff=kickoff)],
+    )
+    fri = make_capture(
+        d, horizon="FRI", stamp="20260911T120000Z",
+        qb_records=_two_team_records(home, away, home_py=240.0, away_py=245.0),
+        games=[game_rec(1, home, away, kickoff=kickoff)],
+        nominal_cutoff_utc=fri_cutoff,
+    )
+    return tue, fri
+
+
+def test_parse_utc_and_classifier_units():
+    cutoff = mod.parse_utc("2026-09-11T16:00:00Z")
+    assert cutoff is not None and cutoff.tzinfo is not None
+    assert mod.parse_utc("not-a-date") is None
+    assert mod.parse_utc("2026-09-11T16:00:00") is None          # naive => rejected
+    assert mod.parse_utc(None) is None
+    assert mod.classify_friday_kickoff(None, cutoff) == mod.KICKOFF_INVALID
+    assert mod.classify_friday_kickoff(mod.parse_utc("2026-09-11T16:00:00Z"), cutoff) == mod.KICKOFF_ALREADY_STARTED
+    assert mod.classify_friday_kickoff(mod.parse_utc("2026-09-11T16:00:01Z"), cutoff) == mod.KICKOFF_FUTURE
+
+
+def test_thursday_game_before_friday_cutoff_is_excluded(tmp_path):
+    tue, fri = _kickoff_pair(tmp_path / "data", kickoff="2026-09-11T00:15:00.000Z")  # Thu night
+    rows, omitted = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    assert rows == []
+    assert len(omitted) == 1
+    assert omitted[0]["game_id"] == "1"
+    assert omitted[0]["reason"] == mod.KICKOFF_ALREADY_STARTED
+    assert omitted[0]["fri_nominal_cutoff_utc"] == "2026-09-11T16:00:00Z"
+
+
+def test_game_exactly_at_friday_cutoff_is_excluded(tmp_path):
+    tue, fri = _kickoff_pair(
+        tmp_path / "data", kickoff="2026-09-11T16:00:00.000Z", fri_cutoff="2026-09-11T16:00:00Z"
+    )
+    rows, omitted = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    assert rows == []
+    assert omitted[0]["reason"] == mod.KICKOFF_ALREADY_STARTED
+
+
+def test_game_one_second_after_friday_cutoff_is_eligible(tmp_path):
+    tue, fri = _kickoff_pair(
+        tmp_path / "data", kickoff="2026-09-11T16:00:01.000Z", fri_cutoff="2026-09-11T16:00:00Z"
+    )
+    rows, omitted = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    assert omitted == []
+    assert len(rows) == 1
+    assert rows[0]["scheduled_kickoff_utc"] == "2026-09-11T16:00:01Z"
+
+
+def test_missing_or_unparseable_kickoff_is_omitted_with_explicit_reason(tmp_path):
+    d = tmp_path / "data"
+    tue = make_capture(
+        d, horizon="TUE", stamp="20260908T120000Z",
+        qb_records=_two_team_records("PHI", "WAS", home_py=200.0, away_py=250.0)
+        + _two_team_records("KC", "DET", home_py=270.0, away_py=210.0),
+        games=[game_rec(1, "PHI", "WAS", kickoff=None), game_rec(2, "KC", "DET", kickoff="garbage")],
+    )
+    fri = make_capture(
+        d, horizon="FRI", stamp="20260911T120000Z",
+        qb_records=_two_team_records("PHI", "WAS", home_py=240.0, away_py=245.0)
+        + _two_team_records("KC", "DET", home_py=272.0, away_py=205.0),
+        games=[game_rec(1, "PHI", "WAS", kickoff=None), game_rec(2, "KC", "DET", kickoff="garbage")],
+    )
+    rows, omitted = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    assert rows == []
+    assert {o["game_id"]: o["reason"] for o in omitted} == {
+        "1": mod.KICKOFF_INVALID,
+        "2": mod.KICKOFF_INVALID,
+    }
+
+
+def test_cutoff_is_read_from_friday_manifest_only(tmp_path):
+    # kickoff Friday evening; FRI cutoff (noon) => eligible. TUE manifest carries
+    # a far-future cutoff that MUST be ignored.
+    d = tmp_path / "data"
+    tue, fri = _kickoff_pair(d, kickoff="2026-09-12T00:00:00.000Z", fri_cutoff="2026-09-11T16:00:00Z")
+    man = json.loads((tue / "manifest.json").read_text())
+    man["nominal_cutoff_utc"] = "2026-12-01T00:00:00Z"
+    (tue / "manifest.json").write_text(json.dumps(man))
+
+    rows, omitted = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    assert len(rows) == 1
+    assert rows[0]["fri_nominal_cutoff_utc"] == "2026-09-11T16:00:00Z"
+
+    # Move ONLY the Friday cutoff past the kickoff -> now excluded.
+    d2 = tmp_path / "data2"
+    tue2, fri2 = _kickoff_pair(d2, kickoff="2026-09-12T00:00:00.000Z", fri_cutoff="2026-09-12T12:00:00Z")
+    rows2, omitted2 = mod.build_signal_rows(tue2, fri2, season=2026, week=1, preregistration_hash="h")
+    assert rows2 == []
+    assert omitted2[0]["reason"] == mod.KICKOFF_ALREADY_STARTED
+
+
+def test_friday_cutoff_missing_fails_closed(tmp_path):
+    d = tmp_path / "data"
+    fri = make_capture(
+        d, horizon="FRI", stamp="20260911T120000Z",
+        qb_records=_two_team_records("PHI", "WAS", home_py=240.0, away_py=245.0),
+        games=[game_rec(1, "PHI", "WAS")],
+        nominal_cutoff_utc=None,
+    )
+    with pytest.raises(mod.FailClosedError):
+        mod.friday_nominal_cutoff_utc(fri)
+
+
+def test_scheduled_kickoff_utc_persists_in_ledger_row(tmp_path):
+    tue, fri = _kickoff_pair(tmp_path / "data", kickoff="2026-09-13T17:00:00.000Z")
+    rows, _ = mod.build_signal_rows(tue, fri, season=2026, week=1, preregistration_hash="h")
+    art = tmp_path / "art"
+    assert mod.append_ledger_rows(art, rows) == 1
+    persisted = mod.read_ledger(art)
+    assert persisted[0]["scheduled_kickoff_utc"] == "2026-09-13T17:00:00Z"
+    assert persisted[0]["fri_nominal_cutoff_utc"] == "2026-09-11T16:00:00Z"
+
+
+def test_smoke_captures_remain_excluded_after_hardening(tmp_path):
+    d = tmp_path / "data"
+    make_capture(
+        d, horizon="SMOKE", stamp="20260903T053105Z", status="COMPLETE",
+        qb_records=_two_team_records("PHI", "WAS", home_py=200.0, away_py=250.0),
+        games=[game_rec(1, "PHI", "WAS")],
+    )
+    assert mod.resolve_official_capture(d, 2026, 1, "TUE") is None
+    assert mod.resolve_official_capture(d, 2026, 1, "FRI") is None
+
+
+def test_v2026_7_1_still_one_numerical_predictor_and_frozen_invariants():
+    doc = mod.load_preregistration()
+    frozen = doc["frozen"]
+    assert mod.SIGNAL_VERSION == "v2026.7.1"
+    assert frozen["signal_version"] == "v2026.7.1"
+    assert frozen["numerical_predictors"] == ["QB_PROJECTION_SHOCK_FRI"]
+    assert frozen["number_of_numerical_predictors"] == 1
+    assert frozen["hard_parsimony_rule"]["features"] == 1
+    # untouched invariants
+    assert frozen["warmup"]["first_n_unique_settled_eligible_2026_games"] == 64
+    assert "alpha=100" in frozen["online_learning_rule"]["estimator"]
+    assert frozen["maturity_gates"]["ADVANCE"]["rmse_improvement_points_min"] == 0.15
+    assert frozen["market_residual_definition"]["market_implied_home_margin"] == "-consensus_home_spread"
+    # transparent supersession recorded
+    assert frozen["supersedes"]["version"] == "v2026.7"
+    assert frozen["supersedes"]["hash"] == "e28404c54ceb20f8b6229bd6016a6064e0036d6383fc7a72ae1fbc340ca23ed8"
+    # the new eligibility rule is frozen
+    kick = frozen["friday_kickoff_eligibility"]
+    assert "STRICTLY greater" in kick["rule"]
+    assert kick["eligible_classification"] == "FUTURE_AT_FRI_CUTOFF"
+    assert kick["cutoff_source"].startswith("the official Friday capture's manifest.json")
+
+
+def test_no_shadow_rows_exist_before_version_change():
+    root = os.environ.get("NFL_MODEL_ARTIFACT_ROOT")
+    if not root:
+        pytest.skip("NFL_MODEL_ARTIFACT_ROOT not configured in this environment")
+    assert mod.read_ledger(Path(root)) == []
+    assert not mod.ledger_path(Path(root)).exists()
