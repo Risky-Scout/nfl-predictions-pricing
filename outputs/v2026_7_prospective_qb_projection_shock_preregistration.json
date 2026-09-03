@@ -1,0 +1,145 @@
+{
+    "created_at_utc": "2026-09-03T14:53:58.446883Z",
+    "frozen": {
+        "capture_eligibility": {
+            "downgraded_excluded": "a TUE/FRI request downgraded to horizon=SMOKE never qualifies",
+            "exactly_one_per_horizon": "Require exactly one designated COMPLETE capture per production horizon per season/week. If more than one COMPLETE capture exists for a horizon and nothing in the manifest designates one unambiguously, FAIL CLOSED.",
+            "layout": "season=<season>/week=<week:02d>/horizon=<TUE|FRI>/capture=<UTCstamp>/",
+            "no_outcome_peeking": "Never choose a capture after seeing outcomes.",
+            "qualifying_capture": "manifest.json status == 'COMPLETE' AND manifest.json horizon == the directory horizon",
+            "required_horizons": [
+                "TUE",
+                "FRI"
+            ],
+            "root": "$NFL_MODEL_DATA_ROOT/live-observation-log/balldontlie-2026/",
+            "smoke_excluded": true
+        },
+        "evaluation": {
+            "compare_against": "MARKET_ONLY on identical out-of-sample rows",
+            "no_threshold_changes": true,
+            "report": [
+                "n OOS games",
+                "candidate RMSE",
+                "market RMSE",
+                "RMSE improvement = market RMSE - candidate RMSE",
+                "candidate MAE",
+                "market MAE",
+                "mean paired squared-error delta",
+                "by NFL week"
+            ]
+        },
+        "formula": {
+            "FRI_QB_PASS_YARDS": "projected passing_yards of PRIMARY_PROJECTED_QB in the official FRI capture",
+            "QB_PROJECTION_SHOCK_FRI": "home_TEAM_QB_PROJECTION_CHANGE - away_TEAM_QB_PROJECTION_CHANGE",
+            "TEAM_QB_PROJECTION_CHANGE": "FRI_QB_PASS_YARDS - TUE_QB_PASS_YARDS",
+            "TUE_QB_PASS_YARDS": "projected passing_yards of PRIMARY_PROJECTED_QB in the official TUE capture",
+            "no_transform": "The raw shadow row stores QB_PROJECTION_SHOCK_FRI un-standardized and un-transformed.",
+            "sign_convention": "Positive means the home team's expected QB passing production improved relative to the away team's expectation from Tuesday to Friday."
+        },
+        "hard_parsimony_rule": {
+            "features": 1,
+            "forbidden_additions": [
+                "QB identity-change indicator",
+                "injury status",
+                "depth-chart status",
+                "passing attempts change",
+                "fantasy points",
+                "rushing projection",
+                "player props",
+                "opening props"
+            ],
+            "materially_different_formulation": "requires a NEW future version",
+            "no_feature_rescue": true
+        },
+        "market_residual_definition": {
+            "margin_residual": "actual_home_margin - market_implied_home_margin",
+            "market_implied_home_margin": "-consensus_home_spread",
+            "market_only_prediction": "residual = 0",
+            "market_state": "official FRI BDL/market state captured at the production cutoff, under the existing production market rules"
+        },
+        "maturity_gates": {
+            "0_63_settled_eligible_games": "WARMUP",
+            "128_plus_oos_scored_games": "eligible for screening decision",
+            "64_127": "DESCRIPTIVE_OOS_ONLY",
+            "ADVANCE": {
+                "min_oos_games": 128,
+                "not_materially_unstable_across_first_and_second_half_of_oos": true,
+                "rmse_improvement_points_min": 0.15
+            },
+            "PROMISING": {
+                "min_oos_games": 128,
+                "no_major_chronology_or_provenance_defect": true,
+                "paired_squared_error_delta": "< 0",
+                "rmse_improvement_points_min": 0.1
+            },
+            "PUBLICATION_STRENGTH_SCREEN": {
+                "rmse_improvement_points_min": 0.25
+            },
+            "bootstrap_inference": "later task ONLY if ADVANCE is reached",
+            "if_advance_not_reached": "do not add the signal to production"
+        },
+        "missing_rule": "If either team's PRIMARY_PROJECTED_QB cannot be resolved (no QB record with numeric passing_attempts and passing_yards, or a tie for greatest passing_attempts) in EITHER the official TUE or the official FRI capture, the game is OMITTED from the v2026.7 shadow ledger. Fail closed; never impute.",
+        "no_external_api_calls": true,
+        "number_of_numerical_predictors": 1,
+        "numerical_predictors": [
+            "QB_PROJECTION_SHOCK_FRI"
+        ],
+        "online_learning_rule": {
+            "estimator": "sklearn Pipeline: StandardScaler THEN Ridge(alpha=100, fit_intercept=True, solver='svd')",
+            "no_forecast_revision_after_outcome": true,
+            "no_refit_on_unavailable_results": true,
+            "persist_forecast_before_kickoff": true,
+            "predictor": [
+                "QB_PROJECTION_SHOCK_FRI"
+            ],
+            "scaler_fit": "StandardScaler fit on prior training rows only",
+            "target": "Friday margin market residual",
+            "training_rows": "ONLY previously settled eligible 2026 shadow rows (result available when that Friday forecast was created)"
+        },
+        "primary_qb_rule": {
+            "audit": "Persist the selected BDL player_id for audit only.",
+            "forbidden_inputs": [
+                "realized starter",
+                "depth chart",
+                "injury status",
+                "player props",
+                "actual game statistics"
+            ],
+            "record_filter": "position == 'QB'",
+            "required_numeric_fields": [
+                "stats.passing_attempts",
+                "stats.passing_yards"
+            ],
+            "selection": "PRIMARY_PROJECTED_QB = the team QB with the greatest projected stats.passing_attempts",
+            "source_file_glob": "fantasy_qb_projections.p*.json",
+            "source_file_logical_name": "fantasy_qb_projections",
+            "team_join": "record.team.abbreviation"
+        },
+        "purpose": "Prospective feature discovery: does the Tuesday->Friday change in the primary QB's projected passing yards carry incremental information beyond the FRIDAY sportsbook spread? Spread/margin only.",
+        "scope": {
+            "friday_only": true,
+            "target_market": "FRIDAY margin market residual only",
+            "totals": "TOTAL is NOT evaluated in v2026.7"
+        },
+        "shadow_ledger": {
+            "append_only": true,
+            "duplicate_game_id_plus_signal_version": "FAIL CLOSED",
+            "location": "$NFL_MODEL_ARTIFACT_ROOT/prospective-v2026-7-qb-projection-shock/shadow_signal_ledger.jsonl",
+            "no_api_credentials_persisted": true,
+            "outside_git": true,
+            "rows_immutable_once_written": true
+        },
+        "signal_name": "QB_PROJECTION_SHOCK_FRI",
+        "signal_version": "v2026.7",
+        "tie_rule": "A tie for the greatest passing_attempts => team state unavailable (no imputation).",
+        "warmup": {
+            "during_warmup": "store signal; store later outcome/market residual; report descriptive statistics only",
+            "first_n_unique_settled_eligible_2026_games": 64,
+            "no_fitted_prediction_before_64": true,
+            "no_tuning": true
+        }
+    },
+    "hash_method": "sha256(json.dumps(frozen, sort_keys=True, separators=(',',':'), ensure_ascii=True))",
+    "note": "Frozen before any 2026 outcome is joined to the signal. No signal definition may change after the first scored outcome is observed.",
+    "preregistration_sha256": "e28404c54ceb20f8b6229bd6016a6064e0036d6383fc7a72ae1fbc340ca23ed8"
+}
