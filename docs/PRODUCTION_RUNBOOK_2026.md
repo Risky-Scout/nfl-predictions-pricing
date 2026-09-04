@@ -127,6 +127,41 @@ All under `$NFL_MODEL_ARTIFACT_ROOT/production-2026/`:
 | `run-manifests/{run_id}.json` | One file per attempted batch | Append-only: a `run_id` may never be reused |
 | `evaluation-ledger/{horizon}/{game_id}__{cutoff}.json` (+ `.result.json`) | Prospective shadow evidence | Forecast side immutable at write; result side attached separately, never edits the forecast |
 
+### 7a. Forecast-of-record public identity metadata
+
+Additive-only plumbing (no scientific field ever moved or renamed): every
+`forecast-ledger` record's deterministic `prediction` payload also carries
+`home_team_id`, `away_team_id`, and `scheduled_kickoff_utc` (a
+timezone-aware UTC ISO-8601 string), sourced ONLY from the canonical
+production games population row for that `game_id` -- never BallDontLie,
+never any other external call, never parsed out of `game_id` itself. A
+missing/empty/identical-teams/unparseable-or-naive-kickoff row is a hard
+`SCHEMA_DRIFT` stop before anything is written (no partial record). Because
+these are part of the hashed deterministic payload, a differing replay for
+the same forecast identity still trips the existing
+`FORECAST_IMMUTABILITY_VIOLATION` rule.
+
+Every forecast record in a batch, and that batch's own run manifest, also
+share one `run_created_at_utc` -- the exact same instant as that run's
+pre-existing `started_at_utc`, computed once per `run_horizon_batch`
+invocation, never recomputed per game. The per-record `created_at_utc`
+is unchanged and still represents that individual ledger write's own time.
+
+A future public (Wizard) exporter maps this record as:
+
+| Exporter field | Source path |
+|---|---|
+| creation timestamp | `run_created_at_utc` |
+| game id | `game_id` |
+| kickoff | `prediction.scheduled_kickoff_utc` |
+| home team | `prediction.home_team_id` |
+| away team | `prediction.away_team_id` |
+| margin | `prediction.prediction.predicted_margin` |
+| total | `prediction.prediction.predicted_total` |
+| season | `prediction.season` |
+| week | `prediction.week` |
+| horizon | `horizon` |
+
 ## 8. Fail-closed status meanings
 
 | Status | Meaning |
