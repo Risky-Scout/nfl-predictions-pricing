@@ -417,10 +417,18 @@ def write_run_manifest(manifest_root: Path, manifest: dict) -> Path:
 def build_run_manifest(
     *, run_id: str, horizon: str, target_cutoff_utc: str | None, git_commit: str | None, source_readiness: dict,
     game_count: int, forecast_count: int, abstention_count: int, market_ready_counts: dict, calibration_ready_counts: dict,
-    input_hashes: dict, output_hashes: dict, status: str, started_at_utc: pd.Timestamp, detail: str = "",
+    input_hashes: dict, output_hashes: dict, status: str, started_at_utc: pd.Timestamp, run_created_at_utc: str,
+    detail: str = "",
 ) -> dict:
     return {
         "run_id": run_id, "started_at_utc": _as_utc(started_at_utc).isoformat(), "completed_at_utc": utc_now().isoformat(),
+        # The ONE authoritative run-level creation timestamp (Section 6/7 of
+        # the public-identity hardening): the exact same value already
+        # computed once in run_horizon_batch from started_at_utc above, never
+        # recomputed here -- present under the field name the future public
+        # Wizard exporter looks up, sharing this run's started_at_utc instant
+        # rather than adding a second, competing run timestamp.
+        "run_created_at_utc": run_created_at_utc,
         "horizon": horizon, "target_cutoff_utc": target_cutoff_utc,
         "git_commit": git_commit, "certified_model_tag": CERTIFIED_TAG, "certified_model_sha": CERTIFIED_SHA,
         "source_readiness": source_readiness, "game_count": game_count, "forecast_count": forecast_count,
@@ -731,6 +739,70 @@ def _consensus_entry(consensus: pd.DataFrame, game_id: str) -> dict | None:
     return entry
 
 
+# ===========================================================================
+# Public forecast-of-record identity metadata (additive plumbing only -- see
+# the public-identity hardening directive). home_team_id / away_team_id /
+# scheduled_kickoff_utc come ONLY from the canonical production games
+# population already loaded by run_horizon_batch (load_games_population /
+# the injected ``games``) -- never BallDontLie, never any other external
+# call, never parsed out of game_id. Joined at this production write
+# boundary so the scientific OOF/Elo/Ridge frames and feature contract are
+# never touched.
+# ===========================================================================
+def resolve_forecast_identity(games_df: pd.DataFrame, game_id: str) -> dict:
+    """Return ``{"home_team_id", "away_team_id", "scheduled_kickoff_utc"}``
+    for ``game_id`` from the canonical games population's matching row.
+    ``scheduled_kickoff_utc`` is normalized/serialized as a timezone-aware
+    UTC ISO-8601 string. FAILS CLOSED (``ProductionHardStop`` /
+    ``SCHEMA_DRIFT``) -- never writes a partial record, never infers a
+    replacement -- when: the required columns are absent; no row matches
+    ``game_id``; ``home_team_id``/``away_team_id`` is missing or empty;
+    ``home_team_id == away_team_id``; or ``scheduled_kickoff_utc`` is
+    missing, unparseable, or not timezone-aware."""
+    required_cols = {"home_team_id", "away_team_id", "scheduled_kickoff_utc"}
+    missing_cols = required_cols - set(games_df.columns)
+    if missing_cols:
+        raise ProductionHardStop(
+            "SCHEMA_DRIFT",
+            f"{game_id}: canonical games population is missing required identity column(s): {sorted(missing_cols)}",
+        )
+    matches = games_df.loc[games_df["game_id"].astype(str) == str(game_id)]
+    if matches.empty:
+        raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: no canonical games-population row for forecast identity")
+    row = matches.iloc[0]
+
+    def _clean_team_id(value: object, side: str) -> str:
+        if pd.isna(value):
+            raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: {side}_team_id is missing in the canonical games population")
+        text = str(value).strip()
+        if not text:
+            raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: {side}_team_id is empty in the canonical games population")
+        return text
+
+    home_team_id = _clean_team_id(row["home_team_id"], "home")
+    away_team_id = _clean_team_id(row["away_team_id"], "away")
+    if home_team_id == away_team_id:
+        raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: home_team_id equals away_team_id ({home_team_id!r})")
+
+    raw_kickoff = row["scheduled_kickoff_utc"]
+    try:
+        kickoff_ts = pd.NaT if pd.isna(raw_kickoff) else pd.Timestamp(raw_kickoff)
+    except (ValueError, TypeError) as exc:
+        raise ProductionHardStop(
+            "SCHEMA_DRIFT", f"{game_id}: scheduled_kickoff_utc is unparseable ({raw_kickoff!r}): {exc}"
+        ) from exc
+    if pd.isna(kickoff_ts):
+        raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: scheduled_kickoff_utc is missing in the canonical games population")
+    if kickoff_ts.tzinfo is None:
+        raise ProductionHardStop("SCHEMA_DRIFT", f"{game_id}: scheduled_kickoff_utc is not timezone-aware ({raw_kickoff!r})")
+
+    return {
+        "home_team_id": home_team_id,
+        "away_team_id": away_team_id,
+        "scheduled_kickoff_utc": kickoff_ts.tz_convert("UTC").isoformat().replace("+00:00", "Z"),
+    }
+
+
 def run_horizon_batch(
     *, horizon: str, as_of_utc: pd.Timestamp, force: bool, operational_root: Path | None = None,
     repo_root: Path = REPO_ROOT, games: pd.DataFrame | None = None,
@@ -764,6 +836,13 @@ def run_horizon_batch(
 
     run_id = make_run_id(as_of_utc, horizon)
     started_at = utc_now()
+    # ONE authoritative run-level creation timestamp: computed exactly once
+    # here and reused verbatim (never recomputed) for every forecast-of-record
+    # this batch writes AND for the run manifest. This IS started_at_utc's own
+    # instant -- reusing that existing run-start timestamp rather than
+    # minting a second, competing one -- just exposed under the field name
+    # (``run_created_at_utc``) the future public Wizard exporter looks up.
+    run_created_at_utc = _as_utc(started_at).isoformat()
     git_commit = _git_commit(repo_root)
 
     def _finish(status: str, **extra) -> dict:
@@ -774,7 +853,7 @@ def run_horizon_batch(
             abstention_count=extra.get("abstention_count", 0), market_ready_counts=extra.get("market_ready_counts", {}),
             calibration_ready_counts=extra.get("calibration_ready_counts", {}), input_hashes=extra.get("input_hashes", {}),
             output_hashes=extra.get("output_hashes", {}), status=status, started_at_utc=started_at,
-            detail=extra.get("detail", ""),
+            run_created_at_utc=run_created_at_utc, detail=extra.get("detail", ""),
         )
         write_run_manifest(manifest_root, manifest)
         return manifest
@@ -891,6 +970,11 @@ def run_horizon_batch(
 
     for _, row in batch_pred.sort_values("game_id").iterrows():
         game_id = str(row["game_id"])
+        # Public forecast identity metadata (Sections 3-5 of the hardening):
+        # ONLY from the canonical games population already loaded above,
+        # never inferred/parsed/backfilled. Fails closed BEFORE any payload
+        # is built or written -- never a partial forecast record.
+        identity = resolve_forecast_identity(games_df, game_id)
         model_ready = row["status"] == "OOF"
         prediction_payload = {
             "model_status": str(row["status"]),
@@ -967,6 +1051,8 @@ def run_horizon_batch(
             "game_id": game_id, "horizon": horizon, "target_cutoff_utc": str(target_cutoff_utc),
             "season": int(row["season"]), "week": (None if pd.isna(row["week"]) else str(row["week"])),
             "season_type": season_type_by_game.get(game_id),
+            "home_team_id": identity["home_team_id"], "away_team_id": identity["away_team_id"],
+            "scheduled_kickoff_utc": identity["scheduled_kickoff_utc"],
             "prediction": prediction_payload, "markets": markets_payload,
             "market_state_hash": market_state_hash,
             "certified_baseline_sha": CERTIFIED_SHA, "horizon_feature_semantics_hash": feature_state_hash,
@@ -977,6 +1063,12 @@ def run_horizon_batch(
         record = {
             "game_id": game_id, "horizon": horizon, "target_cutoff_utc": str(target_cutoff_utc),
             "created_at_utc": utc_now().isoformat(), "git_commit": git_commit, "run_id": run_id,
+            # Shared run-level creation timestamp (Section 6/7): the SAME
+            # value, computed exactly once above, for every forecast this
+            # batch writes -- never recomputed per game. created_at_utc
+            # above is unchanged and keeps representing this individual
+            # ledger write's own time.
+            "run_created_at_utc": run_created_at_utc,
             "certified_baseline_tag": CERTIFIED_TAG, "certified_baseline_sha": CERTIFIED_SHA,
             "prediction": deterministic_payload,
         }

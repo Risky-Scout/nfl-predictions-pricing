@@ -434,6 +434,304 @@ def test_run_id_collision_is_identifier_failure(tmp_path):
 
 
 # ===========================================================================
+# Public forecast-of-record identity metadata hardening (additive plumbing
+# only: home_team_id / away_team_id / scheduled_kickoff_utc / one shared
+# run_created_at_utc). No model feature, fit, calibration, or prediction-path
+# change -- see PRODUCTION FORECAST PUBLIC IDENTITY METADATA HARDENING.
+# ===========================================================================
+def _identity_games(rows: list[dict]) -> pd.DataFrame:
+    """Minimal canonical-games-population rows for resolve_forecast_identity
+    unit tests -- deliberately opaque game_id values (no team codes embedded)
+    so a passing test can only mean the identity fields were read from the
+    matching row, never parsed out of game_id."""
+    return pd.DataFrame(rows)
+
+
+def test_resolve_forecast_identity_persists_home_team_id_from_canonical_population():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    identity = prod.resolve_forecast_identity(games, "G1")
+    assert identity["home_team_id"] == "KC"
+
+
+def test_resolve_forecast_identity_persists_away_team_id_from_canonical_population():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    identity = prod.resolve_forecast_identity(games, "G1")
+    assert identity["away_team_id"] == "BUF"
+
+
+def test_resolve_forecast_identity_persists_scheduled_kickoff_utc_from_canonical_population():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    identity = prod.resolve_forecast_identity(games, "G1")
+    assert identity["scheduled_kickoff_utc"] == "2026-09-13T17:00:00Z"
+
+
+def test_resolve_forecast_identity_never_parses_game_id():
+    # game_id carries NO team codes or kickoff information at all -- the
+    # correct home/away/kickoff values can only have come from the row.
+    games = _identity_games([{"game_id": "opaque-id-000001", "home_team_id": "ZZZ", "away_team_id": "YYY",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-11-01T18:00:00Z")}])
+    identity = prod.resolve_forecast_identity(games, "opaque-id-000001")
+    assert identity == {
+        "home_team_id": "ZZZ", "away_team_id": "YYY", "scheduled_kickoff_utc": "2026-11-01T18:00:00Z",
+    }
+    assert "resolve_forecast_identity"  # sanity: no game_id string-parsing helper is invoked
+    import inspect
+    src = inspect.getsource(prod.resolve_forecast_identity)
+    assert "game_id.split" not in src and "game_id[" not in src
+
+
+@pytest.mark.parametrize("bad_home", [None, np.nan, "", "   "])
+def test_resolve_forecast_identity_missing_home_team_fails_closed(bad_home):
+    games = _identity_games([{"game_id": "G1", "home_team_id": bad_home, "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+
+
+@pytest.mark.parametrize("bad_away", [None, np.nan, "", "  "])
+def test_resolve_forecast_identity_missing_away_team_fails_closed(bad_away):
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": bad_away,
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+
+
+def test_resolve_forecast_identity_identical_home_and_away_fails_closed():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "KC",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+    assert "equals" in excinfo.value.detail
+
+
+def test_resolve_forecast_identity_missing_kickoff_fails_closed():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": None}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+    assert "scheduled_kickoff_utc" in excinfo.value.detail
+
+
+@pytest.mark.parametrize("bad_kickoff", ["not-a-timestamp", "2026-09-13T17:00:00"])  # unparseable / naive
+def test_resolve_forecast_identity_invalid_kickoff_fails_closed(bad_kickoff):
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": bad_kickoff}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+
+
+def test_resolve_forecast_identity_kickoff_persisted_in_utc():
+    # a non-UTC but timezone-AWARE kickoff must be normalized to UTC.
+    eastern_kickoff = pd.Timestamp("2026-09-13T13:00:00").tz_localize("America/New_York")
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": eastern_kickoff}])
+    identity = prod.resolve_forecast_identity(games, "G1")
+    assert identity["scheduled_kickoff_utc"] == "2026-09-13T17:00:00Z"
+
+
+def test_resolve_forecast_identity_missing_columns_fail_closed():
+    games = pd.DataFrame([{"game_id": "G1"}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "G1")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+
+
+def test_resolve_forecast_identity_unknown_game_id_fails_closed():
+    games = _identity_games([{"game_id": "G1", "home_team_id": "KC", "away_team_id": "BUF",
+                               "scheduled_kickoff_utc": pd.Timestamp("2026-09-13T17:00:00Z")}])
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.resolve_forecast_identity(games, "does-not-exist")
+    assert excinfo.value.status == "SCHEMA_DRIFT"
+
+
+def test_run_horizon_batch_writes_identity_fields_from_canonical_population(tmp_path, synthetic_games):
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=synthetic_games,
+    )
+    assert manifest["status"] == "SUCCESS"
+    ledger_dir = tmp_path / "production-2026" / "forecast-ledger" / "TUE"
+    checked = 0
+    for path in ledger_dir.glob("*.json"):
+        record = json.loads(path.read_text())
+        pred = record["prediction"]
+        game_row = synthetic_games[synthetic_games["game_id"].astype(str) == record["game_id"]].iloc[0]
+        assert pred["home_team_id"] == game_row["home_team_id"]
+        assert pred["away_team_id"] == game_row["away_team_id"]
+        expected_kickoff = prod._as_utc(game_row["scheduled_kickoff_utc"]).isoformat().replace("+00:00", "Z")
+        assert pred["scheduled_kickoff_utc"] == expected_kickoff
+        # existing prediction field paths are unchanged
+        assert isinstance(pred["prediction"]["predicted_margin"], (float, type(None)))
+        assert isinstance(pred["prediction"]["predicted_total"], (float, type(None)))
+        checked += 1
+    assert checked == manifest["game_count"]
+
+
+def test_one_run_created_at_utc_shared_by_every_forecast_and_the_run_manifest(tmp_path, synthetic_games):
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=cutoffs["TUE"] + pd.Timedelta(minutes=1), force=True,
+        operational_root=tmp_path, games=synthetic_games,
+    )
+    assert manifest["status"] == "SUCCESS"
+    assert "run_created_at_utc" in manifest and manifest["run_created_at_utc"]
+
+    ledger_dir = tmp_path / "production-2026" / "forecast-ledger" / "TUE"
+    records = [json.loads(p.read_text()) for p in ledger_dir.glob("*.json")]
+    assert records
+    run_created_values = {r["run_created_at_utc"] for r in records}
+    run_ids = {r["run_id"] for r in records}
+    # exactly one authoritative run-level creation timestamp for the whole batch
+    assert run_created_values == {manifest["run_created_at_utc"]}
+    # run_id consistency is unchanged by this fix
+    assert run_ids == {manifest["run_id"]}
+    # it is the SAME instant as the pre-existing started_at_utc, not a second
+    # competing timestamp
+    assert manifest["run_created_at_utc"] == manifest["started_at_utc"]
+
+
+def test_predicted_margin_and_total_match_independent_certified_recomputation(tmp_path, synthetic_games):
+    """Proves items 14/15/19: the identity/timestamp plumbing changes nothing
+    about the scientific prediction. Recomputes predictions via the SAME
+    certified functions run_horizon_batch calls (Elo membership -> official
+    horizon matrix -> official horizon OOF), entirely independently of
+    run_horizon_batch, and diffs against what got persisted."""
+    from nfl_hybrid.certification import final_review_2026 as cert
+    from nfl_hybrid.evaluation import official_horizon_oof as ohf
+
+    cutoffs = _last_card_cutoffs(synthetic_games)
+    as_of = cutoffs["TUE"] + pd.Timedelta(minutes=1)
+    manifest = prod.run_horizon_batch(
+        horizon="TUE", as_of_utc=as_of, force=True, operational_root=tmp_path, games=synthetic_games,
+    )
+    assert manifest["status"] == "SUCCESS"
+
+    fix71_summary = json.loads((prod.REPO_ROOT / "outputs" / "fix7_1_horizon_asof_elo_recertification_summary.json").read_text())
+    fix8_prereg = json.loads((prod.REPO_ROOT / "outputs" / "fix8_official_oof_calibration_preregistration.json").read_text())
+    hash_checks = cert.verify_certified_hashes(fix71_summary, fix8_prereg)
+    feature_state_hash = hash_checks["horizon_feature_semantics_hash"]
+
+    games_df = prod.filter_reg_post(synthetic_games)
+    membership_ledger = he.build_horizon_membership_ledger(games_df)
+    matrix = ohf.build_official_horizon_matrix(games_df, "TUE", membership_ledger)
+    # the frozen six certified Elo features are exactly the OOF model's input
+    # columns (default feature_columns=ELO_FEATURE_COLUMNS below); the new
+    # public-identity fields are not, and never become, one of them (Section
+    # 8: no OOF feature contract expansion). home_team_id/away_team_id were
+    # already present in this matrix as pre-existing pivot/carrier columns,
+    # unrelated to and untouched by this fix -- only ELO_FEATURE_COLUMNS
+    # membership matters for "is this a model predictor."
+    assert set(ohf.ELO_FEATURE_COLUMNS).isdisjoint({"home_team_id", "away_team_id", "scheduled_kickoff_utc"})
+    assert len(ohf.ELO_FEATURE_COLUMNS) == 6
+    assert set(ohf.ELO_FEATURE_COLUMNS).issubset(matrix.columns)
+
+    predictions, _residual_ledger, _fit_counts = ohf.build_official_horizon_oof(
+        matrix, horizon="TUE", feature_state_hash=feature_state_hash,
+    )
+    predictions = predictions.copy()
+    predictions["target_cutoff_utc"] = pd.to_datetime(predictions["target_cutoff_utc"], utc=True)
+    independent_by_key = {
+        (str(r["game_id"]), str(r["target_cutoff_utc"])): r
+        for _, r in predictions.iterrows()
+    }
+
+    ledger_dir = tmp_path / "production-2026" / "forecast-ledger" / "TUE"
+    checked = 0
+    for path in ledger_dir.glob("*.json"):
+        record = json.loads(path.read_text())
+        key = (record["game_id"], record["target_cutoff_utc"])
+        independent = independent_by_key[key]
+        persisted = record["prediction"]["prediction"]
+        exp_margin = None if pd.isna(independent["predicted_margin"]) else float(independent["predicted_margin"])
+        exp_total = None if pd.isna(independent["predicted_total"]) else float(independent["predicted_total"])
+        assert persisted["predicted_margin"] == exp_margin
+        assert persisted["predicted_total"] == exp_total
+        checked += 1
+    assert checked == manifest["game_count"]
+
+
+def test_identical_immutable_replay_with_identity_fields_is_a_noop(tmp_path):
+    record = {
+        "game_id": "G1", "horizon": "TUE", "target_cutoff_utc": "2026-09-08T16:00:00+00:00",
+        "created_at_utc": prod.utc_now().isoformat(), "git_commit": "abc123", "run_id": "run-1",
+        "run_created_at_utc": "2026-09-08T00:00:00+00:00",
+        "certified_baseline_tag": prod.CERTIFIED_TAG, "certified_baseline_sha": prod.CERTIFIED_SHA,
+        "prediction": {
+            "game_id": "G1", "horizon": "TUE", "target_cutoff_utc": "2026-09-08T16:00:00+00:00",
+            "season": 2026, "week": "1", "season_type": "REG",
+            "home_team_id": "KC", "away_team_id": "BUF", "scheduled_kickoff_utc": "2026-09-13T17:00:00Z",
+            "prediction": {"model_status": "OOF", "predicted_margin": 1.5, "predicted_total": 44.0,
+                           "model_config_hash": "h"},
+            "markets": {}, "market_state_hash": None,
+            "certified_baseline_sha": prod.CERTIFIED_SHA, "horizon_feature_semantics_hash": "h",
+            "operational_model_spec_hash": "h", "fix8_preregistration_hash": "h",
+        },
+    }
+    ledger_root = tmp_path / "forecast-ledger"
+    first = prod.write_forecast(ledger_root, record)
+    assert first.status == "WRITTEN"
+
+    replay = {**record, "created_at_utc": prod.utc_now().isoformat(), "git_commit": "def456", "run_id": "run-2",
+              "run_created_at_utc": "2026-09-09T00:00:00+00:00"}  # volatile provenance differs; deterministic payload identical
+    second = prod.write_forecast(ledger_root, replay)
+    assert second.status == "IDEMPOTENT_NOOP"
+    assert second.prediction_hash == first.prediction_hash
+
+
+def test_differing_identity_metadata_triggers_immutability_violation(tmp_path):
+    base_prediction = {
+        "game_id": "G1", "horizon": "TUE", "target_cutoff_utc": "2026-09-08T16:00:00+00:00",
+        "season": 2026, "week": "1", "season_type": "REG",
+        "home_team_id": "KC", "away_team_id": "BUF", "scheduled_kickoff_utc": "2026-09-13T17:00:00Z",
+        "prediction": {"model_status": "OOF", "predicted_margin": 1.5, "predicted_total": 44.0,
+                       "model_config_hash": "h"},
+        "markets": {}, "market_state_hash": None,
+        "certified_baseline_sha": prod.CERTIFIED_SHA, "horizon_feature_semantics_hash": "h",
+        "operational_model_spec_hash": "h", "fix8_preregistration_hash": "h",
+    }
+    record = {
+        "game_id": "G1", "horizon": "TUE", "target_cutoff_utc": "2026-09-08T16:00:00+00:00",
+        "created_at_utc": prod.utc_now().isoformat(), "git_commit": "abc123", "run_id": "run-1",
+        "run_created_at_utc": "2026-09-08T00:00:00+00:00",
+        "certified_baseline_tag": prod.CERTIFIED_TAG, "certified_baseline_sha": prod.CERTIFIED_SHA,
+        "prediction": base_prediction,
+    }
+    ledger_root = tmp_path / "forecast-ledger"
+    prod.write_forecast(ledger_root, record)
+
+    conflicting = {**record, "run_id": "run-2",
+                   "prediction": {**base_prediction, "home_team_id": "DEN"}}  # only identity metadata differs
+    with pytest.raises(prod.ProductionHardStop) as excinfo:
+        prod.write_forecast(ledger_root, conflicting)
+    assert excinfo.value.status == "FORECAST_IMMUTABILITY_VIOLATION"
+
+
+_PINNED_FILE_SHA256 = {
+    "scripts/capture_bdl_2026_asof.py": "0a571a8d9ea9254057d7fdca8819c7d2c762bb052ec195b4b6df4bebfe2dc6ca",
+    "scripts/update_v2026_7_qb_projection_shock_shadow.py": "3bb20644d18911ed48d6f1b235508a35c6b265eab6b5e2aef748b6a0246af75e",
+    "outputs/v2026_7_prospective_qb_projection_shock_preregistration.json": "aabe03e7a601036fe2e40cf6df91114e90a1a9939e6693b86f37988e4642d6a2",
+}
+
+
+def test_pinned_bdl_and_qb_shadow_files_remain_unchanged():
+    import hashlib
+
+    for rel_path, expected_sha256 in _PINNED_FILE_SHA256.items():
+        full_path = prod.REPO_ROOT / rel_path
+        digest = hashlib.sha256(full_path.read_bytes()).hexdigest()
+        assert digest == expected_sha256, f"{rel_path} content changed -- this fix must not touch pinned files"
+
+
+# ===========================================================================
 # Fail-closed statuses that don't require a full pipeline success (Section
 # 16) -- hermetic, synthetic games.
 # ===========================================================================
