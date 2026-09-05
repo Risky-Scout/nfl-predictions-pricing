@@ -40,6 +40,13 @@ RAW_ODDS_HISTORY_KEYS: tuple[str, ...] = (
     "odds_history.2025_final_test",
 )
 
+# ``source_store`` label for an EXPLICITLY supplied live 2026 market source
+# (see :mod:`nfl_hybrid.data.bdl_market_bridge`). Deliberately NOT a member of
+# RAW_ODDS_HISTORY_KEYS and deliberately not a registered required dataset
+# key: historical 2020-2025 reconstruction must keep working unchanged on a
+# machine that possesses no 2026 live capture at all.
+LIVE_MARKET_SOURCE_STORE = "live_market.balldontlie_2026"
+
 MARKET_SPREADS = "spreads"
 MARKET_TOTALS = "totals"
 _VALID_RAW_MARKETS = (MARKET_SPREADS, MARKET_TOTALS)
@@ -64,13 +71,26 @@ CONSENSUS_COLUMNS = (
 )
 
 
-def load_raw_bookmaker_quotes(*, root_override: str | None = None) -> pd.DataFrame:
+def load_raw_bookmaker_quotes(
+    *, root_override: str | None = None, live_quotes: pd.DataFrame | None = None
+) -> pd.DataFrame:
     """Union of all three raw historical Odds API snapshot stores. Each
     store covers a disjoint season range (2020-2023 / 2024 confirmation /
     2025 final-test), so game_id collisions across stores are not expected;
     a duplicate (game_id, bookmaker_key, returned_snapshot_utc,
     market_last_update, market, outcome_key) row is still de-duplicated
-    defensively below."""
+    defensively below.
+
+    ``live_quotes`` is an OPTIONAL, already-validated live market source in
+    the same canonical schema -- currently the explicitly supplied 2026
+    BallDontLie capture built by :mod:`nfl_hybrid.data.bdl_market_bridge`.
+    It is appended as one more source store and is then subject to every
+    existing certified rule unchanged (same-snapshot coherence, the
+    ``market_last_update <= returned_snapshot_utc <= target_cutoff_utc``
+    ordering, the 48-hour maximum age, the >=3 eligible-book minimum, the
+    median-of-devigged-per-book consensus). Omitting it leaves historical
+    behaviour byte-for-byte unchanged, so 2020-2025 reconstruction keeps
+    working on a machine with no 2026 capture."""
     frames = []
     for key in RAW_ODDS_HISTORY_KEYS:
         odds_dir = external_data.resolve(key, root_override=root_override)
@@ -79,6 +99,10 @@ def load_raw_bookmaker_quotes(*, root_override: str | None = None) -> pd.DataFra
         frame = frame.copy()
         frame["source_store"] = key
         frames.append(frame)
+    if live_quotes is not None:
+        live = live_quotes.copy()
+        live["source_store"] = LIVE_MARKET_SOURCE_STORE
+        frames.append(live)
     combined = pd.concat(frames, ignore_index=True)
     combined["game_id"] = combined["game_id"].astype(str)
     combined["bookmaker_key"] = combined["bookmaker_key"].astype(str)

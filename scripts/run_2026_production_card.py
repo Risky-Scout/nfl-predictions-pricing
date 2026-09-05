@@ -8,6 +8,12 @@ Modes:
   --attach-results --result-file PATH   Attach real results to the evaluation ledger
                                          (never mutates a forecast).
 
+The live 2026 market source is EXPLICIT and optional:
+``--market-capture-manifest PATH`` names the exact frozen BallDontLie
+capture manifest to price from. No capture is ever auto-selected (not by
+mtime, directory name, capture_started_at, UUID, or "first COMPLETE"), and
+omitting the flag leaves every historical code path untouched.
+
 ``--as-of`` is for deterministic historical/integration testing only;
 production default is the current UTC time. A manual ``--horizon`` run never
 fabricates a future market snapshot -- it only runs the current-or-most-
@@ -43,7 +49,18 @@ def _resolve_as_of(args: argparse.Namespace) -> pd.Timestamp:
 
 
 def cmd_preflight(args: argparse.Namespace) -> int:
-    result = prod.run_preflight()
+    # When the operator also names a horizon, the capture is cross-checked
+    # against that horizon's real DST-aware certified cutoff for the current
+    # card -- the same cutoff a run right now would price at.
+    expected_horizon = args.horizon
+    expected_cutoff = (
+        prod.current_or_recent_cutoff(_resolve_as_of(args), expected_horizon) if expected_horizon else None
+    )
+    result = prod.run_preflight(
+        market_capture_manifest=args.market_capture_manifest,
+        expected_horizon=expected_horizon,
+        expected_target_cutoff_utc=expected_cutoff,
+    )
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
     # Exit 0 ONLY when a real live production run could actually be
     # performed -- i.e. infrastructure is ready AND every required live 2026
@@ -55,7 +72,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 def cmd_horizon(args: argparse.Namespace) -> int:
     as_of_utc = _resolve_as_of(args)
-    manifest = prod.run_horizon_batch(horizon=args.horizon, as_of_utc=as_of_utc, force=True)
+    manifest = prod.run_horizon_batch(
+        horizon=args.horizon, as_of_utc=as_of_utc, force=True,
+        market_capture_manifest=args.market_capture_manifest,
+    )
     print(json.dumps(manifest, indent=2, sort_keys=True, default=str))
     return 0 if manifest["status"] in ("SUCCESS", "NOT_DUE") else 1
 
@@ -69,7 +89,10 @@ def cmd_run_due(args: argparse.Namespace) -> int:
         if not due["due"]:
             continue
         any_due = True
-        manifest = prod.run_horizon_batch(horizon=horizon, as_of_utc=as_of_utc, force=True)
+        manifest = prod.run_horizon_batch(
+            horizon=horizon, as_of_utc=as_of_utc, force=True,
+            market_capture_manifest=args.market_capture_manifest,
+        )
         print(json.dumps(manifest, indent=2, sort_keys=True, default=str))
         if manifest["status"] not in ("SUCCESS", "NOT_DUE"):
             exit_code = 1
@@ -106,6 +129,14 @@ def main() -> int:
     parser.add_argument("--as-of", type=str, default=None)
     parser.add_argument("--attach-results", action="store_true")
     parser.add_argument("--result-file", type=str, default=None)
+    parser.add_argument(
+        "--market-capture-manifest", type=str, default=None,
+        help=(
+            "Path to the EXACT official frozen BallDontLie capture manifest.json for this card's "
+            "live market. Never auto-selected: with no value there is no live 2026 market source "
+            "and production stays BLOCKED_ON_LIVE_INPUTS."
+        ),
+    )
     args = parser.parse_args()
 
     if args.preflight:

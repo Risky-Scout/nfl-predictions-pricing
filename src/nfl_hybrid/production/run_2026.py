@@ -50,6 +50,7 @@ from scipy.special import expit, logit
 
 from nfl_hybrid.calibration.three_way import CalibrationConfig, _predict_push, _recombine
 from nfl_hybrid.certification import final_review_2026 as cert
+from nfl_hybrid.data import bdl_market_bridge as bridge
 from nfl_hybrid.data.external_data import REPO_ROOT, artifact_root, resolve
 from nfl_hybrid.evaluation import official_horizon_oof as ohf
 from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
@@ -210,6 +211,98 @@ SCHEDULE_2026_BLOCKER = "schedule_2026_unavailable"
 LIVE_MARKET_2026_BLOCKER = "live_2026_market_source_unregistered"
 
 
+# ===========================================================================
+# Explicit 2026 live market source. Production NEVER auto-selects a capture:
+# the exact official manifest is supplied by the operator
+# (``--market-capture-manifest``). Nothing here scans a directory or picks a
+# "latest" capture by mtime, directory name, capture_started_at, UUID or
+# COMPLETE-ness. With no manifest supplied, every historical code path is
+# untouched -- 2020-2025 reconstruction keeps working on a machine that has
+# no 2026 capture at all.
+# ===========================================================================
+LIVE_MARKET_NOT_SUPPLIED = "NOT_SUPPLIED"
+LIVE_MARKET_OK = "OK"
+LIVE_MARKET_INVALID = "INVALID"
+
+
+def evaluate_live_market_source(
+    market_capture_manifest: Path | str | None,
+    *,
+    expected_season: int | None = None,
+    expected_week: int | None = None,
+    expected_horizon: str | None = None,
+    expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    artifact_root_path: Path | None = None,
+) -> dict:
+    """Evidence for whether a live 2026 market source is genuinely registered.
+
+    ``registered`` is ``True`` ONLY when all four conditions hold: an explicit
+    capture manifest was supplied; its validation passed
+    (:func:`nfl_hybrid.data.bdl_market_bridge.validate_capture_manifest` --
+    COMPLETE, production horizon, no downgrade, matching season/week/horizon/
+    cutoff, verified manifest and per-page response hashes); the canonical
+    market rows were successfully materialized AND re-read from the
+    identity-keyed artifact; and those rows are actually consumable by the
+    certified Fix-8 reconstruction (both ``spreads`` and ``totals`` yield at
+    least one COMPLETE COHERENT two-sided book observation via the existing
+    :func:`rmr.build_coherent_book_observations`).
+
+    Never optimistic: any failure -- including a supplied-but-invalid
+    manifest -- leaves ``registered`` ``False`` and production
+    ``BLOCKED_ON_LIVE_INPUTS``. Coherence here is only the existing
+    certified pairing rule being exercised as proof of consumability; the
+    minimum-book, freshness and consensus gates remain exactly where they
+    already live, downstream."""
+    if market_capture_manifest is None:
+        return {
+            "registered": False,
+            "status": LIVE_MARKET_NOT_SUPPLIED,
+            "detail": "no --market-capture-manifest supplied; production has no live 2026 market source",
+            "provenance": None,
+            "source": None,
+        }
+    try:
+        source = bridge.load_live_market_source(
+            market_capture_manifest,
+            expected_season=expected_season,
+            expected_week=expected_week,
+            expected_horizon=expected_horizon,
+            expected_target_cutoff_utc=expected_target_cutoff_utc,
+            artifact_root_path=artifact_root_path,
+        )
+        coherence = {
+            raw_market: int(len(rmr.build_coherent_book_observations(source.quotes, raw_market)))
+            for raw_market in (rmr.MARKET_SPREADS, rmr.MARKET_TOTALS)
+        }
+        empty = sorted(m for m, n in coherence.items() if n == 0)
+        if empty:
+            return {
+                "registered": False,
+                "status": LIVE_MARKET_INVALID,
+                "detail": (
+                    f"capture produced no coherent two-sided book observations for {empty}; "
+                    "it is not consumable by the certified reconstruction"
+                ),
+                "provenance": {**source.provenance(), "coherent_observations": coherence},
+                "source": None,
+            }
+    except Exception as exc:
+        return {
+            "registered": False,
+            "status": LIVE_MARKET_INVALID,
+            "detail": f"{type(exc).__name__}: {exc}",
+            "provenance": {"manifest_path": str(market_capture_manifest)},
+            "source": None,
+        }
+    return {
+        "registered": True,
+        "status": LIVE_MARKET_OK,
+        "detail": "",
+        "provenance": {**source.provenance(), "coherent_observations": coherence},
+        "source": source,
+    }
+
+
 def summarize_preflight_readiness(
     *,
     infra_blocking: list[str],
@@ -259,7 +352,16 @@ def summarize_preflight_readiness(
     }
 
 
-def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | None = None) -> dict:
+def run_preflight(
+    *,
+    repo_root: Path = REPO_ROOT,
+    artifact_root_path: Path | None = None,
+    market_capture_manifest: Path | str | None = None,
+    expected_season: int | None = None,
+    expected_week: int | None = None,
+    expected_horizon: str | None = None,
+    expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+) -> dict:
     """Verifies live infrastructure without ever printing a secret value.
     ``artifact_root_path`` is injectable so a test can point EVERY
     generated-artifact lookup this call performs -- the writable-output-
@@ -269,7 +371,13 @@ def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | Non
     source, and the raw market estate remain the real certified/live
     inputs regardless of ``artifact_root_path`` (they are read-only
     scientific evidence and live data feeds, not generated-artifact
-    output, so there is nothing operational to isolate for them)."""
+    output, so there is nothing operational to isolate for them).
+
+    ``market_capture_manifest`` is the EXACT official BallDontLie capture
+    manifest, supplied explicitly; it is never auto-selected. Omitted (the
+    default), there is no live 2026 market source and production stays
+    ``BLOCKED_ON_LIVE_INPUTS``. The ``expected_*`` arguments are the
+    requesting run's own identity, cross-checked against that capture."""
     aroot = artifact_root_path if artifact_root_path is not None else artifact_root()
     checks: dict[str, object] = {}
     blocking: list[str] = []
@@ -317,12 +425,30 @@ def run_preflight(*, repo_root: Path = REPO_ROOT, artifact_root_path: Path | Non
         except Exception:
             market_estate_status[key] = "UNAVAILABLE"
     checks["raw_market_estate"] = market_estate_status
-    # No "odds_history.2026" (or any other live/current-season) key is
-    # registered in nfl_hybrid.data.external_data -- there is currently no
-    # live market source wired into the certified rmr machinery. Reported
-    # honestly rather than silently degrading to a fabricated/synthetic line.
-    live_2026_market_source_registered = False
+    # EVIDENCE-BASED, never optimistic: a live 2026 market source counts as
+    # registered only when an explicit capture manifest was supplied, passed
+    # validation, materialized canonical rows that were re-read from the
+    # artifact, and is consumable by the certified reconstruction. Anything
+    # else -- including no manifest at all, which is the default -- keeps
+    # production BLOCKED_ON_LIVE_INPUTS rather than silently degrading to a
+    # fabricated/synthetic line.
+    live_market = evaluate_live_market_source(
+        market_capture_manifest,
+        expected_season=expected_season,
+        expected_week=expected_week,
+        expected_horizon=expected_horizon,
+        expected_target_cutoff_utc=expected_target_cutoff_utc,
+        # The materialized live-market artifact IS generated-artifact output,
+        # so it follows this call's injected root like every other one.
+        artifact_root_path=aroot,
+    )
+    live_2026_market_source_registered = bool(live_market["registered"])
     checks["live_2026_market_source_registered"] = live_2026_market_source_registered
+    checks["live_2026_market_source"] = {
+        "status": live_market["status"],
+        "detail": live_market["detail"],
+        "provenance": live_market["provenance"],
+    }
 
     for name, subdir in (
         ("forecast_ledger_dir", "forecast-ledger"), ("run_manifest_dir", "run-manifests"),
@@ -806,6 +932,7 @@ def resolve_forecast_identity(games_df: pd.DataFrame, game_id: str) -> dict:
 def run_horizon_batch(
     *, horizon: str, as_of_utc: pd.Timestamp, force: bool, operational_root: Path | None = None,
     repo_root: Path = REPO_ROOT, games: pd.DataFrame | None = None,
+    market_capture_manifest: Path | str | None = None,
 ) -> dict:
     """One attempted production batch for ``horizon``. Always writes a run
     manifest (Section 15), even on a fail-closed status, and returns it.
@@ -827,7 +954,14 @@ def run_horizon_batch(
 
     ``games`` is injectable so a test can pin the exact historical games
     population; production leaves it ``None`` (uses
-    :func:`load_games_population`)."""
+    :func:`load_games_population`).
+
+    ``market_capture_manifest`` is the EXACT official BallDontLie capture
+    manifest for this card, supplied explicitly -- never auto-selected, and
+    validated against this batch's own season/week/horizon/target cutoff
+    before a single quote is priced. Left ``None`` (the default), the market
+    estate is read exactly as before, so historical/certified runs on a
+    machine with no 2026 capture behave identically to today."""
     as_of_utc = _as_utc(as_of_utc)
     aroot = operational_root if operational_root is not None else artifact_root()
     manifest_root = aroot / "production-2026" / "run-manifests"
@@ -925,10 +1059,53 @@ def run_horizon_batch(
             detail="eligible game_ids present in membership ledger but absent from the OOF matrix (schema drift)",
         )
 
+    # Explicit live 2026 market source (Section: certified BDL market bridge).
+    # Resolved only when the operator named the exact official capture
+    # manifest, and cross-checked against THIS batch's own identity: the
+    # card's (season, week), this horizon, and this target cutoff. A capture
+    # frozen for a different cutoff can never be priced into this one. A
+    # supplied-but-invalid capture is a hard MARKET_SOURCE_UNAVAILABLE -- it
+    # is never quietly ignored so the run can proceed on historical data.
+    live_quotes = None
+    live_market_provenance = None
+    if market_capture_manifest is not None:
+        card_seasons = sorted({int(s) for s in card_rows["season"]})
+        card_weeks = sorted({str(w) for w in card_rows["week"]})
+        if len(card_seasons) != 1 or len(card_weeks) != 1:
+            return _finish(
+                "MARKET_SOURCE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc),
+                detail=(
+                    f"card at cutoff {target_cutoff_utc} spans seasons={card_seasons} weeks={card_weeks}; "
+                    "a live market capture is scoped to exactly one (season, week)"
+                ),
+            )
+        try:
+            expected_week = int(card_weeks[0])
+        except ValueError:
+            expected_week = None
+        live_market = evaluate_live_market_source(
+            market_capture_manifest,
+            expected_season=card_seasons[0],
+            expected_week=expected_week,
+            expected_horizon=horizon,
+            expected_target_cutoff_utc=target_cutoff_utc,
+            artifact_root_path=aroot if operational_root is not None else None,
+        )
+        if not live_market["registered"]:
+            return _finish(
+                "MARKET_SOURCE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc),
+                source_readiness={"live_market": {
+                    "status": live_market["status"], "provenance": live_market["provenance"],
+                }},
+                detail=f"explicit live market capture rejected: {live_market['detail']}",
+            )
+        live_quotes = live_market["source"].quotes
+        live_market_provenance = live_market["provenance"]
+
     market_snapshot_available = True
     market_error = None
     try:
-        quotes = rmr.load_raw_bookmaker_quotes()
+        quotes = rmr.load_raw_bookmaker_quotes(live_quotes=live_quotes)
     except Exception as exc:
         market_snapshot_available = False
         market_error = str(exc)
@@ -1097,9 +1274,14 @@ def run_horizon_batch(
         market_ready_counts=market_ready_counts, calibration_ready_counts=calibration_ready_counts,
         source_readiness={
             "schedule": True, "elo": True, "market_snapshot_available": market_snapshot_available,
-            "market_error": market_error,
+            "market_error": market_error, "live_market": live_market_provenance,
         },
-        input_hashes={**hash_checks, "games_population_row_count": int(len(games_df))},
+        input_hashes={
+            **hash_checks, "games_population_row_count": int(len(games_df)),
+            "live_market_capture_sha256": (
+                live_market_provenance["manifest_sha256"] if live_market_provenance else None
+            ),
+        },
         output_hashes={"forecast_batch_hash": output_hash},
     )
 
