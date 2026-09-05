@@ -1,0 +1,4 @@
+{
+  "name": "nfl-hybrid-model",
+  "install": "bash .cursor/install.sh"
+}
