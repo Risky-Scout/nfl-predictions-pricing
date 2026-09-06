@@ -74,18 +74,57 @@ def _certified_market(*, consensus_line, eligible_books, snapshot_timestamps, dr
 _UNSET = object()  # lets a test pass an explicitly invalid None collection
 
 
+def _market_entry(kind: str, market: dict) -> dict | None:
+    """The production market-entry shapes written by
+    ``run_2026.run_horizon_batch``. ``None`` means the market key is absent
+    from the ``markets`` payload entirely.
+
+    ``"certified"``             -- status OK, certified payload, calibrated
+    ``"calibration_not_ready"`` -- certified payload, no calibrated probabilities
+    ``"uncertainty_not_ready"`` -- certified payload, no probabilities at all
+    ``"not_ready"``             -- MARKET_NOT_READY: no ``market`` payload
+    ``"source_unavailable"``    -- MARKET_SOURCE_UNAVAILABLE: no ``market`` payload
+    ``"absent"``                -- the market key does not exist
+    """
+    if kind == "absent":
+        return None
+    if kind == "not_ready":
+        return {"status": "MARKET_NOT_READY"}
+    if kind == "source_unavailable":
+        return {"status": "MARKET_SOURCE_UNAVAILABLE", "detail": "odds snapshot unavailable"}
+    if kind == "uncertainty_not_ready":
+        # run_2026 writes exactly {"status": ..., "market": consensus_entry}
+        # here -- no raw_* and no calibrated_* probabilities at all.
+        return {"status": "UNCERTAINTY_NOT_READY", "market": market}
+    raw_probabilities = {
+        "raw_home_probability": 0.58,
+        "raw_push_probability": 0.04,
+        "raw_away_probability": 0.38,
+        "raw_conditional_upper_probability": 0.55,
+    }
+    if kind == "calibration_not_ready":
+        return {
+            "status": "CALIBRATION_NOT_READY", "market": market, **raw_probabilities,
+            "calibrated_lower_probability": None, "calibrated_push_probability": None,
+            "calibrated_upper_probability": None, "calibrated_conditional_upper_probability": None,
+            "calibration_status": "CALIBRATION_NOT_READY",
+        }
+    if kind == "certified":
+        return {
+            "status": "OK", "market": market, **raw_probabilities,
+            "calibrated_lower_probability": 0.41, "calibrated_push_probability": 0.04,
+            "calibrated_upper_probability": 0.55, "calibrated_conditional_upper_probability": 0.57,
+            "calibration_status": "CALIBRATED",
+        }
+    raise AssertionError(f"unknown market entry kind {kind!r}")
+
+
 def _markets_payload(
     *,
     ats_line=-3.0, ats_books=5, ats_snapshots=_UNSET, ats_drop_fields=(),
     total_line=45.5, total_books=4, total_snapshots=_UNSET, total_drop_fields=(),
     ats_entry="certified", total_entry="certified",
 ):
-    """``ats_entry`` / ``total_entry`` select the shape of the market entry:
-
-    ``"certified"``   -- normal entry carrying a ``market`` consensus payload
-    ``"not_ready"``   -- production MARKET_NOT_READY entry (no ``market`` key)
-    ``"absent"``      -- the market key is missing from ``markets`` entirely
-    """
     payload = {}
     specs = (
         ("ATS", ats_entry, ats_line, ats_books,
@@ -94,20 +133,13 @@ def _markets_payload(
          DEFAULT_TOTAL_SNAPSHOTS if total_snapshots is _UNSET else total_snapshots, total_drop_fields),
     )
     for name, entry_kind, line, books, snapshots, drop_fields in specs:
-        if entry_kind == "absent":
-            continue
-        if entry_kind == "not_ready":
-            payload[name] = {"status": "MARKET_NOT_READY"}
-            continue
-        payload[name] = {
-            "status": "OK",
-            "market": _certified_market(
-                consensus_line=line, eligible_books=books,
-                snapshot_timestamps=snapshots, drop_fields=drop_fields,
-            ),
-            "raw_conditional_upper_probability": 0.55,
-            "calibration_status": "CALIBRATED",
-        }
+        market = _certified_market(
+            consensus_line=line, eligible_books=books,
+            snapshot_timestamps=snapshots, drop_fields=drop_fields,
+        )
+        entry = _market_entry(entry_kind, market)
+        if entry is not None:
+            payload[name] = entry
     return payload
 
 
@@ -287,6 +319,26 @@ def test_valid_pricing_card_exports_exact_public_schema(tmp_path, horizon):
     assert g2["market_total_book_count"] == 3
 
 
+def test_public_contract_key_tuples_are_frozen():
+    """Items 3-4 at the contract level: the hardening must not have altered
+    the published schema in either direction."""
+    assert exp.SCHEMA_VERSION == "wizard-nfl-pricing-v2"
+    assert exp.TOP_LEVEL_KEY_ORDER == (
+        "schema_version", "season", "week", "horizon", "generated_at_utc", "games",
+    )
+    assert exp.GAME_KEY_ORDER == (
+        "game_id", "kickoff_utc", "away_team", "home_team",
+        "predicted_home_margin", "predicted_game_total",
+        "market_home_spread", "market_total", "market_as_of_utc",
+        "market_ats_book_count", "market_total_book_count",
+    )
+    assert len(exp.GAME_KEY_ORDER) == 11
+    assert len(set(exp.GAME_KEY_ORDER)) == 11
+    for banned in BANNED_PUBLIC_FIELDS:
+        assert banned not in exp.GAME_KEY_ORDER
+        assert banned not in exp.TOP_LEVEL_KEY_ORDER
+
+
 def test_games_with_identical_kickoff_sort_by_game_id(tmp_path):
     """Item 31 (tie-break half): identical kickoff instants order by game_id."""
     forecast_dir = tmp_path / "forecast-ledger" / "TUE"
@@ -427,7 +479,7 @@ def test_invalid_run_created_at_utc_fails_closed(tmp_path, bad_value):
 # --------------------------------------------------------------------------- #
 # 18-19: both certified markets are mandatory
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("entry_kind", ["absent", "not_ready"])
+@pytest.mark.parametrize("entry_kind", ["absent", "not_ready", "source_unavailable"])
 def test_missing_ats_market_fails_closed(tmp_path, entry_kind):
     manifest_path, forecast_dir, _ = _single_game_card(
         tmp_path, prediction_kwargs=dict(markets_kwargs=dict(ats_entry=entry_kind)),
@@ -436,7 +488,7 @@ def test_missing_ats_market_fails_closed(tmp_path, entry_kind):
         _card(manifest_path, forecast_dir)
 
 
-@pytest.mark.parametrize("entry_kind", ["absent", "not_ready"])
+@pytest.mark.parametrize("entry_kind", ["absent", "not_ready", "source_unavailable"])
 def test_missing_total_market_fails_closed(tmp_path, entry_kind):
     manifest_path, forecast_dir, _ = _single_game_card(
         tmp_path, prediction_kwargs=dict(markets_kwargs=dict(total_entry=entry_kind)),
@@ -480,6 +532,349 @@ def test_certified_market_missing_a_required_field_fails_closed(tmp_path, market
     )
     with pytest.raises(exp.WizardExportError, match=field):
         _card(manifest_path, forecast_dir)
+
+
+# --------------------------------------------------------------------------- #
+# POINT-FORECAST VALIDITY GATE
+#
+# A game is priced only when model_status == "OOF" AND both point forecasts
+# are present/numeric/finite/non-boolean AND both certified market payloads
+# validate. The model_status gate is required IN ADDITION to the finiteness
+# checks: an abstaining model row can sit behind a market entry that looks
+# usable, so gating on the numbers alone is not equivalent.
+# --------------------------------------------------------------------------- #
+def test_oof_model_status_with_finite_point_forecasts_exports(tmp_path):
+    """Gate item 1."""
+    manifest_path, forecast_dir, record = _single_game_card(tmp_path, prediction_kwargs=dict(
+        model_status="OOF", predicted_margin=3.4, predicted_total=46.8,
+    ))
+    assert record["prediction"]["prediction"]["model_status"] == "OOF"
+    game = _card(manifest_path, forecast_dir)["games"][0]
+    assert game["predicted_home_margin"] == 3.4
+    assert game["predicted_game_total"] == 46.8
+
+
+@pytest.mark.parametrize("model_status", [
+    "MODEL_NOT_READY", "ABSTAINED", "CALIBRATION_NOT_READY", "FALLBACK", "PENDING",
+    "oof", "OOF ", " OOF", "", "IN_SAMPLE", 0, 1, True, False, ["OOF"],
+])
+def test_non_oof_model_status_fails_closed_even_with_numeric_predictions(tmp_path, model_status):
+    """Gate item 2: the point-forecast fields are deliberately present, finite
+    and perfectly well-formed -- the abstention is caught by model_status
+    alone, which is exactly why this gate cannot be folded into the finiteness
+    checks."""
+    manifest_path, forecast_dir, record = _single_game_card(tmp_path, prediction_kwargs=dict(
+        model_status=model_status, predicted_margin=3.4, predicted_total=46.8,
+    ))
+    inner = record["prediction"]["prediction"]
+    assert isinstance(inner["predicted_margin"], float) and isinstance(inner["predicted_total"], float)
+    with pytest.raises(exp.WizardExportError, match="model_status"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_missing_model_status_fails_closed(tmp_path):
+    """Gate item 3."""
+    forecast_dir = tmp_path / "forecast-ledger" / "TUE"
+    record = _forecast_record(game_id="G1")
+    del record["prediction"]["prediction"]["model_status"]
+    record["prediction_hash"] = exp._sha256_hex(record["prediction"])
+    _write_record(forecast_dir, record)
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[record]))
+    with pytest.raises(exp.WizardExportError, match="model_status"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_null_model_status_fails_closed(tmp_path):
+    manifest_path, forecast_dir, _ = _single_game_card(
+        tmp_path, prediction_kwargs=dict(model_status=None),
+    )
+    with pytest.raises(exp.WizardExportError, match="model_status"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_non_oof_row_fails_the_whole_card_not_just_its_own_game(tmp_path):
+    """An abstention never silently drops out of the board: the export aborts
+    with nothing written rather than publishing the remaining games."""
+    forecast_dir = tmp_path / "forecast-ledger" / "TUE"
+    good = _forecast_record(game_id="G1")
+    abstained = _forecast_record(game_id="G2", prediction_kwargs=dict(
+        model_status="MODEL_NOT_READY", scheduled_kickoff_utc="2026-09-08T13:00:00Z",
+        home_team_id="HOU", away_team_id="NE",
+    ))
+    _write_record(forecast_dir, good)
+    _write_record(forecast_dir, abstained)
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[good, abstained]))
+    output_path = tmp_path / "out" / "latest.json"
+    with pytest.raises(exp.WizardExportError, match="model_status"):
+        _run(manifest_path, forecast_dir, output_path)
+    assert not output_path.exists()
+    assert not (output_path.parent / "archive").exists()
+
+
+# --------------------------------------------------------------------------- #
+# MARKET STATUS SEMANTICS
+#
+# Validity is decided on the raw certified payload, never by excluding a
+# status string. CALIBRATION_NOT_READY and UNCERTAINTY_NOT_READY describe
+# calibration/uncertainty machinery this raw pricing page does not publish, so
+# both are publishable when the model row is OOF, the point forecasts are
+# finite and both certified market payloads validate. MARKET_NOT_READY and
+# MARKET_SOURCE_UNAVAILABLE carry no certified payload and can never qualify.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("entry_kind", ["calibration_not_ready", "uncertainty_not_ready"])
+@pytest.mark.parametrize("applies_to", ["ATS", "TOTAL", "BOTH"])
+def test_non_ok_market_status_with_valid_raw_pricing_exports(tmp_path, entry_kind, applies_to):
+    """Gate items 4 and 5, on either market and on both at once."""
+    markets_kwargs = {}
+    if applies_to in ("ATS", "BOTH"):
+        markets_kwargs["ats_entry"] = entry_kind
+    if applies_to in ("TOTAL", "BOTH"):
+        markets_kwargs["total_entry"] = entry_kind
+    manifest_path, forecast_dir, record = _single_game_card(
+        tmp_path, prediction_kwargs=dict(markets_kwargs=markets_kwargs),
+    )
+    if applies_to in ("ATS", "BOTH"):
+        assert record["prediction"]["markets"]["ATS"]["status"] != "OK"
+    if applies_to in ("TOTAL", "BOTH"):
+        assert record["prediction"]["markets"]["TOTAL"]["status"] != "OK"
+
+    output_path = tmp_path / "out" / "latest.json"
+    assert _run(manifest_path, forecast_dir, output_path)["status"] == "OK"
+    game = json.loads(output_path.read_text())["games"][0]
+    assert game["market_home_spread"] == -3.0
+    assert game["market_total"] == 45.5
+    assert game["market_ats_book_count"] == 5
+    assert game["market_total_book_count"] == 4
+    assert game["market_as_of_utc"] == DEFAULT_MARKET_AS_OF
+
+
+def test_uncertainty_not_ready_entry_carries_no_probabilities_and_still_prices(tmp_path):
+    """Gate item 5, on the exact production shape: an UNCERTAINTY_NOT_READY
+    entry holds only {status, market} -- no raw_* and no calibrated_* keys."""
+    manifest_path, forecast_dir, record = _single_game_card(tmp_path, prediction_kwargs=dict(
+        markets_kwargs=dict(ats_entry="uncertainty_not_ready", total_entry="uncertainty_not_ready"),
+    ))
+    for name in ("ATS", "TOTAL"):
+        entry = record["prediction"]["markets"][name]
+        assert set(entry) == {"status", "market"}
+        assert entry["status"] == "UNCERTAINTY_NOT_READY"
+    assert _card(manifest_path, forecast_dir)["games"][0]["market_home_spread"] == -3.0
+
+
+@pytest.mark.parametrize("bad_prediction", [
+    dict(model_status="MODEL_NOT_READY"),
+    dict(model_status="MODEL_NOT_READY", predicted_margin=None, predicted_total=None),
+    dict(predicted_margin=None),
+    dict(predicted_total=None),
+])
+def test_uncertainty_not_ready_with_non_oof_or_null_point_forecast_fails_closed(tmp_path, bad_prediction):
+    """Gate item 6: a usable-looking market entry never rescues an invalid
+    point forecast."""
+    manifest_path, forecast_dir, _ = _single_game_card(tmp_path, prediction_kwargs=dict(
+        markets_kwargs=dict(ats_entry="uncertainty_not_ready", total_entry="uncertainty_not_ready"),
+        **bad_prediction,
+    ))
+    with pytest.raises(exp.WizardExportError):
+        _card(manifest_path, forecast_dir)
+
+
+@pytest.mark.parametrize("market_name", ["ATS", "TOTAL"])
+def test_market_not_ready_fails_closed_for_lack_of_certified_payload(tmp_path, market_name):
+    """Gate item 7."""
+    kwarg = "ats_entry" if market_name == "ATS" else "total_entry"
+    manifest_path, forecast_dir, record = _single_game_card(
+        tmp_path, prediction_kwargs=dict(markets_kwargs={kwarg: "not_ready"}),
+    )
+    entry = record["prediction"]["markets"][market_name]
+    assert entry["status"] == "MARKET_NOT_READY" and "market" not in entry
+    with pytest.raises(exp.WizardExportError, match=f"{market_name} market snapshot is missing"):
+        _card(manifest_path, forecast_dir)
+
+
+@pytest.mark.parametrize("market_name", ["ATS", "TOTAL"])
+def test_market_source_unavailable_fails_closed_for_lack_of_certified_payload(tmp_path, market_name):
+    """Gate item 8."""
+    kwarg = "ats_entry" if market_name == "ATS" else "total_entry"
+    manifest_path, forecast_dir, record = _single_game_card(
+        tmp_path, prediction_kwargs=dict(markets_kwargs={kwarg: "source_unavailable"}),
+    )
+    entry = record["prediction"]["markets"][market_name]
+    assert entry["status"] == "MARKET_SOURCE_UNAVAILABLE" and "market" not in entry
+    with pytest.raises(exp.WizardExportError, match=f"{market_name} market snapshot is missing"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_every_allowlisted_status_produces_an_identical_card(tmp_path):
+    """No allowlisted status is privileged over another: OK,
+    CALIBRATION_NOT_READY and UNCERTAINTY_NOT_READY publish byte-identical
+    pricing, and no payload-less entry publishes at all."""
+    cards = []
+    for index, kind in enumerate(("certified", "calibration_not_ready", "uncertainty_not_ready")):
+        manifest_path, forecast_dir, _ = _single_game_card(
+            tmp_path / f"ok{index}", prediction_kwargs=dict(
+                markets_kwargs=dict(ats_entry=kind, total_entry=kind),
+            ),
+        )
+        cards.append(_card(manifest_path, forecast_dir))
+    assert cards[0] == cards[1] == cards[2]
+
+    for index, kind in enumerate(("not_ready", "source_unavailable", "absent")):
+        manifest_path, forecast_dir, _ = _single_game_card(
+            tmp_path / f"bad{index}", prediction_kwargs=dict(markets_kwargs=dict(ats_entry=kind)),
+        )
+        with pytest.raises(exp.WizardExportError):
+            _card(manifest_path, forecast_dir)
+
+
+# --------------------------------------------------------------------------- #
+# MARKET STATUS ALLOWLIST
+#
+# markets.<ATS|TOTAL>.status must be exactly one of OK,
+# CALIBRATION_NOT_READY or UNCERTAINTY_NOT_READY. This is a schema-drift guard
+# layered ON TOP OF the raw-data validation, not a replacement for it and not a
+# requirement that the status be OK.
+# --------------------------------------------------------------------------- #
+def _write_status(tmp_path, *, ats_status="OK", total_status="OK", prediction_kwargs=None,
+                  allow_nan=False):
+    """A record whose certified payloads are fully valid, with the market entry
+    statuses overwritten directly. Passing ``_UNSET`` deletes the status key;
+    the untouched side stays a plain publishable ``OK`` so each test isolates
+    exactly one status."""
+    forecast_dir = tmp_path / "forecast-ledger" / "TUE"
+    record = _forecast_record(game_id="G1", prediction_kwargs=prediction_kwargs)
+    for name, status in (("ATS", ats_status), ("TOTAL", total_status)):
+        entry = record["prediction"]["markets"][name]
+        if status is _UNSET:
+            entry.pop("status", None)
+        else:
+            entry["status"] = status
+        assert isinstance(entry["market"], dict)  # the payload itself stays valid
+    record["prediction_hash"] = exp._sha256_hex(record["prediction"])
+    _write_record(forecast_dir, record, allow_nan=allow_nan)
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[record]))
+    return manifest_path, forecast_dir
+
+
+def test_allowlist_contents_are_frozen():
+    assert exp.ALLOWED_MARKET_STATUSES == ("OK", "CALIBRATION_NOT_READY", "UNCERTAINTY_NOT_READY")
+    for banned in ("MARKET_NOT_READY", "MARKET_SOURCE_UNAVAILABLE"):
+        assert banned not in exp.ALLOWED_MARKET_STATUSES
+
+
+@pytest.mark.parametrize("ats_status", ["OK", "CALIBRATION_NOT_READY", "UNCERTAINTY_NOT_READY"])
+@pytest.mark.parametrize("total_status", ["OK", "CALIBRATION_NOT_READY", "UNCERTAINTY_NOT_READY"])
+def test_every_allowlisted_status_combination_exports(tmp_path, ats_status, total_status):
+    """Allowlist items 1-3, across all nine ATS/TOTAL combinations."""
+    manifest_path, forecast_dir = _write_status(
+        tmp_path, ats_status=ats_status, total_status=total_status,
+    )
+    game = _card(manifest_path, forecast_dir)["games"][0]
+    assert game["market_home_spread"] == -3.0
+    assert game["market_total"] == 45.5
+    assert game["market_ats_book_count"] == 5
+    assert game["market_total_book_count"] == 4
+    assert game["market_as_of_utc"] == DEFAULT_MARKET_AS_OF
+
+
+UNPUBLISHABLE_STATUSES = [
+    "SOMETHING_NEW", "not-a-status", "PENDING", "RAW_READY", "CALIBRATED",  # unknown
+    None, "", "   ", 0, 1, True, False, ["OK"], {"status": "OK"},           # null / non-string
+    "ok", "Ok", "oK", "calibration_not_ready", "uncertainty_not_ready",     # wrong case
+    " OK ", " OK", "OK ", "\tOK", "OK\n",                                   # padded
+    "MARKET_NOT_READY", "MARKET_SOURCE_UNAVAILABLE",                        # explicitly rejected
+]
+
+
+@pytest.mark.parametrize("status", UNPUBLISHABLE_STATUSES)
+def test_unpublishable_ats_status_fails_closed(tmp_path, status):
+    """Allowlist items 4, 8, 9, 10, 11, 12 on the ATS entry. The certified
+    payload is fully valid in every case, so the status is the only thing that
+    can reject it."""
+    manifest_path, forecast_dir = _write_status(tmp_path, ats_status=status)
+    with pytest.raises(exp.WizardExportError, match="markets.ATS.status"):
+        _card(manifest_path, forecast_dir)
+
+
+@pytest.mark.parametrize("status", UNPUBLISHABLE_STATUSES)
+def test_unpublishable_total_status_fails_closed(tmp_path, status):
+    """Allowlist items 5, 8, 9, 10, 11, 12 on the TOTAL entry."""
+    manifest_path, forecast_dir = _write_status(tmp_path, total_status=status)
+    with pytest.raises(exp.WizardExportError, match="markets.TOTAL.status"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_missing_ats_status_key_fails_closed(tmp_path):
+    """Allowlist item 6: the status key is absent entirely."""
+    manifest_path, forecast_dir = _write_status(tmp_path, ats_status=_UNSET, total_status="OK")
+    with pytest.raises(exp.WizardExportError, match="markets.ATS.status is None"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_missing_total_status_key_fails_closed(tmp_path):
+    """Allowlist item 7: the status key is absent entirely."""
+    manifest_path, forecast_dir = _write_status(tmp_path, ats_status="OK", total_status=_UNSET)
+    with pytest.raises(exp.WizardExportError, match="markets.TOTAL.status is None"):
+        _card(manifest_path, forecast_dir)
+
+
+@pytest.mark.parametrize("status", ["MARKET_NOT_READY", "MARKET_SOURCE_UNAVAILABLE"])
+@pytest.mark.parametrize("market_name", ["ATS", "TOTAL"])
+def test_not_ready_status_is_rejected_even_when_a_payload_is_attached(tmp_path, status, market_name):
+    """Allowlist items 11-12 as a genuine second line of defence: these two
+    statuses normally fail for lack of a certified payload, so this fixture
+    contradicts production and attaches a fully valid payload anyway. The
+    allowlist must still reject it, which is what stops a future producer that
+    starts populating not-ready entries from quietly becoming publishable."""
+    manifest_path, forecast_dir = _write_status(
+        tmp_path, **{"ats_status" if market_name == "ATS" else "total_status": status},
+    )
+    with pytest.raises(exp.WizardExportError, match=f"markets.{market_name}.status"):
+        _card(manifest_path, forecast_dir)
+
+
+def test_allowlist_does_not_replace_raw_data_validation(tmp_path):
+    """Allowlist item 13 plus the raw-data gates: a perfectly allowlisted
+    status never rescues a non-OOF model row, a non-finite point forecast, a
+    thin book count, or an invalid snapshot timestamp."""
+    cases = (
+        (dict(model_status="MODEL_NOT_READY"), "model_status"),
+        (dict(predicted_margin=None), "predicted_margin"),
+        (dict(predicted_total=float("nan")), "predicted_total"),
+        (dict(markets_kwargs=dict(ats_books=2)), "eligible books"),
+        (dict(markets_kwargs=dict(total_snapshots=["nope"])), "selected_returned_snapshot_timestamps"),
+    )
+    for index, (prediction_kwargs, expected) in enumerate(cases):
+        manifest_path, forecast_dir = _write_status(
+            tmp_path / f"case{index}", ats_status="UNCERTAINTY_NOT_READY",
+            total_status="CALIBRATION_NOT_READY", prediction_kwargs=prediction_kwargs,
+            allow_nan=True,
+        )
+        with pytest.raises(exp.WizardExportError, match=expected):
+            _card(manifest_path, forecast_dir)
+
+
+def test_status_allowlist_never_normalises_a_variant():
+    """Allowlist items 9-10 restated as intent: no stripping, no upper-casing,
+    no aliasing -- a variant is rejected, never repaired."""
+    src = _MOD_PATH.read_text()
+    gate = src[src.index("def _require_allowed_market_status"):src.index("def _certified_market")]
+    for banned in (".strip()", ".upper()", ".lower()", ".casefold()", ".replace("):
+        assert banned not in gate
+
+
+def test_allowlisted_status_still_requires_the_certified_payload(tmp_path):
+    """The allowlist is additive: an OK entry with no payload still fails, and
+    it fails on the payload, not on the status."""
+    manifest_path, forecast_dir, record = _single_game_card(
+        tmp_path, prediction_kwargs=dict(markets_kwargs=dict(ats_entry="not_ready")),
+    )
+    record["prediction"]["markets"]["ATS"]["status"] = "OK"  # allowlisted, still no payload
+    record["prediction_hash"] = exp._sha256_hex(record["prediction"])
+    forecast_dir_2 = tmp_path / "second" / "forecast-ledger" / "TUE"
+    _write_record(forecast_dir_2, record)
+    manifest_2 = _write_manifest(tmp_path / "second" / "run-manifests", _manifest(records=[record]))
+    with pytest.raises(exp.WizardExportError, match="ATS market snapshot is missing"):
+        _card(manifest_2, forecast_dir_2)
 
 
 # --------------------------------------------------------------------------- #

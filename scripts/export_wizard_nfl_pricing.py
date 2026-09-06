@@ -48,6 +48,36 @@ Frozen source field mapping (do not rediscover):
                                       created_at_utc, mtime, target_cutoff_utc,
                                       or the export's own clock)
 
+Publication gate. A game is priced only when its point forecast is genuinely
+a forecast and both certified markets are genuinely certified:
+
+    prediction.prediction.model_status == "OOF"
+    predicted_margin present, numeric, finite, non-boolean
+    predicted_total  present, numeric, finite, non-boolean
+    markets.ATS.market   present and fully valid
+    markets.TOTAL.market present and fully valid
+    markets.ATS.status   exactly one of ALLOWED_MARKET_STATUSES
+    markets.TOTAL.status exactly one of ALLOWED_MARKET_STATUSES
+
+The model_status gate is required in ADDITION to the finiteness checks, not
+implied by them: a non-OOF row is an abstention, and an abstention can sit
+behind a market entry that looks usable (UNCERTAINTY_NOT_READY, or even
+CALIBRATED) while its point forecast is null or a placeholder. Anything short
+of the whole gate fails the card closed -- no partial pricing board.
+
+The market-status allowlist is an additional SCHEMA-DRIFT guard, not a
+replacement for raw-data validation and not a requirement that the status be
+``OK``. CALIBRATION_NOT_READY and UNCERTAINTY_NOT_READY describe calibration
+and uncertainty machinery this raw pricing page does not publish, so both stay
+publishable whenever the model row is OOF, the point forecasts are finite and
+the certified market payload independently validates. Anything else -- an
+unrecognised status, a missing or null status, a wrong-cased ``ok``, a padded
+`` OK ``, or an explicit MARKET_NOT_READY / MARKET_SOURCE_UNAVAILABLE -- fails
+the card closed. Those last two already fail for lack of a ``market``
+consensus payload; the allowlist rejects them a second time so that a future
+producer which starts attaching a payload to a not-ready entry cannot quietly
+become publishable.
+
 ``market_home_spread`` is emitted in the certified sportsbook notation exactly
 as captured (-3.5 means the HOME team is -3.5, +3.5 means the home team is
 +3.5, 0 is a pick'em); this exporter never inverts it. ``predicted_home_margin``
@@ -143,6 +173,22 @@ CERTIFIED_MARKETS = (MARKET_ATS, MARKET_TOTAL)
 # three eligible books is not a publishable consensus.
 MINIMUM_ELIGIBLE_BOOKS = 3
 
+# The ONLY model status whose point forecast may be publicly priced. Every
+# other status the production run can write (MODEL_NOT_READY and friends) is
+# an abstention: run_2026 counts exactly `status == "OOF"` rows as forecasts
+# and everything else as an abstention, and an abstaining row's
+# predicted_margin/predicted_total are written as null. A finiteness check
+# alone is NOT a substitute for this gate -- see _require_model_ready.
+REQUIRED_MODEL_STATUS = "OOF"
+
+# The only market-entry statuses whose certified payload may be published.
+# Membership is decided by exact equality, so a missing status, a null status,
+# a wrong-cased "ok", a padded " OK ", a non-string, and any status the
+# production run does not currently write are all rejected. MARKET_NOT_READY
+# and MARKET_SOURCE_UNAVAILABLE are deliberately absent: they are rejected
+# explicitly here as well as by their missing ``market`` payload.
+ALLOWED_MARKET_STATUSES = ("OK", "CALIBRATION_NOT_READY", "UNCERTAINTY_NOT_READY")
+
 _REQUIRED_MARKET_FIELDS = ("consensus_line", "eligible_books", "selected_returned_snapshot_timestamps")
 
 TOP_LEVEL_KEY_ORDER = ("schema_version", "season", "week", "horizon", "generated_at_utc", "games")
@@ -162,11 +208,28 @@ GAME_KEY_ORDER = (
 
 
 # --------------------------------------------------------------------------- #
-# certified market access -- read-only. A forecast record whose market entry
-# carries no ``market`` consensus payload was never certified for that market
+# certified market access -- read-only. A record whose market entry carries no
+# ``market`` consensus payload was never certified for that market
 # (MARKET_NOT_READY / MARKET_SOURCE_UNAVAILABLE), so the whole card fails
-# closed: v2 does not publish a partial pricing board.
+# closed: v2 does not publish a partial pricing board. An entry that DOES
+# carry a payload must additionally declare a recognised status and then have
+# every field it exposes validate -- three independent gates, checked payload
+# first so a not-ready entry keeps its precise diagnostic.
 # --------------------------------------------------------------------------- #
+def _require_allowed_market_status(entry: dict, *, game_id: str, market_name: str) -> str:
+    """Schema-drift guard, NOT a requirement that the status be ``OK``. Exact
+    equality against the allowlist, so a missing/null/non-string status and any
+    case or whitespace variant are all rejected rather than normalised."""
+    status = entry.get("status")
+    if status not in ALLOWED_MARKET_STATUSES:
+        _fail(
+            f"{game_id}: markets.{market_name}.status is {status!r}, which is not one of the "
+            f"publishable statuses {ALLOWED_MARKET_STATUSES} -- refusing to price an entry whose "
+            "certification state this exporter does not recognise"
+        )
+    return status
+
+
 def _certified_market(prediction: dict, *, game_id: str, market_name: str) -> dict:
     markets = prediction.get("markets")
     if not isinstance(markets, dict):
@@ -183,10 +246,29 @@ def _certified_market(prediction: dict, *, game_id: str, market_name: str) -> di
             f"{game_id}: certified {market_name} market snapshot is missing "
             f"(markets.{market_name}.market) -- refusing to publish a partial pricing board"
         )
+    _require_allowed_market_status(entry, game_id=game_id, market_name=market_name)
     missing = [f for f in _REQUIRED_MARKET_FIELDS if f not in market]
     if missing:
         _fail(f"{game_id}: markets.{market_name}.market is missing required field(s) {missing}")
     return market
+
+
+def _require_model_ready(inner: dict, *, game_id: str) -> str:
+    """Require an OOF point forecast. This gate is mandatory EVEN THOUGH the
+    finiteness checks below exist, because the two failure modes are
+    independent: a market entry can be UNCERTAINTY_NOT_READY (or even fully
+    CALIBRATED) while the model row behind it is an abstention whose
+    predicted_margin/predicted_total is null or otherwise unusable. Gating on
+    the numbers alone would let a future non-null placeholder on an abstaining
+    row become a published price."""
+    status = inner.get("model_status")
+    if status != REQUIRED_MODEL_STATUS:
+        _fail(
+            f"{game_id}: prediction.prediction.model_status is {status!r}, not "
+            f"{REQUIRED_MODEL_STATUS!r} -- a non-{REQUIRED_MODEL_STATUS} model row is an "
+            "abstention and is never publicly priced"
+        )
+    return status
 
 
 def _validate_book_count(value: Any, *, game_id: str, field_name: str) -> int:
@@ -250,6 +332,7 @@ def _build_public_game(record: dict) -> tuple[datetime, dict]:
     inner = prediction.get("prediction")
     if not isinstance(inner, dict):
         _fail(f"{game_id}: forecast record has no nested prediction.prediction payload")
+    _require_model_ready(inner, game_id=game_id)
     margin = _validate_numeric(inner.get("predicted_margin"), game_id=game_id, field_name="predicted_margin")
     total = _validate_numeric(inner.get("predicted_total"), game_id=game_id, field_name="predicted_total")
 
