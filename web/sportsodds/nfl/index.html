@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NFL Predictive Pricing | Wizard of Odds</title>
+<meta name="description" content="Model fair lines and game totals for every NFL matchup, compared with the captured market consensus.">
+<meta name="robots" content="index,follow">
+<!--
+  NFL Predictive Pricing -- public page served by the SportsOdds host at
+  /tools/odds-scanner/predictions/NFL/.
+
+  PRESENTATION ONLY. The single data source is the same-origin sibling file
+  ./latest.json carrying the wizard-nfl-pricing-v2 contract written by
+  scripts/export_wizard_nfl_pricing.py. Nothing here fits a model, predicts a
+  margin or total, reconstructs a market, or contacts any other origin: no
+  CDN, no external script, no external stylesheet, no web font, no analytics,
+  no tracking pixel. The only outbound navigation on the page is the
+  methodology link, and only when the reader chooses it.
+
+  Every displayed pricing quantity (model fair spread, market-implied margin,
+  ATS edge, total edge, winner agreement) is derived here from the eleven
+  published per-game fields. None of them is read from the feed, because none
+  of them is persisted in the feed by design.
+
+  Fail closed: any transport, schema, key-set, numeric or timestamp problem
+  renders exactly one message and no board. Sample/placeholder games are
+  never substituted, and no game data is embedded in this file.
+-->
+<style>
+  :root {
+    --ink: #10161f;
+    --ink-soft: #4a5768;
+    --rule: #d7dde6;
+    --rule-strong: #aab5c4;
+    --surface: #ffffff;
+    --surface-alt: #f5f7fa;
+    --brand: #123a6b;
+    --focus: #0b5fff;
+    --pos: #14532d;
+    --neg: #7c2d12;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    padding: 0;
+    background: var(--surface-alt);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  .wrap {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 24px 16px 64px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 2rem;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  h2 {
+    margin: 0 0 8px;
+    font-size: 1.3rem;
+  }
+
+  h3 {
+    margin: 0 0 4px;
+    font-size: 1.02rem;
+  }
+
+  p { margin: 0 0 12px; }
+
+  .subtitle {
+    margin: 6px 0 16px;
+    font-size: 1.12rem;
+    font-weight: 600;
+    color: var(--brand);
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 20px;
+    margin: 0 0 20px;
+  }
+
+  .intro { max-width: 74ch; }
+
+  .disclaimer {
+    margin: 0;
+    padding: 12px 14px;
+    border-left: 4px solid var(--rule-strong);
+    background: var(--surface-alt);
+    font-size: 0.95rem;
+    color: var(--ink-soft);
+  }
+
+  .feed-identity {
+    margin: 18px 0 10px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+
+  .stamps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 32px;
+    margin: 0;
+    font-size: 0.95rem;
+  }
+
+  .stamps div { min-width: 0; }
+
+  .stamps dt {
+    font-weight: 600;
+    color: var(--ink-soft);
+  }
+
+  .stamps dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  #feed-message {
+    margin: 0;
+    padding: 16px 18px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 8px;
+    background: var(--surface-alt);
+    font-weight: 600;
+  }
+
+  #feed-message[hidden] { display: none; }
+
+  [hidden] { display: none !important; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+  }
+
+  caption {
+    text-align: left;
+    padding: 0 0 10px;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+  }
+
+  thead th {
+    text-align: left;
+    vertical-align: bottom;
+    padding: 10px 12px;
+    border-bottom: 2px solid var(--rule-strong);
+    background: var(--surface-alt);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink-soft);
+  }
+
+  tbody th,
+  tbody td {
+    padding: 12px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    text-align: left;
+  }
+
+  tbody tr:nth-child(even) th,
+  tbody tr:nth-child(even) td { background: #fbfcfe; }
+
+  .matchup { font-weight: 700; }
+
+  .price {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .note {
+    display: block;
+    margin-top: 3px;
+    font-size: 0.82rem;
+    font-weight: 400;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+
+  /* AGREE/DISAGREE and OVER/UNDER are always distinguished by their own words
+     and by border style, never by colour alone. */
+  .badge-agree { border-style: solid; border-color: var(--pos); color: var(--pos); }
+  .badge-disagree { border-style: dashed; border-color: var(--neg); color: var(--neg); }
+  .badge-neutral { border-style: dotted; color: var(--ink-soft); }
+
+  .edge-side {
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+
+  form { margin: 0; }
+
+  .field-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin: 0 0 14px;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 240px;
+    flex: 1 1 240px;
+  }
+
+  label {
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+
+  select,
+  input[type="number"] {
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    padding: 9px 10px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 6px;
+    min-height: 42px;
+  }
+
+  .help {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+  }
+
+  .results {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 32px;
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface-alt);
+  }
+
+  .results dt {
+    font-weight: 600;
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+  }
+
+  .results dd {
+    margin: 0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  dl.glossary { margin: 0; }
+
+  dl.glossary dt {
+    margin-top: 12px;
+    font-weight: 700;
+  }
+
+  dl.glossary dd {
+    margin: 2px 0 0;
+    color: var(--ink-soft);
+  }
+
+  a {
+    color: var(--brand);
+    text-decoration: underline;
+  }
+
+  a:hover { text-decoration-thickness: 2px; }
+
+  a:focus-visible,
+  select:focus-visible,
+  input:focus-visible,
+  button:focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  a:focus,
+  select:focus,
+  input:focus {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  footer {
+    color: var(--ink-soft);
+    font-size: 0.88rem;
+  }
+
+  /* Mobile: the same eight information groups, one card per game. Column
+     headers are re-attached to each cell through data-label so nothing is
+     dropped on a small screen. */
+  @media (max-width: 760px) {
+    .wrap { padding: 16px 12px 48px; }
+
+    h1 { font-size: 1.6rem; }
+
+    table, tbody, tr { display: block; width: 100%; }
+
+    thead { display: none; }
+
+    tbody tr {
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
+      margin: 0 0 14px;
+      padding: 4px 0;
+      background: var(--surface);
+    }
+
+    tbody tr:nth-child(even) th,
+    tbody tr:nth-child(even) td { background: transparent; }
+
+    tbody th,
+    tbody td {
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      align-items: baseline;
+      border-bottom: 1px dotted var(--rule);
+      padding: 9px 12px;
+    }
+
+    tbody tr th:first-child { border-bottom: 1px solid var(--rule-strong); }
+
+    tbody tr td:last-child { border-bottom: 0; }
+
+    tbody th::before,
+    tbody td::before {
+      content: attr(data-label);
+      flex: 0 0 46%;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--ink-soft);
+    }
+
+    tbody th > *,
+    tbody td > * { text-align: right; }
+
+    .note { white-space: normal; }
+  }
+
+  @media (prefers-contrast: more) {
+    :root { --rule: #6b7686; --ink-soft: #333c49; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<main>
+
+  <header class="panel">
+    <h1>NFL Predictive Pricing</h1>
+    <p class="subtitle">Model Fair Lines vs. Market Consensus</p>
+
+    <div class="intro">
+      <p>The NFL Predictive Pricing Model estimates a fair winning margin and game total for each matchup. This page compares those model prices with the captured market consensus to show where the model and market differ.</p>
+      <p class="disclaimer">Sportsbook Edge and Total Edge are differences in points between model pricing and market pricing. They are not guarantees of profit or winning wagers.</p>
+    </div>
+
+    <p class="feed-identity" id="feed-identity" hidden></p>
+
+    <dl class="stamps" id="feed-stamps" hidden>
+      <div>
+        <dt>Model Generated</dt>
+        <dd id="generated-at">&mdash;</dd>
+      </div>
+      <div>
+        <dt>Market As Of</dt>
+        <dd id="market-as-of">&mdash;</dd>
+      </div>
+    </dl>
+  </header>
+
+  <section class="panel" aria-labelledby="board-heading">
+    <h2 id="board-heading">Pricing Board</h2>
+
+    <p id="feed-message" role="status" aria-live="polite">Loading NFL predictive pricing&hellip;</p>
+
+    <table id="pricing-board" hidden>
+      <caption>Model fair pricing beside the captured market consensus, ordered by kickoff.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Matchup</th>
+          <th scope="col">Model Fair Line</th>
+          <th scope="col">Market Consensus</th>
+          <th scope="col">Sportsbook Edge (ATS)</th>
+          <th scope="col">Model Total</th>
+          <th scope="col">Market Total</th>
+          <th scope="col">Total Edge</th>
+          <th scope="col">Winner View</th>
+        </tr>
+      </thead>
+      <tbody id="pricing-board-body"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="compare-section" aria-labelledby="compare-heading" hidden>
+    <h2 id="compare-heading">Compare Your Line</h2>
+    <p class="intro">Sportsbook prices differ by book and by country, and they move. Enter the line you can actually bet to compare it with the model price. Your entries stay in this browser tab: nothing is saved and nothing is sent anywhere.</p>
+
+    <form id="compare-form" novalidate>
+      <div class="field-grid">
+        <p class="field">
+          <label for="compare-game">Game</label>
+          <select id="compare-game" name="compare-game"></select>
+        </p>
+        <p class="field">
+          <label for="compare-spread">Your Home Spread</label>
+          <input type="number" id="compare-spread" name="compare-spread" step="0.5" inputmode="decimal" aria-describedby="compare-spread-help">
+          <span class="help" id="compare-spread-help">Enter the HOME team's spread exactly as shown at your sportsbook. Example: -3.5 if the home team is -3.5; +3.5 if the home team is +3.5.</span>
+        </p>
+        <p class="field">
+          <label for="compare-total">Your Game Total</label>
+          <input type="number" id="compare-total" name="compare-total" step="0.5" inputmode="decimal" aria-describedby="compare-total-help">
+          <span class="help" id="compare-total-help">Enter the total (combined points) offered at your sportsbook, for example 44.5.</span>
+        </p>
+      </div>
+
+      <dl class="results">
+        <div>
+          <dt>Your ATS Edge</dt>
+          <dd id="compare-ats-edge" role="status" aria-live="polite">&mdash;</dd>
+        </div>
+        <div>
+          <dt>Your Total Edge</dt>
+          <dd id="compare-total-edge" role="status" aria-live="polite">&mdash;</dd>
+        </div>
+      </dl>
+    </form>
+  </section>
+
+  <section class="panel" aria-labelledby="how-to-read-heading">
+    <h2 id="how-to-read-heading">How to Read This Page</h2>
+    <dl class="glossary">
+      <dt>Model Fair Line</dt>
+      <dd>The point spread implied by the model's predicted scoring margin.</dd>
+
+      <dt>Market Consensus</dt>
+      <dd>The certified consensus spread reconstructed from eligible market observations available at the forecast horizon.</dd>
+
+      <dt>Sportsbook Edge (ATS)</dt>
+      <dd>The point difference between the model's fair margin and the market-implied margin.</dd>
+
+      <dt>Model Total</dt>
+      <dd>The model's predicted combined final score.</dd>
+
+      <dt>Total Edge</dt>
+      <dd>The difference between the model total and market total.</dd>
+
+      <dt>Winner View</dt>
+      <dd>Whether the model and market favor the same team outright.</dd>
+    </dl>
+    <p class="disclaimer" style="margin-top:16px">Lines move. Compare the model with the price currently available at your sportsbook before making a decision.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="methodology-heading">
+    <h2 id="methodology-heading">Model Methodology &amp; Review</h2>
+    <p>The model's construction, data sources, validation record and known limitations are documented in the public review package: <a href="https://github.com/Risky-Scout/nfl-predictions-pricing/blob/main/docs/MIKE_START_HERE.md" target="_blank" rel="noopener noreferrer">Model Methodology &amp; Review</a>.</p>
+    <p>Forecasts are created before results are known and archived by forecast horizon for prospective evaluation.</p>
+    <p class="disclaimer">Model prices are estimates. Nothing on this page is a demonstration of sportsbook profitability, and nothing here is betting advice.</p>
+  </section>
+
+  <footer>
+    <p>All kickoff, model and market times are shown in United States Eastern Time (America/New_York).</p>
+  </footer>
+
+</main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ------------------------------------------------------------------ //
+  // published contract -- wizard-nfl-pricing-v2
+  // ------------------------------------------------------------------ //
+  var FEED_URL = "./latest.json";
+  var REQUIRED_SCHEMA_VERSION = "wizard-nfl-pricing-v2";
+
+  var TOP_LEVEL_KEYS = ["schema_version", "season", "week", "horizon", "generated_at_utc", "games"];
+  var GAME_KEYS = [
+    "game_id",
+    "kickoff_utc",
+    "away_team",
+    "home_team",
+    "predicted_home_margin",
+    "predicted_game_total",
+    "market_home_spread",
+    "market_total",
+    "market_as_of_utc",
+    "market_ats_book_count",
+    "market_total_book_count"
+  ];
+  var NUMERIC_GAME_KEYS = ["predicted_home_margin", "predicted_game_total", "market_home_spread", "market_total"];
+  var BOOK_COUNT_KEYS = ["market_ats_book_count", "market_total_book_count"];
+  var TEAM_KEYS = ["away_team", "home_team"];
+  var INSTANT_GAME_KEYS = ["kickoff_utc", "market_as_of_utc"];
+
+  var ALLOWED_HORIZONS = { TUE: "Tuesday", FRI: "Friday" };
+  var MINIMUM_ELIGIBLE_BOOKS = 3;
+
+  // Official NFL times are always rendered in United States Eastern Time.
+  // The reader's browser timezone is deliberately never used.
+  var ET_TIME_ZONE = "America/New_York";
+
+  // The one and only failure message. No stack trace, no diagnostic detail,
+  // no sample data substitution.
+  var NO_DATA_MESSAGE = "No NFL predictive pricing data is currently available.";
+
+  var PICK_EM = "PICK'EM";
+  var PICK_EM_SHORT = "PK";
+  var NO_EDGE = "NO EDGE";
+
+  var messageEl = document.getElementById("feed-message");
+  var identityEl = document.getElementById("feed-identity");
+  var stampsEl = document.getElementById("feed-stamps");
+  var generatedAtEl = document.getElementById("generated-at");
+  var marketAsOfEl = document.getElementById("market-as-of");
+  var boardEl = document.getElementById("pricing-board");
+  var boardBodyEl = document.getElementById("pricing-board-body");
+  var compareSectionEl = document.getElementById("compare-section");
+  var compareGameEl = document.getElementById("compare-game");
+  var compareSpreadEl = document.getElementById("compare-spread");
+  var compareTotalEl = document.getElementById("compare-total");
+  var compareAtsEdgeEl = document.getElementById("compare-ats-edge");
+  var compareTotalEdgeEl = document.getElementById("compare-total-edge");
+
+  // ------------------------------------------------------------------ //
+  // fail-closed validation. Anything unexpected throws; the single caller
+  // turns every throw into NO_DATA_MESSAGE.
+  // ------------------------------------------------------------------ //
+  function invalid(detail) {
+    throw new Error("invalid wizard-nfl-pricing-v2 payload: " + detail);
+  }
+
+  function hasOwn(object, key) {
+    return Object.prototype.hasOwnProperty.call(object, key);
+  }
+
+  function requireExactKeys(object, expectedKeys, label) {
+    var index;
+    var key;
+    var actual = Object.keys(object);
+    for (index = 0; index < expectedKeys.length; index += 1) {
+      if (!hasOwn(object, expectedKeys[index])) {
+        invalid(label + " is missing required field " + expectedKeys[index]);
+      }
+    }
+    for (index = 0; index < actual.length; index += 1) {
+      key = actual[index];
+      if (expectedKeys.indexOf(key) === -1) {
+        invalid(label + " carries unexpected field " + key);
+      }
+    }
+  }
+
+  function requireFiniteNumber(value, label) {
+    if (typeof value !== "number" || !isFinite(value)) {
+      invalid(label + " is not a finite number");
+    }
+    return value;
+  }
+
+  function requireBookCount(value, label) {
+    requireFiniteNumber(value, label);
+    if (Math.floor(value) !== value || value < MINIMUM_ELIGIBLE_BOOKS) {
+      invalid(label + " is not an integer count of at least " + MINIMUM_ELIGIBLE_BOOKS);
+    }
+    return value;
+  }
+
+  function requireNonEmptyString(value, label) {
+    if (typeof value !== "string" || value.length === 0) {
+      invalid(label + " is not a non-empty string");
+    }
+    return value;
+  }
+
+  // Absolute instants only: the published contract always carries an explicit
+  // UTC designator or offset, so a naive local-time string is rejected rather
+  // than silently reinterpreted in the reader's timezone.
+  function requireInstant(value, label) {
+    requireNonEmptyString(value, label);
+    if (!/^\d{4}-\d{2}-\d{2}[Tt ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?([Zz]|[+-]\d{2}:?\d{2})$/.test(value)) {
+      invalid(label + " is not an ISO-8601 instant with a UTC offset");
+    }
+    var parsed = new Date(value.replace(" ", "T"));
+    var epochMs = parsed.getTime();
+    if (typeof epochMs !== "number" || !isFinite(epochMs)) {
+      invalid(label + " is not a parseable timestamp");
+    }
+    return epochMs;
+  }
+
+  function validatePayload(payload) {
+    if (payload === null || typeof payload !== "object" || Object.prototype.toString.call(payload) === "[object Array]") {
+      invalid("payload is not a JSON object");
+    }
+    requireExactKeys(payload, TOP_LEVEL_KEYS, "payload");
+
+    if (payload.schema_version !== REQUIRED_SCHEMA_VERSION) {
+      invalid("schema_version is not " + REQUIRED_SCHEMA_VERSION);
+    }
+    requireFiniteNumber(payload.season, "season");
+    requireFiniteNumber(payload.week, "week");
+    if (!hasOwn(ALLOWED_HORIZONS, requireNonEmptyString(payload.horizon, "horizon"))) {
+      invalid("horizon is not TUE or FRI");
+    }
+    requireInstant(payload.generated_at_utc, "generated_at_utc");
+
+    if (Object.prototype.toString.call(payload.games) !== "[object Array]") {
+      invalid("games is not an array");
+    }
+    if (payload.games.length === 0) {
+      invalid("games is empty");
+    }
+
+    var seenGameIds = {};
+    var games = [];
+    var index;
+    var keyIndex;
+    var game;
+    var raw;
+
+    for (index = 0; index < payload.games.length; index += 1) {
+      raw = payload.games[index];
+      if (raw === null || typeof raw !== "object" || Object.prototype.toString.call(raw) === "[object Array]") {
+        invalid("games[" + index + "] is not a JSON object");
+      }
+      requireExactKeys(raw, GAME_KEYS, "games[" + index + "]");
+
+      game = {};
+      for (keyIndex = 0; keyIndex < GAME_KEYS.length; keyIndex += 1) {
+        game[GAME_KEYS[keyIndex]] = raw[GAME_KEYS[keyIndex]];
+      }
+
+      requireNonEmptyString(game.game_id, "games[" + index + "].game_id");
+      if (hasOwn(seenGameIds, game.game_id)) {
+        invalid("duplicate game_id " + game.game_id);
+      }
+      seenGameIds[game.game_id] = true;
+
+      for (keyIndex = 0; keyIndex < TEAM_KEYS.length; keyIndex += 1) {
+        requireNonEmptyString(game[TEAM_KEYS[keyIndex]], "games[" + index + "]." + TEAM_KEYS[keyIndex]);
+      }
+      if (game.home_team === game.away_team) {
+        invalid("games[" + index + "] has identical home and away teams");
+      }
+      for (keyIndex = 0; keyIndex < NUMERIC_GAME_KEYS.length; keyIndex += 1) {
+        requireFiniteNumber(game[NUMERIC_GAME_KEYS[keyIndex]], "games[" + index + "]." + NUMERIC_GAME_KEYS[keyIndex]);
+      }
+      for (keyIndex = 0; keyIndex < BOOK_COUNT_KEYS.length; keyIndex += 1) {
+        requireBookCount(game[BOOK_COUNT_KEYS[keyIndex]], "games[" + index + "]." + BOOK_COUNT_KEYS[keyIndex]);
+      }
+      for (keyIndex = 0; keyIndex < INSTANT_GAME_KEYS.length; keyIndex += 1) {
+        requireInstant(game[INSTANT_GAME_KEYS[keyIndex]], "games[" + index + "]." + INSTANT_GAME_KEYS[keyIndex]);
+      }
+
+      game.kickoffEpochMs = requireInstant(game.kickoff_utc, "games[" + index + "].kickoff_utc");
+      game.marketAsOfEpochMs = requireInstant(game.market_as_of_utc, "games[" + index + "].market_as_of_utc");
+      games.push(game);
+    }
+
+    // Kickoff ascending, then game_id ascending. Never re-ordered by edge
+    // size: a board sorted by biggest number is a recommendation board.
+    games.sort(function (left, right) {
+      if (left.kickoffEpochMs !== right.kickoffEpochMs) {
+        return left.kickoffEpochMs - right.kickoffEpochMs;
+      }
+      if (left.game_id < right.game_id) {
+        return -1;
+      }
+      if (left.game_id > right.game_id) {
+        return 1;
+      }
+      return 0;
+    });
+
+    return {
+      season: payload.season,
+      week: payload.week,
+      horizon: payload.horizon,
+      generatedAtUtc: payload.generated_at_utc,
+      games: games
+    };
+  }
+
+  // ------------------------------------------------------------------ //
+  // Eastern Time rendering
+  // ------------------------------------------------------------------ //
+  function easternFormatter(options) {
+    var settings = { timeZone: ET_TIME_ZONE };
+    var key;
+    for (key in options) {
+      if (hasOwn(options, key)) {
+        settings[key] = options[key];
+      }
+    }
+    return new Intl.DateTimeFormat("en-US", settings);
+  }
+
+  var STAMP_FORMAT = easternFormatter({
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short"
+  });
+
+  var KICKOFF_FORMAT = easternFormatter({
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short"
+  });
+
+  function renderEastern(formatter, epochMs) {
+    return formatter.format(new Date(epochMs));
+  }
+
+  // ------------------------------------------------------------------ //
+  // pricing derivations -- pure functions of the eleven published fields
+  // ------------------------------------------------------------------ //
+  function formatPoints(value) {
+    return value.toFixed(1);
+  }
+
+  function formatMagnitude(value) {
+    return Math.abs(value).toFixed(1);
+  }
+
+  // A home-perspective spread rendered the way a bettor sees it: the favoured
+  // team followed by its negative number, or PK at zero.
+  function favoriteNotation(homeSpread, awayTeam, homeTeam) {
+    if (homeSpread === 0) {
+      return PICK_EM_SHORT;
+    }
+    return (homeSpread < 0 ? homeTeam : awayTeam) + " -" + formatMagnitude(homeSpread);
+  }
+
+  function favoriteSide(impliedHomeMargin) {
+    if (impliedHomeMargin > 0) {
+      return "HOME";
+    }
+    if (impliedHomeMargin < 0) {
+      return "AWAY";
+    }
+    return PICK_EM;
+  }
+
+  function sideTeam(side, awayTeam, homeTeam) {
+    if (side === "HOME") {
+      return homeTeam;
+    }
+    if (side === "AWAY") {
+      return awayTeam;
+    }
+    return PICK_EM_SHORT;
+  }
+
+  function priceGame(game) {
+    // Model fair home spread is the negation of the predicted home margin.
+    var modelFairHomeSpread = -game.predicted_home_margin;
+    // market_home_spread is already standard HOME notation, so the market's
+    // implied home margin is its negation.
+    var marketImpliedHomeMargin = -game.market_home_spread;
+    // Sportsbook edge (ATS): model fair margin against market-implied margin.
+    var atsHomeEdge = game.predicted_home_margin + game.market_home_spread;
+    // Total edge: model total against market total.
+    var totalEdge = game.predicted_game_total - game.market_total;
+
+    var modelFavorite = favoriteSide(game.predicted_home_margin);
+    var marketFavorite = favoriteSide(marketImpliedHomeMargin);
+    var atsSide = favoriteSide(atsHomeEdge);
+
+    return {
+      modelFairLine: favoriteNotation(modelFairHomeSpread, game.away_team, game.home_team),
+      marketConsensus: favoriteNotation(game.market_home_spread, game.away_team, game.home_team),
+      atsEdgeText: atsHomeEdge === 0
+        ? NO_EDGE
+        : sideTeam(atsSide, game.away_team, game.home_team) + " +" + formatMagnitude(atsHomeEdge) + " pts",
+      totalEdgeText: totalEdge === 0
+        ? NO_EDGE
+        : (totalEdge > 0 ? "OVER" : "UNDER") + " +" + formatMagnitude(totalEdge) + " pts",
+      totalEdgeNeutral: totalEdge === 0,
+      atsEdgeNeutral: atsHomeEdge === 0,
+      winnerAgreement: modelFavorite === marketFavorite ? "AGREE" : "DISAGREE",
+      modelFavoriteTeam: sideTeam(modelFavorite, game.away_team, game.home_team),
+      marketFavoriteTeam: sideTeam(marketFavorite, game.away_team, game.home_team)
+    };
+  }
+
+  // ------------------------------------------------------------------ //
+  // DOM helpers
+  // ------------------------------------------------------------------ //
+  function cell(tagName, label) {
+    var element = document.createElement(tagName);
+    element.setAttribute("data-label", label);
+    if (tagName === "th") {
+      element.setAttribute("scope", "row");
+    }
+    return element;
+  }
+
+  function appendText(parent, text, className) {
+    var span = document.createElement("span");
+    span.textContent = text;
+    if (className) {
+      span.className = className;
+    }
+    parent.appendChild(span);
+    return span;
+  }
+
+  function appendBadge(parent, text, modifier) {
+    return appendText(parent, text, "badge " + modifier);
+  }
+
+  function buildRow(game) {
+    var priced = priceGame(game);
+    var row = document.createElement("tr");
+
+    var matchup = cell("th", "Matchup");
+    appendText(matchup, game.away_team + " at " + game.home_team, "matchup");
+    appendText(matchup, renderEastern(KICKOFF_FORMAT, game.kickoffEpochMs), "note");
+    row.appendChild(matchup);
+
+    var modelLine = cell("td", "Model Fair Line");
+    appendText(modelLine, priced.modelFairLine, "price");
+    row.appendChild(modelLine);
+
+    var marketLine = cell("td", "Market Consensus");
+    appendText(marketLine, priced.marketConsensus, "price");
+    appendText(marketLine, "ATS Books: " + game.market_ats_book_count, "note");
+    appendText(marketLine, "Total Books: " + game.market_total_book_count, "note");
+    row.appendChild(marketLine);
+
+    var atsEdge = cell("td", "Sportsbook Edge (ATS)");
+    appendText(atsEdge, priced.atsEdgeText, priced.atsEdgeNeutral ? "note" : "price edge-side");
+    row.appendChild(atsEdge);
+
+    var modelTotal = cell("td", "Model Total");
+    appendText(modelTotal, formatPoints(game.predicted_game_total), "price");
+    row.appendChild(modelTotal);
+
+    var marketTotal = cell("td", "Market Total");
+    appendText(marketTotal, formatPoints(game.market_total), "price");
+    row.appendChild(marketTotal);
+
+    var totalEdge = cell("td", "Total Edge");
+    appendText(totalEdge, priced.totalEdgeText, priced.totalEdgeNeutral ? "note" : "price edge-side");
+    row.appendChild(totalEdge);
+
+    var winnerView = cell("td", "Winner View");
+    appendBadge(winnerView, priced.winnerAgreement, priced.winnerAgreement === "AGREE" ? "badge-agree" : "badge-disagree");
+    appendText(winnerView, "Model: " + priced.modelFavoriteTeam, "note");
+    appendText(winnerView, "Market: " + priced.marketFavoriteTeam, "note");
+    row.appendChild(winnerView);
+
+    return row;
+  }
+
+  // ------------------------------------------------------------------ //
+  // Compare Your Line -- entirely in this tab. Nothing is stored and
+  // nothing is transmitted.
+  // ------------------------------------------------------------------ //
+  function selectedCompareGame(card) {
+    var index;
+    for (index = 0; index < card.games.length; index += 1) {
+      if (card.games[index].game_id === compareGameEl.value) {
+        return card.games[index];
+      }
+    }
+    return null;
+  }
+
+  function readUserNumber(input) {
+    var text = input.value.trim();
+    if (text.length === 0) {
+      return null;
+    }
+    var value = Number(text);
+    if (typeof value !== "number" || !isFinite(value)) {
+      return null;
+    }
+    return value;
+  }
+
+  function updateCompare(card) {
+    var game = selectedCompareGame(card);
+    var userHomeSpread = readUserNumber(compareSpreadEl);
+    var userTotal = readUserNumber(compareTotalEl);
+
+    if (game === null || userHomeSpread === null) {
+      compareAtsEdgeEl.textContent = "\u2014";
+    } else {
+      var userAtsHomeEdge = game.predicted_home_margin + userHomeSpread;
+      compareAtsEdgeEl.textContent = userAtsHomeEdge === 0
+        ? NO_EDGE
+        : favoriteSide(userAtsHomeEdge) + " " + formatMagnitude(userAtsHomeEdge) + " pts";
+    }
+
+    if (game === null || userTotal === null) {
+      compareTotalEdgeEl.textContent = "\u2014";
+    } else {
+      var userTotalEdge = game.predicted_game_total - userTotal;
+      compareTotalEdgeEl.textContent = userTotalEdge === 0
+        ? NO_EDGE
+        : (userTotalEdge > 0 ? "OVER" : "UNDER") + " " + formatMagnitude(userTotalEdge) + " pts";
+    }
+  }
+
+  function buildCompare(card) {
+    var index;
+    var game;
+    var option;
+    for (index = 0; index < card.games.length; index += 1) {
+      game = card.games[index];
+      option = document.createElement("option");
+      option.value = game.game_id;
+      option.textContent = game.away_team + " at " + game.home_team + " \u00b7 " + renderEastern(KICKOFF_FORMAT, game.kickoffEpochMs);
+      compareGameEl.appendChild(option);
+    }
+
+    function onChange() {
+      updateCompare(card);
+    }
+
+    compareGameEl.addEventListener("change", onChange);
+    compareSpreadEl.addEventListener("input", onChange);
+    compareSpreadEl.addEventListener("change", onChange);
+    compareTotalEl.addEventListener("input", onChange);
+    compareTotalEl.addEventListener("change", onChange);
+
+    compareSectionEl.hidden = false;
+    updateCompare(card);
+  }
+
+  // ------------------------------------------------------------------ //
+  // render / fail closed
+  // ------------------------------------------------------------------ //
+  function renderCard(card) {
+    var index;
+    var latestMarketAsOfEpochMs = card.games[0].marketAsOfEpochMs;
+
+    for (index = 0; index < card.games.length; index += 1) {
+      if (card.games[index].marketAsOfEpochMs > latestMarketAsOfEpochMs) {
+        latestMarketAsOfEpochMs = card.games[index].marketAsOfEpochMs;
+      }
+      boardBodyEl.appendChild(buildRow(card.games[index]));
+    }
+
+    identityEl.textContent = "Season " + card.season + " \u00b7 Week " + card.week + " \u00b7 " + ALLOWED_HORIZONS[card.horizon] + " Forecast";
+    identityEl.hidden = false;
+
+    generatedAtEl.textContent = renderEastern(STAMP_FORMAT, requireInstant(card.generatedAtUtc, "generated_at_utc"));
+    marketAsOfEl.textContent = renderEastern(STAMP_FORMAT, latestMarketAsOfEpochMs);
+    stampsEl.hidden = false;
+
+    boardEl.hidden = false;
+    messageEl.hidden = true;
+
+    buildCompare(card);
+  }
+
+  function failClosed() {
+    boardBodyEl.textContent = "";
+    boardEl.hidden = true;
+    identityEl.hidden = true;
+    stampsEl.hidden = true;
+    compareSectionEl.hidden = true;
+    messageEl.hidden = false;
+    messageEl.textContent = NO_DATA_MESSAGE;
+  }
+
+  function load() {
+    if (typeof window.fetch !== "function") {
+      failClosed();
+      return;
+    }
+
+    window.fetch(FEED_URL, { cache: "no-store", credentials: "omit" }).then(function (response) {
+      if (!response.ok) {
+        throw new Error("feed request failed with status " + response.status);
+      }
+      return response.text();
+    }).then(function (text) {
+      // JSON.parse rejects NaN and Infinity literals, so a malformed numeric
+      // feed fails here rather than reaching the board.
+      var card = validatePayload(JSON.parse(text));
+      renderCard(card);
+    })["catch"](function () {
+      failClosed();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", load);
+  } else {
+    load();
+  }
+}());
+</script>
+</body>
+</html>
