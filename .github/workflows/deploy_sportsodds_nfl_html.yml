@@ -1,0 +1,25 @@
+name: Deploy SportsOdds NFL HTML
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish NFL predictive pricing HTML
+        env:
+          SPORTSODDS_FTP_HOST: ${{ secrets.SPORTSODDS_FTP_HOST }}
+          SPORTSODDS_FTP_USER: ${{ secrets.SPORTSODDS_FTP_USER }}
+          SPORTSODDS_FTP_PASSWORD: ${{ secrets.SPORTSODDS_FTP_PASSWORD }}
+          SPORTSODDS_FTP_REMOTE_DIR: /tools/odds-scanner/predictions/NFL
+          SPORTSODDS_FTP_MODE: ftp
+          SPORTSODDS_FTP_PORT: "21"
+        run: python3 scripts/publish_sportsodds_nfl.py --html-only
