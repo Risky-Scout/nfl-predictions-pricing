@@ -1,0 +1,58 @@
+name: Verify SportsOdds NFL FTP
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify remote NFL directory
+        env:
+          SPORTSODDS_FTP_HOST: ${{ secrets.SPORTSODDS_FTP_HOST }}
+          SPORTSODDS_FTP_USER: ${{ secrets.SPORTSODDS_FTP_USER }}
+          SPORTSODDS_FTP_PASSWORD: ${{ secrets.SPORTSODDS_FTP_PASSWORD }}
+        run: |
+          python3 - <<'PY'
+          import ftplib
+          import os
+
+          remote = "/tools/odds-scanner/predictions/NFL"
+
+          ftp = ftplib.FTP(timeout=20)
+          ftp.connect(os.environ["SPORTSODDS_FTP_HOST"], 21)
+          ftp.login(
+              os.environ["SPORTSODDS_FTP_USER"],
+              os.environ["SPORTSODDS_FTP_PASSWORD"],
+          )
+
+          print("login=OK")
+          print("initial_pwd=", ftp.pwd())
+
+          ftp.cwd(remote)
+          print("cwd=OK")
+          print("remote_pwd=", ftp.pwd())
+
+          names = ftp.nlst()
+          print("entries=", names)
+
+          if "index.html" not in names:
+              raise SystemExit("FAIL: index.html is not present in NFL remote directory")
+
+          ftp.voidcmd("TYPE I")
+          size = ftp.size("index.html")
+          print("index_html_size=", size)
+
+          if size != 33120:
+              raise SystemExit(
+                  f"FAIL: expected index.html size 33120, got {size}"
+              )
+
+          print("REMOTE_INDEX_VERIFIED=YES")
+          ftp.quit()
+          PY
