@@ -1,0 +1,70 @@
+name: Wizard SSH Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Read-only Wizard SSH connectivity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: wizard-production
+
+    steps:
+      - name: Prepare SSH
+        env:
+          WIZARD_SSH_PRIVATE_KEY: ${{ secrets.WIZARD_SSH_PRIVATE_KEY }}
+          WIZARD_SSH_KNOWN_HOSTS: ${{ secrets.WIZARD_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          install -d -m 700 "$HOME/.ssh"
+
+          printf '%s\n' "$WIZARD_SSH_PRIVATE_KEY" \
+            > "$HOME/.ssh/wizard_deploy"
+          chmod 600 "$HOME/.ssh/wizard_deploy"
+
+          printf '%s\n' "$WIZARD_SSH_KNOWN_HOSTS" \
+            > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+          ssh-keygen -y \
+            -f "$HOME/.ssh/wizard_deploy" \
+            >/dev/null
+
+          echo "PRIVATE_KEY_PARSE=PASS"
+
+          ssh-keygen -lf "$HOME/.ssh/known_hosts"
+          echo "KNOWN_HOSTS_PARSE=PASS"
+
+      - name: Test read-only SSH connection
+        env:
+          WIZARD_SSH_HOST: ${{ secrets.WIZARD_SSH_HOST }}
+          WIZARD_SSH_PORT: ${{ secrets.WIZARD_SSH_PORT }}
+          WIZARD_SSH_USER: ${{ secrets.WIZARD_SSH_USER }}
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/wizard_deploy" \
+            -p "$WIZARD_SSH_PORT" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=15 \
+            "$WIZARD_SSH_USER@$WIZARD_SSH_HOST" \
+            '
+              set -e
+              echo "SSH_CONNECTION=PASS"
+              printf "remote_user="
+              id -un
+              printf "hostname="
+              hostname
+              printf "working_directory="
+              pwd
+              printf "kernel="
+              uname -srm
+            '
