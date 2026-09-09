@@ -281,6 +281,8 @@ def validate_capture_manifest(
     expected_week: int | None = None,
     expected_horizon: str | None = None,
     expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    required_sources: tuple[str, ...] = REQUIRED_LOGICAL_SOURCES,
+    allowed_horizons: tuple[str, ...] = PRODUCTION_HORIZONS,
 ) -> ValidatedCapture:
     """Validate ONE explicitly supplied capture manifest, fail-closed.
 
@@ -297,7 +299,20 @@ def validate_capture_manifest(
     identity. When supplied they must match exactly -- in particular
     ``expected_target_cutoff_utc`` must equal the manifest's
     ``nominal_cutoff_utc``, so a capture frozen for one certified cutoff can
-    never be priced into a different one."""
+    never be priced into a different one.
+
+    ``required_sources``/``allowed_horizons`` DEFAULT to the certified market
+    contract (``("games", "odds_current")`` and TUE/FRI), so the market
+    pricing path -- :func:`load_live_market_source`, the only caller that
+    prices quotes -- behaves exactly as before and still refuses a SMOKE
+    capture or a capture whose ``odds_current`` source failed. They exist only
+    so the 2026 games-population builder
+    (:mod:`nfl_hybrid.data.games_population_2026`) can reuse THIS validator --
+    the same schema/status/downgrade/manifest-hash/per-page-hash gates, one
+    implementation -- for a games-only schedule-evidence capture, which
+    legitimately carries no odds and no TUE/FRI cutoff. A games-evidence
+    capture can never reach the market path: nothing widens these arguments
+    there."""
     manifest_path = Path(manifest_path)
     if not manifest_path.is_file():
         raise BdlMarketBridgeError(f"market capture manifest not found: {manifest_path}")
@@ -332,9 +347,9 @@ def validate_capture_manifest(
         )
 
     horizon = str(manifest["horizon"])
-    if horizon not in PRODUCTION_HORIZONS:
+    if horizon not in allowed_horizons:
         raise BdlMarketBridgeError(
-            f"capture horizon {horizon!r} is not a production horizon {PRODUCTION_HORIZONS}; "
+            f"capture horizon {horizon!r} is not an allowed horizon {allowed_horizons}; "
             "SMOKE captures are schema evidence only and are never an official production market"
         )
     requested_horizon = str(manifest["requested_horizon"])
@@ -387,12 +402,12 @@ def validate_capture_manifest(
     required_source_ok = manifest["required_source_ok"]
     if not isinstance(required_source_ok, dict):
         raise BdlMarketBridgeError("capture manifest 'required_source_ok' is not an object")
-    for source in REQUIRED_LOGICAL_SOURCES:
+    for source in required_sources:
         if not required_source_ok.get(source):
             raise BdlMarketBridgeError(f"capture did not successfully acquire required source {source!r}")
 
     capture_dir = manifest_path.parent
-    for source in REQUIRED_LOGICAL_SOURCES:
+    for source in required_sources:
         records = _request_records(manifest, source)
         if not records:
             raise BdlMarketBridgeError(f"capture manifest has no request records for {source!r}")
