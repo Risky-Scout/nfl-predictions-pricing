@@ -8,6 +8,13 @@ This runbook covers **operations only**. For the model's statistical
 strength, limitations, and what is/isn't demonstrated, see
 [`MODEL_STRENGTH_AND_LIMITATIONS.md`](MODEL_STRENGTH_AND_LIMITATIONS.md).
 
+For the **automated** deployment of this same pipeline — GitHub as scheduler,
+the Wizard server as the permanent runtime/data/artifact/web destination, the
+composite 2026 games population, atomic SSH publication and the one-time data
+migration off the operator's Mac — see
+[`WIZARD_NFL_PRODUCTION.md`](WIZARD_NFL_PRODUCTION.md). The manual commands
+below remain valid; the automation calls exactly these entrypoints.
+
 ## 1. Environment setup (no secret values here)
 
 Set these environment variables (see `.env.example` for the full list; no
