@@ -727,6 +727,20 @@ def load_games_population_with_provenance(
     return games, provenance
 
 
+def _best_effort_population_hash(games: pd.DataFrame) -> str | None:
+    """The content hash of a games population, or ``None`` when the frame
+    cannot be hashed.
+
+    Only ever used for an INJECTED test population. Provenance is worth
+    recording, but recording it must not become a new way for a run to fail:
+    a frame that cannot be hashed is diagnosed by the certified path that
+    actually needs those columns, under its own existing status."""
+    try:
+        return gp26.population_content_hash(games)
+    except Exception:
+        return None
+
+
 def load_games_population(*, games_population_root: Path | None = None) -> pd.DataFrame:
     """The one canonical games/schedule population, REG+POST only. See
     :func:`load_games_population_with_provenance` for the composition and the
@@ -1090,7 +1104,12 @@ def run_horizon_batch(
             games_df = filter_reg_post(games)
             games_provenance = {
                 "source": "INJECTED",
-                "reg_post_content_sha256": gp26.population_content_hash(games_df),
+                # Recording the injected population's hash must never change
+                # how a malformed injected frame is CLASSIFIED. An unhashable
+                # frame is an Elo-source problem, diagnosed a few lines below
+                # by build_horizon_membership_ledger exactly as before; it is
+                # not a missing schedule.
+                "reg_post_content_sha256": _best_effort_population_hash(games_df),
                 "reg_post_row_count": int(len(games_df)),
             }
     except Exception as exc:

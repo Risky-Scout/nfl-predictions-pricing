@@ -348,8 +348,12 @@ def validate_capture_manifest(
 
     horizon = str(manifest["horizon"])
     if horizon not in allowed_horizons:
+        # The market path's rejection message is unchanged, word for word: it
+        # is what operators and existing tests read when a SMOKE capture is
+        # offered as a production market.
+        label = "a production horizon" if allowed_horizons == PRODUCTION_HORIZONS else "an allowed horizon"
         raise BdlMarketBridgeError(
-            f"capture horizon {horizon!r} is not an allowed horizon {allowed_horizons}; "
+            f"capture horizon {horizon!r} is not {label} {allowed_horizons}; "
             "SMOKE captures are schema evidence only and are never an official production market"
         )
     requested_horizon = str(manifest["requested_horizon"])
