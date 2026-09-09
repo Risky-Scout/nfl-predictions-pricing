@@ -1,0 +1,502 @@
+name: NFL 2026 production (daily maintenance + certified TUE/FRI)
+
+# ============================================================================
+# THE ONE AUTHORITATIVE 2026 NFL PRODUCTION WORKFLOW.
+#
+# GitHub is the source of truth and the scheduler. The Wizard SportsOdds
+# server is the permanent NFL production runtime, data
+# root, artifact root and web destination. Nothing here depends on the
+# operator's Mac: every job runs on a GitHub-hosted runner, and everything that
+# needs the production estate reaches the Wizard server over the SSH channel
+# already proven end to end by .github/workflows/wizard_ssh_smoke.yml
+# (PRIVATE_KEY_PARSE=PASS, KNOWN_HOSTS_PARSE=PASS, SSH_CONNECTION=PASS).
+#
+# WHAT RUNS, AND WHEN
+#   DAILY (every day)   -- refresh 2026 BallDontLie completed-game evidence,
+#                          update the durable canonical 2026 games population,
+#                          update prospective evaluation, generate/update the
+#                          recalibration candidate, audit runtime assets,
+#                          verify the public feed. Publishes NOTHING.
+#   CERTIFIED (TUE/FRI) -- create or accept the official BallDontLie capture,
+#                          retain its manifest path and hash, run production
+#                          preflight and REQUIRE READY, run the certified
+#                          six-Elo Ridge-alpha-100 card, export
+#                          wizard-nfl-pricing-v2, publish latest.json
+#                          atomically on the server, then verify the public
+#                          feed serves exactly that card.
+#
+# THERE IS NO DAILY FORECAST HORIZON. Public prediction cards are produced only
+# under the EXISTING Fix-8 TUE/FRI horizon semantics. Eligibility is decided by
+# scripts/resolve_production_schedule.py, which calls the certified
+# America/New_York window functions in src/nfl_hybrid/production/run_2026.py --
+# never a hard-coded EDT/EST offset and never a second timezone implementation.
+# A scheduled firing outside a certified window resolves certified_due=false
+# and the certified job is skipped: a clean no-op, not a failure.
+#
+# DEPLOYMENT IS RESTRICTED TO main. Every job that touches the Wizard server
+# carries `environment: wizard-production` (itself restricted to main) AND an
+# explicit `github.ref == 'refs/heads/main'` guard, so a fork, a branch or a
+# pull request can never deploy. On a non-main ref the workflow still resolves
+# the schedule and reports, which is what makes it reviewable before merge.
+#
+# PUBLICATION IS SSH, NEVER FTP. There is no FTP client, no FTP credential and
+# no call to scripts/publish_sportsodds_nfl.py anywhere in this file. The card
+# is written by scripts/publish_wizard_nfl_local.py running ON the server, with
+# a same-filesystem os.replace -- a genuinely atomic publish.
+#
+# MODEL SCIENCE IS FROZEN. This workflow orchestrates existing entrypoints and
+# changes no feature, no alpha, no chronology rule, no horizon semantics, no
+# target definition, no market rule, no calibration math, no certified hash and
+# no published schema.
+# ============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Which pass to run"
+        type: choice
+        required: true
+        default: auto
+        options: [auto, daily_only, certified_only]
+      horizon:
+        description: "Force a certified horizon. Blank = decided by the certified due window."
+        type: choice
+        required: false
+        default: ""
+        options: ["", "TUE", "FRI"]
+      market_capture_manifest:
+        description: "ABSOLUTE path ON THE WIZARD SERVER of an EXISTING official BallDontLie capture manifest.json. Blank = capture a new one."
+        type: string
+        required: false
+        default: ""
+      market_capture_sha256:
+        description: "Expected SHA256 of that manifest. Verified on the server before use; a mismatch fails closed."
+        type: string
+        required: false
+        default: ""
+      as_of:
+        description: "ISO8601 --as-of override (deterministic replay only; blank = real current time)."
+        type: string
+        required: false
+        default: ""
+      publish:
+        description: "publish = write latest.json into the served directory. dry_run = validate and report only."
+        type: choice
+        required: true
+        default: dry_run
+        options: [dry_run, publish]
+
+  schedule:
+    # DAILY maintenance. 11:20 UTC every day -- early morning America/New_York
+    # in both DST offsets, comfortably ahead of the 12:00 local certified
+    # window, so the games population is already refreshed before a certified
+    # card is produced.
+    - cron: "20 11 * * *"
+
+    # CERTIFIED TUE/FRI. Two DST-redundant firings for the 12:00
+    # America/New_York due window: 16:05 UTC is the correct instant during EDT
+    # (UTC-4) and 17:05 UTC during EST (UTC-5). Both fire year-round on
+    # purpose. The cron expression is NEVER the gate -- the resolve job
+    # computes the real DST-aware window, and whichever firing is not actually
+    # 12:00-12:20 local that week resolves certified_due=false and no-ops.
+    - cron: "5 16 * * 2,5"
+    - cron: "5 17 * * 2,5"
+
+permissions:
+  contents: read
+
+concurrency:
+  # One production actor at a time. Never cancels a run in progress: a
+  # cancelled certified run could leave a batch half-written.
+  group: nfl-2026-production
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  # Where the workflow lands the bootstrap helpers and the source archive on
+  # the server, relative to the SSH user's HOME. Used before
+  # ops/wizard/nfl_production_layout.sh has ever been read there, so it cannot
+  # come from the layout file itself. Nothing assumes /opt or /srv.
+  OPS_INBOX: ".nfl-ops-inbox"
+  # Must match ops/wizard/nfl_production_layout.sh's own default; used only to
+  # locate the installed checkout when the WIZARD_NFL_HOME secret is unset.
+  DEFAULT_WIZARD_NFL_HOME_LEAF: "nfl-production-2026"
+
+jobs:
+  # ==========================================================================
+  # 1. Resolve what this invocation is allowed to do.
+  #    GitHub-hosted, no environment, no secrets, no server contact -- so it
+  #    runs identically on any ref and its decision is reviewable in a PR.
+  # ==========================================================================
+  resolve:
+    name: Resolve production schedule
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      daily_due: ${{ steps.decide.outputs.daily_due }}
+      certified_due: ${{ steps.decide.outputs.certified_due }}
+      certified_horizon: ${{ steps.decide.outputs.certified_horizon }}
+      certified_target_cutoff_utc: ${{ steps.decide.outputs.certified_target_cutoff_utc }}
+      certified_basis: ${{ steps.decide.outputs.certified_basis }}
+      deployment_allowed: ${{ steps.gate.outputs.deployment_allowed }}
+      run_daily: ${{ steps.gate.outputs.run_daily }}
+      run_certified: ${{ steps.gate.outputs.run_certified }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install the project
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip setuptools wheel
+          # The real package is installed so the schedule decision comes from
+          # the CERTIFIED window functions themselves, rather than a second,
+          # hand-rolled timezone implementation living in this YAML.
+          python -m pip install -e .
+
+      - name: Resolve certified/daily eligibility
+        id: decide
+        env:
+          FORCE_HORIZON: ${{ inputs.horizon }}
+          AS_OF: ${{ inputs.as_of }}
+        run: |
+          set -euo pipefail
+          args=()
+          [ -n "${FORCE_HORIZON:-}" ] && args+=(--force-horizon "${FORCE_HORIZON}")
+          [ -n "${AS_OF:-}" ] && args+=(--as-of "${AS_OF}")
+          python scripts/resolve_production_schedule.py "${args[@]}"
+
+      - name: Apply mode and main-only deployment gate
+        id: gate
+        env:
+          MODE: ${{ inputs.mode }}
+          DAILY_DUE: ${{ steps.decide.outputs.daily_due }}
+          CERTIFIED_DUE: ${{ steps.decide.outputs.certified_due }}
+        run: |
+          set -euo pipefail
+          mode="${MODE:-auto}"
+
+          # Deployment -- anything that touches the Wizard server -- is allowed
+          # from main only. Belt and braces with the wizard-production
+          # environment's own main-only protection rule.
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            deployment_allowed=true
+          else
+            deployment_allowed=false
+          fi
+
+          run_daily=false
+          run_certified=false
+          case "${mode}" in
+            daily_only)     [ "${DAILY_DUE}" = "true" ] && run_daily=true ;;
+            certified_only) [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true ;;
+            *)
+              [ "${DAILY_DUE}" = "true" ] && run_daily=true
+              [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true
+              ;;
+          esac
+          if [ "${deployment_allowed}" != "true" ]; then
+            run_daily=false
+            run_certified=false
+          fi
+
+          {
+            echo "deployment_allowed=${deployment_allowed}"
+            echo "run_daily=${run_daily}"
+            echo "run_certified=${run_certified}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        run: |
+          {
+            echo "### NFL 2026 production -- schedule decision"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| ref | \`${{ github.ref }}\` |"
+            echo "| mode | \`${{ inputs.mode || 'auto (scheduled)' }}\` |"
+            echo "| daily_due | \`${{ steps.decide.outputs.daily_due }}\` |"
+            echo "| certified_due | \`${{ steps.decide.outputs.certified_due }}\` |"
+            echo "| certified_horizon | \`${{ steps.decide.outputs.certified_horizon }}\` |"
+            echo "| certified_basis | \`${{ steps.decide.outputs.certified_basis }}\` |"
+            echo "| deployment_allowed (main only) | \`${{ steps.gate.outputs.deployment_allowed }}\` |"
+            echo "| run_daily | \`${{ steps.gate.outputs.run_daily }}\` |"
+            echo "| run_certified | \`${{ steps.gate.outputs.run_certified }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # 2. DAILY maintenance on the Wizard server. Publishes nothing.
+  # ==========================================================================
+  daily-maintenance:
+    name: Daily maintenance (Wizard)
+    needs: resolve
+    if: needs.resolve.outputs.run_daily == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: wizard-production
+
+    env:
+      WIZARD_SSH_HOST: ${{ secrets.WIZARD_SSH_HOST }}
+      WIZARD_SSH_PORT: ${{ secrets.WIZARD_SSH_PORT }}
+      WIZARD_SSH_USER: ${{ secrets.WIZARD_SSH_USER }}
+      WIZARD_NFL_HOME: ${{ secrets.WIZARD_NFL_HOME }}
+      WIZARD_NFL_WEB_DIR: ${{ secrets.WIZARD_NFL_WEB_DIR }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare SSH
+        env:
+          WIZARD_SSH_PRIVATE_KEY: ${{ secrets.WIZARD_SSH_PRIVATE_KEY }}
+          WIZARD_SSH_KNOWN_HOSTS: ${{ secrets.WIZARD_SSH_KNOWN_HOSTS }}
+        run: bash ops/wizard/remote.sh prepare
+
+      - name: Stage source and ops helpers on Wizard
+        run: |
+          set -euo pipefail
+          # `git archive` of the EXACT triggering commit: the server never
+          # clones from GitHub, so it needs no deploy key, no token and no
+          # egress to github.com, and production provably runs this commit.
+          git archive --format=tar.gz -o /tmp/nfl-source.tar.gz "${GITHUB_SHA}"
+          bash ops/wizard/remote.sh push-ops "${OPS_INBOX}" /tmp/nfl-source.tar.gz
+
+      - name: Bootstrap the Wizard NFL production layout
+        run: |
+          set -euo pipefail
+          bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export WIZARD_NFL_WEB_DIR='${WIZARD_NFL_WEB_DIR}'
+            bash \"\$HOME/${OPS_INBOX}/bootstrap_nfl_production.sh\" \
+              --commit '${GITHUB_SHA}' \
+              --source-archive \"\$HOME/${OPS_INBOX}/nfl-source.tar.gz\"
+          "
+
+      - name: Daily maintenance pass
+        env:
+          BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
+        run: |
+          set -euo pipefail
+          bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export WIZARD_NFL_WEB_DIR='${WIZARD_NFL_WEB_DIR}'
+            export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
+            OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
+            bash \"\$OPS/run_daily_maintenance.sh\"
+          "
+
+      - name: Runtime asset audit (server-consolidation evidence)
+        run: |
+          set -euo pipefail
+          bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
+            . \"\$OPS/nfl_production_layout.sh\"
+            python3 \"\${WIZARD_NFL_REPO_DIR}/scripts/audit_production_runtime_assets.py\"
+          "
+
+      - name: Verify the public NFL page and feed
+        run: |
+          set -euo pipefail
+          # No expectations: the daily pass publishes nothing, so this is a
+          # liveness and published-contract check of whatever is currently
+          # served. A failure here means the public site regressed
+          # independently of any deployment.
+          python scripts/verify_public_nfl_feed.py
+
+  # ==========================================================================
+  # 3. CERTIFIED TUE/FRI public prediction card + atomic publication.
+  # ==========================================================================
+  certified-production:
+    name: Certified card (Wizard)
+    needs: [resolve, daily-maintenance]
+    # `always()` so a SKIPPED daily job (mode=certified_only) does not skip
+    # this one, while a FAILED daily job still does: a certified card must
+    # never be produced on top of a games-population refresh that failed.
+    if: |
+      always()
+      && needs.resolve.result == 'success'
+      && needs.resolve.outputs.run_certified == 'true'
+      && github.ref == 'refs/heads/main'
+      && (needs.daily-maintenance.result == 'success' || needs.daily-maintenance.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: wizard-production
+
+    env:
+      WIZARD_SSH_HOST: ${{ secrets.WIZARD_SSH_HOST }}
+      WIZARD_SSH_PORT: ${{ secrets.WIZARD_SSH_PORT }}
+      WIZARD_SSH_USER: ${{ secrets.WIZARD_SSH_USER }}
+      WIZARD_NFL_HOME: ${{ secrets.WIZARD_NFL_HOME }}
+      WIZARD_NFL_WEB_DIR: ${{ secrets.WIZARD_NFL_WEB_DIR }}
+      HORIZON: ${{ needs.resolve.outputs.certified_horizon }}
+      SUPPLIED_MANIFEST: ${{ inputs.market_capture_manifest }}
+      EXPECTED_CAPTURE_SHA256: ${{ inputs.market_capture_sha256 }}
+      AS_OF: ${{ inputs.as_of }}
+      PUBLISH_MODE: ${{ inputs.publish || 'publish' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare SSH
+        env:
+          WIZARD_SSH_PRIVATE_KEY: ${{ secrets.WIZARD_SSH_PRIVATE_KEY }}
+          WIZARD_SSH_KNOWN_HOSTS: ${{ secrets.WIZARD_SSH_KNOWN_HOSTS }}
+        run: bash ops/wizard/remote.sh prepare
+
+      - name: Stage source and ops helpers on Wizard
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz -o /tmp/nfl-source.tar.gz "${GITHUB_SHA}"
+          bash ops/wizard/remote.sh push-ops "${OPS_INBOX}" /tmp/nfl-source.tar.gz
+
+      - name: Bootstrap the Wizard NFL production layout
+        run: |
+          set -euo pipefail
+          bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export WIZARD_NFL_WEB_DIR='${WIZARD_NFL_WEB_DIR}'
+            bash \"\$HOME/${OPS_INBOX}/bootstrap_nfl_production.sh\" \
+              --commit '${GITHUB_SHA}' \
+              --source-archive \"\$HOME/${OPS_INBOX}/nfl-source.tar.gz\"
+          "
+
+      - name: Resolve the official BallDontLie capture
+        id: capture
+        env:
+          BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
+        run: |
+          set -euo pipefail
+          # An EXPLICITLY supplied manifest is used verbatim and is NEVER
+          # recaptured or modified -- that is how the already-existing official
+          # Week-1 TUE capture creates the first real public forecast.
+          if [ -n "${SUPPLIED_MANIFEST:-}" ]; then
+            echo "capture_source=SUPPLIED_EXISTING_MANIFEST"
+            echo "manifest=${SUPPLIED_MANIFEST}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "capture_source=NEW_CAPTURE"
+          out="$(bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
+            OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
+            bash \"\$OPS/create_official_capture.sh\" --horizon '${HORIZON}' ${AS_OF:+--as-of \"${AS_OF}\"}
+          " | tee /dev/stderr)"
+
+          manifest="$(printf '%s\n' "${out}" | sed -n 's/^OFFICIAL_CAPTURE_MANIFEST=//p' | tail -n 1)"
+          if [ -z "${manifest}" ]; then
+            echo "FAIL CLOSED: the capture reported no manifest path" >&2
+            exit 1
+          fi
+          echo "manifest=${manifest}" >> "$GITHUB_OUTPUT"
+
+      - name: Preflight, certified card, export and atomic publish
+        id: certified
+        env:
+          BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
+          MANIFEST: ${{ steps.capture.outputs.manifest }}
+        run: |
+          set -euo pipefail
+          extra=""
+          [ -n "${EXPECTED_CAPTURE_SHA256:-}" ] && extra="${extra} --capture-sha256 '${EXPECTED_CAPTURE_SHA256}'"
+          [ -n "${AS_OF:-}" ] && extra="${extra} --as-of '${AS_OF}'"
+          [ "${PUBLISH_MODE}" = "dry_run" ] && extra="${extra} --dry-run-publish"
+
+          out="$(bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export WIZARD_NFL_WEB_DIR='${WIZARD_NFL_WEB_DIR}'
+            export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
+            export THE_ODDS_API_KEY='${THE_ODDS_API_KEY}'
+            OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
+            bash \"\$OPS/run_certified_card.sh\" \
+              --horizon '${HORIZON}' \
+              --capture-manifest '${MANIFEST}'${extra}
+          " | tee /dev/stderr)"
+
+          {
+            echo "published_sha256=$(printf '%s\n' "${out}" | sed -n 's/^PUBLISHED_SHA256=//p' | tail -n 1)"
+            echo "run_id=$(printf '%s\n' "${out}" | sed -n 's/^PUBLISHED_RUN_ID=//p' | tail -n 1)"
+            echo "capture_sha256=$(printf '%s\n' "${out}" | sed -n 's/^capture_manifest_sha256=//p' | tail -n 1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the public NFL page serves exactly this card
+        if: ${{ (inputs.publish || 'publish') == 'publish' }}
+        env:
+          EXPECTED_SHA256: ${{ steps.certified.outputs.published_sha256 }}
+        run: |
+          set -euo pipefail
+          # A server-side atomic rename proves the bytes landed on the served
+          # path; only this proves the PUBLIC site serves them.
+          python scripts/verify_public_nfl_feed.py \
+            --expect-sha256 "${EXPECTED_SHA256}" \
+            --expect-horizon "${HORIZON}" \
+            --require-fresh-hours 24
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### NFL 2026 certified ${{ needs.resolve.outputs.certified_horizon }} card"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| horizon | \`${{ needs.resolve.outputs.certified_horizon }}\` |"
+            echo "| target_cutoff_utc | \`${{ needs.resolve.outputs.certified_target_cutoff_utc }}\` |"
+            echo "| capture manifest | \`${{ steps.capture.outputs.manifest }}\` |"
+            echo "| capture sha256 | \`${{ steps.certified.outputs.capture_sha256 }}\` |"
+            echo "| run_id | \`${{ steps.certified.outputs.run_id }}\` |"
+            echo "| published sha256 | \`${{ steps.certified.outputs.published_sha256 }}\` |"
+            echo "| publish mode | \`${{ inputs.publish || 'publish' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # 4. Report. Always runs, so a not-eligible scheduled firing is visibly a
+  #    clean no-op rather than a silent one.
+  # ==========================================================================
+  report:
+    name: Report
+    needs: [resolve, daily-maintenance, certified-production]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Outcome
+        run: |
+          set -euo pipefail
+          {
+            echo "### NFL 2026 production outcome"
+            echo ""
+            echo "| job | result |"
+            echo "|---|---|"
+            echo "| resolve | \`${{ needs.resolve.result }}\` |"
+            echo "| daily-maintenance | \`${{ needs.daily-maintenance.result }}\` |"
+            echo "| certified-production | \`${{ needs.certified-production.result }}\` |"
+            echo ""
+            echo "certified_due=\`${{ needs.resolve.outputs.certified_due }}\`, basis=\`${{ needs.resolve.outputs.certified_basis }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          [ "${{ needs.resolve.result }}" = "success" ] || exit 1
+          [ "${{ needs.daily-maintenance.result }}" != "failure" ] || exit 1
+          [ "${{ needs.certified-production.result }}" != "failure" ] || exit 1
+          echo "outcome: OK (a skipped job means this invocation was not eligible -- a clean no-op)"
