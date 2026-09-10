@@ -160,7 +160,7 @@ jobs:
           # The real package is installed so the schedule decision comes from
           # the CERTIFIED window functions themselves, rather than a second,
           # hand-rolled timezone implementation living in this YAML.
-          python -m pip install -e .
+          python -m pip install -e ".[data]"
 
       - name: Resolve certified/daily eligibility
         id: decide
