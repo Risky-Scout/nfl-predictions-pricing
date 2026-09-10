@@ -51,6 +51,7 @@ from scipy.special import expit, logit
 from nfl_hybrid.calibration.three_way import CalibrationConfig, _predict_push, _recombine
 from nfl_hybrid.certification import final_review_2026 as cert
 from nfl_hybrid.data import bdl_market_bridge as bridge
+from nfl_hybrid.data import games_population_2026 as gp26
 from nfl_hybrid.data.external_data import REPO_ROOT, artifact_root, resolve
 from nfl_hybrid.evaluation import official_horizon_oof as ohf
 from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
@@ -361,6 +362,7 @@ def run_preflight(
     expected_week: int | None = None,
     expected_horizon: str | None = None,
     expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    games_population_root: Path | None = None,
 ) -> dict:
     """Verifies live infrastructure without ever printing a secret value.
     ``artifact_root_path`` is injectable so a test can point EVERY
@@ -377,8 +379,16 @@ def run_preflight(
     manifest, supplied explicitly; it is never auto-selected. Omitted (the
     default), there is no live 2026 market source and production stays
     ``BLOCKED_ON_LIVE_INPUTS``. The ``expected_*`` arguments are the
-    requesting run's own identity, cross-checked against that capture."""
+    requesting run's own identity, cross-checked against that capture.
+
+    ``games_population_root`` is where the durable canonical BallDontLie 2026
+    games population is read from; left ``None`` it follows ``aroot`` (the
+    durable 2026 population is generated-artifact output like every other
+    lookup this call redirects). :func:`run_horizon_batch` resolves it the
+    same way, which is what makes preflight and real production share one
+    population."""
     aroot = artifact_root_path if artifact_root_path is not None else artifact_root()
+    population_root = games_population_root if games_population_root is not None else artifact_root_path
     checks: dict[str, object] = {}
     blocking: list[str] = []
 
@@ -406,14 +416,28 @@ def run_preflight(
     if not seed_path.is_file():
         blocking.append("calibration_seed_missing")
 
+    # The COMPOSITE games population -- certified historical backfill.games
+    # (2020-2025) PLUS the durable canonical BallDontLie 2026 REG/POST games.
+    # This is the exact same call run_horizon_batch makes, so preflight and
+    # real production provably agree on the population (the recorded
+    # ``content_sha256`` is what proves it). Before this, preflight resolved
+    # backfill.games alone -- whose maximum season is 2025 -- which made
+    # schedule_2026_available structurally false on a host holding a perfectly
+    # valid 2026 capture.
     schedule_2026_available = False
     try:
-        games = pd.read_parquet(resolve("backfill.games"))
-        max_season = int(pd.to_numeric(games["season"], errors="coerce").max())
-        schedule_2026_available = max_season >= 2026
-        checks["schedule_source"] = {"status": "OK", "max_season_available": max_season, "row_count": int(len(games))}
+        games, games_provenance = load_games_population_with_provenance(
+            games_population_root=population_root
+        )
+        schedule_2026_available = bool(games_provenance["schedule_2026_available"])
+        checks["schedule_source"] = {
+            "status": "OK",
+            "max_season_available": games_provenance["max_season"],
+            "row_count": games_provenance["reg_post_row_count"],
+            "games_population": games_provenance,
+        }
     except Exception as exc:
-        checks["schedule_source"] = {"status": "UNAVAILABLE", "detail": str(exc)}
+        checks["schedule_source"] = {"status": "UNAVAILABLE", "detail": f"{type(exc).__name__}: {exc}"}
         blocking.append("schedule_source_unavailable")
     checks["schedule_2026_status"] = "AVAILABLE" if schedule_2026_available else "SCHEDULE_UNAVAILABLE"
 
@@ -670,14 +694,59 @@ def filter_reg_post(games: pd.DataFrame) -> pd.DataFrame:
     return games.loc[keep].reset_index(drop=True)
 
 
-def load_games_population() -> pd.DataFrame:
-    """The one canonical games/schedule source (per certification GROUNDING):
-    :func:`nfl_hybrid.data.external_data.resolve` ``"backfill.games"``,
-    restricted to REG+POST via :func:`filter_reg_post` (PRESEASON is never
-    part of the 2026 production card). Currently covers seasons 2020-2025
-    only -- see :func:`run_preflight`'s ``schedule_2026_status`` check, which
-    reports this honestly instead of fabricating 2026 rows."""
-    return filter_reg_post(pd.read_parquet(resolve("backfill.games")))
+def load_games_population_with_provenance(
+    *, games_population_root: Path | None = None
+) -> tuple[pd.DataFrame, dict]:
+    """The ONE composite games population plus its provenance, restricted to
+    REG+POST.
+
+    The composite population is
+    :func:`nfl_hybrid.data.games_population_2026.load_composite_games_population`:
+    the certified historical ``backfill.games`` estate (2020-2025) PLUS the
+    durable canonical BallDontLie 2026 REG/POST games. Both
+    :func:`run_preflight` and :func:`run_horizon_batch` call THIS function, so
+    they provably consume the same population -- compare
+    ``provenance["content_sha256"]``, which both record.
+
+    PRESEASON is excluded twice over: once inside the 2026 population builder
+    and once here via :func:`filter_reg_post`. Upcoming 2026 games carry null
+    scores; the certified chronology (Elo update events require both scores,
+    training requires ``result_available_at_utc < target_cutoff_utc``) is what
+    decides when a completed 2026 game becomes a training observation -- no
+    rule here.
+    """
+    composite = gp26.load_composite_games_population(artifact_root_path=games_population_root)
+    games = filter_reg_post(composite.games)
+    provenance = {
+        **composite.provenance,
+        # The REG+POST-restricted content hash: the hash of exactly what
+        # production consumes, after PRESEASON exclusion.
+        "reg_post_content_sha256": gp26.population_content_hash(games),
+        "reg_post_row_count": int(len(games)),
+    }
+    return games, provenance
+
+
+def _best_effort_population_hash(games: pd.DataFrame) -> str | None:
+    """The content hash of a games population, or ``None`` when the frame
+    cannot be hashed.
+
+    Only ever used for an INJECTED test population. Provenance is worth
+    recording, but recording it must not become a new way for a run to fail:
+    a frame that cannot be hashed is diagnosed by the certified path that
+    actually needs those columns, under its own existing status."""
+    try:
+        return gp26.population_content_hash(games)
+    except Exception:
+        return None
+
+
+def load_games_population(*, games_population_root: Path | None = None) -> pd.DataFrame:
+    """The one canonical games/schedule population, REG+POST only. See
+    :func:`load_games_population_with_provenance` for the composition and the
+    shared-population guarantee."""
+    games, _ = load_games_population_with_provenance(games_population_root=games_population_root)
+    return games
 
 
 def apply_frozen_conditional_calibrator(raw_probability: np.ndarray, seed_state: dict) -> np.ndarray:
@@ -933,6 +1002,7 @@ def run_horizon_batch(
     *, horizon: str, as_of_utc: pd.Timestamp, force: bool, operational_root: Path | None = None,
     repo_root: Path = REPO_ROOT, games: pd.DataFrame | None = None,
     market_capture_manifest: Path | str | None = None,
+    games_population_root: Path | None = None,
 ) -> dict:
     """One attempted production batch for ``horizon``. Always writes a run
     manifest (Section 15), even on a fail-closed status, and returns it.
@@ -954,7 +1024,13 @@ def run_horizon_batch(
 
     ``games`` is injectable so a test can pin the exact historical games
     population; production leaves it ``None`` (uses
-    :func:`load_games_population`).
+    :func:`load_games_population_with_provenance`, the SAME composite
+    historical-plus-canonical-BDL-2026 population :func:`run_preflight`
+    reads -- the recorded ``games_population.content_sha256`` is what proves
+    the two agreed). ``games_population_root`` redirects only where the
+    durable canonical 2026 population is read from; left ``None`` it follows
+    ``operational_root`` when one was injected, exactly like the materialized
+    live-market artifact does, and the real artifact root otherwise.
 
     ``market_capture_manifest`` is the EXACT official BallDontLie capture
     manifest for this card, supplied explicitly -- never auto-selected, and
@@ -1014,8 +1090,28 @@ def run_horizon_batch(
             detail="this horizon's current-week cutoff has not occurred yet; refusing to fabricate a future market snapshot",
         )
 
+    population_root = (
+        games_population_root
+        if games_population_root is not None
+        else (aroot if operational_root is not None else None)
+    )
     try:
-        games_df = load_games_population() if games is None else filter_reg_post(games)
+        if games is None:
+            games_df, games_provenance = load_games_population_with_provenance(
+                games_population_root=population_root
+            )
+        else:
+            games_df = filter_reg_post(games)
+            games_provenance = {
+                "source": "INJECTED",
+                # Recording the injected population's hash must never change
+                # how a malformed injected frame is CLASSIFIED. An unhashable
+                # frame is an Elo-source problem, diagnosed a few lines below
+                # by build_horizon_membership_ledger exactly as before; it is
+                # not a missing schedule.
+                "reg_post_content_sha256": _best_effort_population_hash(games_df),
+                "reg_post_row_count": int(len(games_df)),
+            }
     except Exception as exc:
         return _finish("SCHEDULE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc), detail=str(exc))
 
@@ -1275,9 +1371,14 @@ def run_horizon_batch(
         source_readiness={
             "schedule": True, "elo": True, "market_snapshot_available": market_snapshot_available,
             "market_error": market_error, "live_market": live_market_provenance,
+            "games_population": games_provenance,
         },
         input_hashes={
             **hash_checks, "games_population_row_count": int(len(games_df)),
+            # The exact REG+POST population this run consumed. run_preflight
+            # records the identically-computed value, so a reviewer can prove
+            # the two ran against the same games population.
+            "games_population_content_sha256": games_provenance.get("reg_post_content_sha256"),
             "live_market_capture_sha256": (
                 live_market_provenance["manifest_sha256"] if live_market_provenance else None
             ),
