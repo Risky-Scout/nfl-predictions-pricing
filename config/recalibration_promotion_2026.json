@@ -1,0 +1,94 @@
+{
+  "schema_version": "recalibration-promotion-policy-2026-v1",
+  "policy_id": "nfl-2026-operational-recalibration-promotion",
+  "policy_kind": "OPERATIONAL_OVERLAY",
+  "what_this_is": [
+    "A VERSIONED OPERATIONAL policy that overlays the immutable certified Fix-8 baseline.",
+    "It authorizes re-fitting the ALREADY-CERTIFIED calibrator family/config on more 2026",
+    "evidence once the ALREADY-PREREGISTERED prospective sample-maturity firewall is",
+    "satisfied. It does not rewrite, reinterpret or supersede the historical prospective",
+    "preregistration, and it cannot authorize a scientific refit: every requirement below",
+    "forces the candidate's calibrator family and config hashes to equal the certified ones,",
+    "which is what keeps an automatic promotion compatible with the frozen",
+    "invariance.no_scientific_refit assertion in",
+    "outputs/prospective_2026_strength_preregistration.json."
+  ],
+  "what_this_is_not": [
+    "Not a performance bake-off. There is deliberately NO post-hoc 'the candidate must beat",
+    "the active calibrator by X' threshold, because any such threshold would have to be",
+    "chosen after observing 2026 results. Promotion is a deterministic scheduled",
+    "recalibration behind a preregistered sample-size firewall, not a selection event."
+  ],
+  "automatic_promotion_enabled": true,
+  "fail_closed": true,
+  "certified_baseline": {
+    "artifact_relative_path": "fix8-official-oof-calibration-2026/production_calibration_seed.json",
+    "immutable": true,
+    "never_overwritten": true,
+    "never_copied": true,
+    "remains_active_until_a_promotion_pointer_exists": true
+  },
+  "minimum_prospective_maturity": {
+    "derived_from_module": "nfl_hybrid.evaluation.prospective_strength_2026",
+    "derived_from_symbol": "PROMOTION_ELIGIBLE_MIN_GAMES",
+    "required_maturity_label": "PROMOTION_ELIGIBLE",
+    "numeric_threshold_duplicated_here": false,
+    "note": [
+      "The threshold lives in exactly ONE place: the frozen symbol named above. This policy",
+      "records WHERE to read it, never WHAT it is, so the preregistered number can never",
+      "drift between the contract and the operational overlay."
+    ]
+  },
+  "required_streams": ["ATS_TUE", "ATS_FRI", "TOTAL_TUE", "TOTAL_FRI"],
+  "candidate_requirements": {
+    "require_all_streams": true,
+    "require_conditional_calibrator_fitted": true,
+    "require_valid_push_calibration_state": true,
+    "require_finite_parameters": true,
+    "require_frozen_calibrator_family_match": true,
+    "require_frozen_calibrator_config_hash_match": true,
+    "require_frozen_push_calibration_config_hash_match": true,
+    "require_seed_content_hash_verified": true,
+    "require_manifest_hash_verified": true,
+    "require_chronology_valid_membership": true,
+    "require_training_membership_non_regression": true,
+    "require_candidate_differs_from_active": true
+  },
+  "prohibited_controls": [
+    "manual_force_promotion_flag",
+    "environment_variable_override",
+    "cli_bypass_flag",
+    "filesystem_authorization_marker",
+    "performance_threshold_tuned_on_observed_2026_results"
+  ],
+  "scientific_invariance": {
+    "calibrator_family_unchanged": true,
+    "calibrator_config_unchanged": true,
+    "push_calibration_family_and_config_unchanged": true,
+    "six_elo_features_unchanged": true,
+    "ridge_alpha_unchanged": true,
+    "tue_fri_horizon_semantics_unchanged": true,
+    "ats_total_target_definitions_unchanged": true,
+    "market_reconstruction_rules_unchanged": true,
+    "published_contract_unchanged": true
+  },
+  "active_pointer": {
+    "namespace": "production-2026/recalibration",
+    "filename": "active_calibrator.json",
+    "absent_pointer_means": "BASELINE",
+    "seed_bytes_duplicated": false,
+    "update_is_atomic": true
+  },
+  "promotion_events": {
+    "namespace": "production-2026/recalibration/promotion-events",
+    "append_only": true,
+    "content_addressed": true,
+    "written_only_on_actual_active_calibrator_change": true
+  },
+  "policy_lock": {
+    "namespace": "production-2026/recalibration-policy",
+    "filename": "policy_lock.json",
+    "first_write_wins": true,
+    "on_policy_hash_change_after_lock": "FAIL_CLOSED"
+  }
+}

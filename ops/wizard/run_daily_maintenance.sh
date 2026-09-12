@@ -14,8 +14,10 @@
 #   3. update prospective evaluation by attaching newly available results to
 #      existing forecasts (never mutating a forecast) and report prospective
 #      performance;
-#   4. generate/update the recalibration candidate and report its promotion
-#      state (promotion itself remains fail-closed).
+#   4. generate/update the recalibration candidate, then automatically promote
+#      it when the versioned operational promotion policy and the frozen
+#      preregistered maturity firewall both allow it. Before that firewall is
+#      satisfied the decision is NOT_YET_MATURE, which is a success.
 #
 # Each stage is idempotent and safe to repeat. Stage 1 is allowed to fail
 # softly when BallDontLie is unreachable -- the rest of the pass still runs
@@ -75,18 +77,30 @@ echo "=== 3. update prospective evaluation ==="
 "${PY}" scripts/attach_2026_results_from_population.py
 "${PY}" scripts/report_2026_prospective_performance.py || true
 
-echo "=== 4. recalibration candidate ==="
+echo "=== 4. recalibration candidate + automatic promotion when eligible ==="
 set +e
-"${PY}" scripts/generate_2026_recalibration_candidate.py
+"${PY}" scripts/generate_2026_recalibration_candidate.py --promote-if-eligible
 recalibration_exit=$?
 set -e
+if [ "${recalibration_exit}" -eq 4 ]; then
+    # FAIL CLOSED. Exit 4 means an integrity, policy or policy-lock violation:
+    # the operational promotion policy changed after being locked, or a
+    # candidate's hashes/streams/membership did not verify. The active
+    # calibrator is untouched and the certified baseline is untouched, but this
+    # must NOT be reported as a healthy day.
+    echo "FAIL CLOSED: recalibration promotion integrity/policy violation" >&2
+    "${PY}" scripts/generate_2026_recalibration_candidate.py --report-only || true
+    exit 4
+fi
 if [ "${recalibration_exit}" -ne 0 ]; then
     # Candidate GENERATION can legitimately fail before enough labelled 2026
-    # evidence exists. The certified calibrator stays active either way, so the
+    # evidence exists. The active calibrator stays in place either way, so the
     # pass reports the state instead of failing -- but it always reports it.
     echo "WARNING: recalibration candidate generation failed (exit ${recalibration_exit}); reporting state only" >&2
     "${PY}" scripts/generate_2026_recalibration_candidate.py --report-only
 fi
+# Exit 0 covers the expected steady states: PROMOTED, NOT_YET_MATURE,
+# ALREADY_ACTIVE and NO_CANDIDATE. A NOT_YET_MATURE day is a success.
 echo "recalibration_candidate_exit=${recalibration_exit}"
 
 echo "daily_maintenance_status=OK"
