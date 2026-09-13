@@ -24,6 +24,20 @@
 # against the evidence already on disk -- but every other stage failing fails
 # the pass.
 #
+# Stage 4 in particular fails the pass on ANY non-zero exit, and the pass
+# prints daily_maintenance_status=OK only when every stage succeeded. The
+# distinction that matters for an unattended season is between a legitimate
+# no-op and a missing input: NOT_YET_MATURE is a success, whereas "no candidate
+# could be generated" means the historical estate, the certified baseline seed
+# or the active pointer is missing or corrupt, and that must be loud.
+# Pass exit codes are distinct so a scheduler log says what broke:
+#   exit 3  the 2026 games population rejected the available evidence
+#   exit 4  promotion policy / policy-lock / candidate integrity violation
+#   exit 5  candidate generation failed (e.g. required historical estate absent)
+#   exit 6  the artifact root could not be resolved
+#   exit 7  the active calibrator could not be resolved (baseline seed missing,
+#           or a corrupt active pointer)
+#
 # Usage (on the server):
 #   bash run_daily_maintenance.sh [--skip-capture]
 set -euo pipefail
@@ -82,25 +96,38 @@ set +e
 "${PY}" scripts/generate_2026_recalibration_candidate.py --promote-if-eligible
 recalibration_exit=$?
 set -e
-if [ "${recalibration_exit}" -eq 4 ]; then
-    # FAIL CLOSED. Exit 4 means an integrity, policy or policy-lock violation:
-    # the operational promotion policy changed after being locked, or a
-    # candidate's hashes/streams/membership did not verify. The active
-    # calibrator is untouched and the certified baseline is untouched, but this
-    # must NOT be reported as a healthy day.
-    echo "FAIL CLOSED: recalibration promotion integrity/policy violation" >&2
-    "${PY}" scripts/generate_2026_recalibration_candidate.py --report-only || true
-    exit 4
-fi
-if [ "${recalibration_exit}" -ne 0 ]; then
-    # Candidate GENERATION can legitimately fail before enough labelled 2026
-    # evidence exists. The active calibrator stays in place either way, so the
-    # pass reports the state instead of failing -- but it always reports it.
-    echo "WARNING: recalibration candidate generation failed (exit ${recalibration_exit}); reporting state only" >&2
-    "${PY}" scripts/generate_2026_recalibration_candidate.py --report-only
-fi
-# Exit 0 covers the expected steady states: PROMOTED, NOT_YET_MATURE,
-# ALREADY_ACTIVE and NO_CANDIDATE. A NOT_YET_MATURE day is a success.
 echo "recalibration_candidate_exit=${recalibration_exit}"
+# Exit 0 is the ONLY healthy outcome, and it already covers every legitimate
+# steady state: the candidate was generated, and promotion decided PROMOTED,
+# NOT_YET_MATURE, ALREADY_ACTIVE, NO_CANDIDATE or POLICY_DISABLED. A
+# NOT_YET_MATURE day is a success and must stay one.
+#
+# Every other exit code is a FAIL CLOSED. An unattended season cannot treat
+# "production could not build a recalibration candidate at all" as a healthy
+# day: that is precisely the state where the required historical estate, the
+# certified baseline seed or the active pointer is missing or corrupt, and
+# silently continuing would let production drift for weeks without anyone
+# seeing it. The state is always re-reported before exiting so the failure
+# arrives with its own evidence.
+if [ "${recalibration_exit}" -ne 0 ]; then
+    # Remapped onto codes the pass owns, so stage 4's failures never collide
+    # with stage 2's population rejection (exit 3).
+    case "${recalibration_exit}" in
+        1) reason="candidate generation itself failed (required historical estate missing, or an unexpected exception)"
+           pass_exit=5 ;;
+        2) reason="the artifact root could not be resolved"
+           pass_exit=6 ;;
+        3) reason="the active calibrator could not be resolved (certified baseline seed missing, or a corrupt active pointer)"
+           pass_exit=7 ;;
+        4) reason="promotion policy, policy-lock or candidate integrity violation"
+           pass_exit=4 ;;
+        *) reason="unexpected recalibration failure"
+           pass_exit=8 ;;
+    esac
+    echo "FAIL CLOSED: ${reason} (candidate script exit ${recalibration_exit})" >&2
+    "${PY}" scripts/generate_2026_recalibration_candidate.py --report-only || true
+    echo "daily_maintenance_status=FAIL_CLOSED"
+    exit "${pass_exit}"
+fi
 
 echo "daily_maintenance_status=OK"

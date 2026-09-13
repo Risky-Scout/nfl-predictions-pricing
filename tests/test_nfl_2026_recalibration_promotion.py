@@ -1107,8 +1107,11 @@ def test_the_daily_script_reports_without_generating_or_promoting(estate, capsys
 def test_daily_maintenance_promotes_and_fails_closed_on_integrity_violations():
     daily = (REPO_ROOT / "ops" / "wizard" / "run_daily_maintenance.sh").read_text()
     assert "generate_2026_recalibration_candidate.py --promote-if-eligible" in daily
-    # Exit 4 (integrity/policy violation) must fail the pass.
-    assert "-eq 4 ]" in daily
-    assert "exit 4" in daily
+    # A candidate-script integrity/policy violation (its exit 4) must fail the
+    # pass, and so must every other non-zero exit -- see
+    # tests/test_nfl_production_runtime_readiness.py for the full contract.
+    assert 'if [ "${recalibration_exit}" -ne 0 ]; then' in daily
+    assert "pass_exit=4" in daily
+    assert 'exit "${pass_exit}"' in daily
     # And the daily pass still never publishes.
     assert "publish_wizard_nfl_local.py" not in daily

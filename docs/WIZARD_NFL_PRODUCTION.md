@@ -160,6 +160,42 @@ untouched as a manual fallback and is never invoked by automation.
 
 The existing NFL HTML shell already on the server is never modified.
 
+#### The one-time permission grant this requires
+
+Because the temporary file is created inside the served directory and renamed
+onto `latest.json`, `wizard-deploy` needs write **and** search permission on
+that single directory — creating, replacing and unlinking entries are
+directory operations, not file operations. Nothing else in `/var/www` needs to
+become writable, and `resolve_web_root.sh` reports the outcome as
+`WIZARD_NFL_WEB_DIR_WRITABLE`.
+
+`wizard-deploy` has no sudo, so this is a one-time change for root. A POSIX ACL
+is the surgical way to do it: the directory keeps its existing owner, no group
+memberships change, and no other directory is touched.
+
+```bash
+# Run ONCE, as root, on the Wizard server.
+set -euo pipefail
+NFL_DIR=/var/www/sportsodds/tools/odds-scanner/predictions/NFL
+
+# The directory keeps its current owner (woo); only an ACL is added.
+setfacl -m u:wizard-deploy:rwx "$NFL_DIR"
+# New files wizard-deploy creates there stay world-readable for nginx.
+setfacl -d -m u:wizard-deploy:rw-,u::rw-,g::r--,o::r-- "$NFL_DIR"
+
+# Verify: wizard-deploy can write, nginx can still read, nothing else changed.
+getfacl "$NFL_DIR"
+sudo -u wizard-deploy test -w "$NFL_DIR" \
+  && echo "WIZARD_NFL_WEB_DIR_WRITABLE=yes" \
+  || echo "WIZARD_NFL_WEB_DIR_WRITABLE=no"
+# A sticky bit would still block replacing another user's latest.json.
+[ -k "$NFL_DIR" ] && echo "WARNING: sticky bit set on $NFL_DIR" || true
+```
+
+`publish_wizard_nfl_local.py` explicitly `chmod`s the published card to `0644`,
+so the served `latest.json` is world-readable regardless of the creating
+process's umask.
+
 ---
 
 ## 4. The one authoritative workflow
@@ -200,12 +236,41 @@ a clean no-op, not a failure. There is no DAILY forecast horizon;
    — prospective evaluation;
 4. `generate_2026_recalibration_candidate.py --promote-if-eligible` — generate
    the candidate, then automatically promote it when the operational policy and
-   the preregistered maturity firewall both allow it (section 6). Exit 0 covers
-   `PROMOTED`, `NOT_YET_MATURE`, `ALREADY_ACTIVE` and `NO_CANDIDATE`; exit 4 is
-   an integrity, policy or policy-lock violation and fails the pass.
+   the preregistered maturity firewall both allow it (section 6).
 
 It publishes nothing, then the runner verifies the public feed with no
 expectations (a liveness and contract check of whatever is currently served).
+
+#### A legitimate no-op is not a missing input
+
+For an unattended season these two states must never be confused, so stage 4
+distinguishes them by exit code and the pass prints
+`daily_maintenance_status=OK` only when every stage succeeded.
+
+Exit 0 — healthy, nothing to do. The candidate was generated and the promotion
+decision was `PROMOTED`, `NOT_YET_MATURE`, `ALREADY_ACTIVE`, `NO_CANDIDATE` or
+`POLICY_DISABLED`. **A `NOT_YET_MATURE` day is a success**, and for most of the
+season it is the expected outcome.
+
+Everything else is a fail-closed day, because it means production could not
+build a candidate or could not resolve a calibrator at all — the state where
+the historical estate, the certified baseline seed or the active pointer is
+missing or corrupt. Silently continuing would let production drift for weeks
+with nobody seeing it.
+
+| pass exit | meaning |
+|---|---|
+| 3 | the 2026 games population rejected the available evidence |
+| 4 | promotion policy, policy-lock or candidate integrity violation |
+| 5 | candidate generation itself failed (e.g. a required historical estate is absent on this host) |
+| 6 | the artifact root could not be resolved |
+| 7 | the active calibrator could not be resolved (certified baseline seed missing, or a corrupt active pointer) |
+
+Exit 7 is checked independently of the promotion decision on purpose: below the
+maturity floor, promotion returns `NOT_YET_MATURE` without ever needing to
+resolve a calibrator, so a host missing the certified baseline seed would
+otherwise report a perfectly healthy day while being unable to price a single
+card.
 
 ### Certified pass ([`run_certified_card.sh`](../ops/wizard/run_certified_card.sh))
 
@@ -468,14 +533,62 @@ to be byte-identical on Wizard and both manifests to have been produced with
 
 ## 8. Running the first real public forecast from the existing Week-1 capture
 
-The official Week-1 TUE capture must not be recaptured or modified. Its
-manifest hash is:
+The official Week-1 TUE capture must not be recaptured or modified.
 
-```
-59d1b46e488a1e80c695cb77081f80b346f29a808422439187aabcd8981b10ab
+### A capture manifest has two different SHA256 integrity objects
+
+This distinction is not pedantic — conflating the two is what produced the
+Week-1 TUE "hash discrepancy", where one recorded value
+(`59d1b46e…`) did not match the manifest file's own hash (`337c71a2…`).
+[`scripts/capture_bdl_2026_asof.py`](../scripts/capture_bdl_2026_asof.py)
+creates both, and they can never be equal:
+
+| object | how it is computed | what it identifies |
+|---|---|---|
+| `MANIFEST_CONTENT_SHA256` | `sha256(deterministic_json(body))` over the body **without** its own `manifest_sha256` key, serialized compactly (`separators=(",", ":")`, `sort_keys=True`). Stored **inside** the file as `manifest_sha256`. | the capture's CONTENT. Immune to pretty-printing. |
+| `MANIFEST_FILE_SHA256` | `sha256sum manifest.json` | the exact BYTES on disk |
+
+They differ for two independent reasons: the file is written with `indent=2`
+rather than compact separators, and the file contains the `manifest_sha256`
+field that did not exist when the content hash was computed — a
+self-referential hash cannot cover itself.
+
+The practical consequence: **re-serializing a manifest changes its file hash
+while leaving its content hash identical.** So a file hash that no longer
+matches a recorded value is not by itself evidence that the evidence was
+altered, and a content hash that fails to recompute *is*.
+
+### Resolving and verifying a capture's identity
+
+[`scripts/verify_capture_manifest_integrity.py`](../scripts/verify_capture_manifest_integrity.py)
+is the one place that decides this, and
+[`run_certified_card.sh`](../ops/wizard/run_certified_card.sh) calls it before
+anything else runs. It always does three things and fails closed on any of
+them:
+
+1. **self-verifies** the capture by recomputing `MANIFEST_CONTENT_SHA256` from
+   the body and comparing it with the `manifest_sha256` the file carries. This
+   is what detects a mutated capture, it requires no external reference value,
+   and nothing in production performed it before;
+2. **resolves a declared hash** to whichever object it is, so a correctly
+   recorded value is never rejected merely for referring to the other object,
+   and a value matching neither is never accepted;
+3. **records both objects** in the run evidence.
+
+To determine which object any recorded value refers to, run it against the
+capture — this is read-only and never rewrites the manifest:
+
+```bash
+python scripts/verify_capture_manifest_integrity.py \
+  "<capture>/manifest.json" \
+  --declared-sha256 59d1b46e488a1e80c695cb77081f80b346f29a808422439187aabcd8981b10ab
 ```
 
-After migration it lives on Wizard at:
+`capture_manifest_declared_object` then reports `MANIFEST_FILE_SHA256`,
+`MANIFEST_CONTENT_SHA256`, or `NO_MATCH`. Only the last is a genuine integrity
+failure, and it fails the certified run closed.
+
+After migration the capture lives on Wizard at:
 
 ```
 $WIZARD_NFL_HOME/data/live-observation-log/balldontlie-2026/season=2026/week=01/horizon=TUE/capture=20260908T153615Z/manifest.json
@@ -494,15 +607,16 @@ gh workflow run nfl_2026_production.yml \
 ```
 
 Substitute the real absolute path if `WIZARD_NFL_HOME` was overridden. Run it
-once with `-f publish=dry_run` first: that validates the capture hash, requires
-a `READY` preflight, runs the certified card, exports the
+once with `-f publish=dry_run` first: that verifies the capture's integrity,
+requires a `READY` preflight, runs the certified card, exports the
 `wizard-nfl-pricing-v2` contract and reports the destination without writing
 `latest.json`.
 
 Because `market_capture_manifest` is supplied, the workflow uses that manifest
 verbatim and creates no new capture. The declared `market_capture_sha256` is
-recomputed on the server before anything else runs, and a mismatch aborts
-before preflight.
+resolved to one of the two integrity objects on the server before anything else
+runs, the capture's own content hash is self-verified, and either check failing
+aborts before preflight.
 
 ---
 
