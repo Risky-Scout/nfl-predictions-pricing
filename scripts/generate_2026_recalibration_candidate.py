@@ -1,13 +1,25 @@
-"""DAILY: generate a 2026 recalibration CANDIDATE and report promotion state.
+"""DAILY: generate a 2026 recalibration CANDIDATE, and promote it if eligible.
 
 Runs the repository's EXISTING chronological calibration machinery over the
 current composite games population and records the result as an immutable
-CANDIDATE. It never promotes anything: the certified production calibrator
+CANDIDATE. With ``--promote-if-eligible`` (what daily maintenance uses) it then
+asks :func:`nfl_hybrid.production.recalibration_2026.evaluate_promotion`
+whether that candidate may become the ACTIVE calibrator, and promotes it
+atomically when the answer is yes.
+
+The certified baseline
 (``$NFL_MODEL_ARTIFACT_ROOT/fix8-official-oof-calibration-2026/
-production_calibration_seed.json``) is never opened for writing by this
-script, and promotion is decided only by the frozen, machine-readable
-prospective preregistration (see
-:func:`nfl_hybrid.production.recalibration_2026.promotion_authorization`).
+production_calibration_seed.json``) is never opened for writing by this script
+or by anything it calls. A promotion rewrites one small pointer that
+REFERENCES an immutable candidate seed; it never copies or supersedes the
+baseline bytes.
+
+Before the preregistered floor of
+``prospective_strength_2026.PROMOTION_ELIGIBLE_MIN_GAMES`` unique completed
+2026 games, promotion reports ``NOT_YET_MATURE`` and exits 0: candidate
+generation and Ridge retraining keep running and the current calibrator stays
+active. That is a successful no-op, not a failure. Exit 4 is reserved for a
+genuine fail-closed condition -- a policy/lock/candidate integrity violation.
 
 The pipeline is exactly the certified one, phase for phase, with no new
 scientific step:
@@ -35,6 +47,7 @@ chronology rules permit it -- no separate retraining engine, no manual step.
 
 Usage:
   python scripts/generate_2026_recalibration_candidate.py
+  python scripts/generate_2026_recalibration_candidate.py --promote-if-eligible
   python scripts/generate_2026_recalibration_candidate.py --report-only
 """
 from __future__ import annotations
@@ -145,6 +158,9 @@ def generate_candidate(
     seed = rc.build_candidate_seed(raw_by_stream=raw_by_stream, threshold_by_stream=threshold_by_stream)
 
     maturity = rc.prospective_maturity_state(operational_root)
+    # Recorded on the candidate as context: the frozen preregistration's
+    # answer about a SCIENTIFIC refit (permanently no). It is not what decides
+    # an operational promotion -- config/recalibration_promotion_2026.json is.
     authorization = rc.promotion_authorization(repo_root)
     result = rc.write_candidate(
         artifact_root_path,
@@ -171,7 +187,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--report-only",
         action="store_true",
-        help="Report candidate/promotion state without generating a new candidate.",
+        help="Report candidate/promotion/active-calibrator state without generating or promoting anything.",
+    )
+    parser.add_argument(
+        "--promote-if-eligible",
+        action="store_true",
+        help=(
+            "After generating the candidate, evaluate the operational promotion policy and atomically "
+            "promote the newest valid candidate when every requirement is satisfied. A legitimate "
+            "NOT_YET_MATURE / NO_CANDIDATE / ALREADY_ACTIVE outcome exits 0; an integrity, policy or "
+            "policy-lock violation exits 4. There is deliberately no flag that forces a promotion."
+        ),
     )
     parser.add_argument("--artifact-root", default=None, help="Override NFL_MODEL_ARTIFACT_ROOT.")
     parser.add_argument(
@@ -180,6 +206,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Root holding production-2026/ ledgers (defaults to the artifact root).",
     )
     return parser
+
+
+def promote_if_eligible(*, artifact_root_path: Path, operational_root: Path, repo_root: Path) -> dict:
+    """Evaluate the operational promotion policy and promote when eligible.
+
+    Raises :class:`nfl_hybrid.production.recalibration_2026.RecalibrationError`
+    (policy, policy-lock, candidate-integrity or active-calibrator violations)
+    so the caller can fail the pass closed. Returns a decision for every
+    legitimate no-op."""
+    decision = rc.evaluate_promotion(
+        artifact_root_path,
+        operational_root=operational_root,
+        repo_root=repo_root,
+        git_commit=prod._git_commit(repo_root),
+    )
+    if decision["status"] != rc.DECISION_ELIGIBLE:
+        return {k: v for k, v in decision.items() if not k.startswith("_")}
+    return rc.promote_candidate(
+        artifact_root_path,
+        candidate_identifier=str(decision["candidate_id"]),
+        repo_root=repo_root,
+        operational_root=operational_root,
+        git_commit=prod._git_commit(repo_root),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -209,19 +259,57 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    promotion: dict | None = None
+    promotion_failed_closed = False
+    if args.promote_if_eligible and not args.report_only:
+        try:
+            promotion = promote_if_eligible(
+                artifact_root_path=artifact_root_path,
+                operational_root=operational_root,
+                repo_root=REPO_ROOT,
+            )
+        except rc.RecalibrationError as exc:
+            promotion = {"status": "FAIL_CLOSED", "detail": f"{type(exc).__name__}: {exc}"}
+            promotion_failed_closed = True
+
     report = rc.candidate_state_report(
         artifact_root_path=artifact_root_path,
         operational_root=operational_root,
         repo_root=REPO_ROOT,
     )
+    # The five facts an operator (and the daily workflow log) must be able to
+    # read without parsing the whole report: which candidate, how mature the
+    # prospective estate is, which calibrator is live, what promotion decided
+    # and why, and which policy bytes decided it.
+    summary = {
+        "candidate_id": (generation or {}).get("candidate_id"),
+        "prospective_maturity": report["prospective_maturity"]["maturity"],
+        "prospective_unique_completed_games": report["prospective_maturity"]["unique_completed_games"],
+        "promotion_eligible_min_games": report["prospective_maturity"]["promotion_eligible_min_games"],
+        "active_calibrator_source": report["active_calibrator"].get("active_calibrator_source"),
+        "active_calibrator_candidate_id": report["active_calibrator"].get("active_calibrator_candidate_id"),
+        "active_calibrator_seed_sha256": report["active_calibrator"].get("active_calibrator_seed_sha256"),
+        "promotion_decision": None if promotion is None else promotion.get("status"),
+        "promotion_reason": None if promotion is None else (promotion.get("reason") or promotion.get("detail")),
+        "recalibration_policy_sha256": (report.get("promotion_policy") or {}).get("policy_sha256"),
+        "certified_baseline_sha256": report["certified_calibrator_sha256"],
+        "certified_baseline_immutable": True,
+    }
     print(
         json.dumps(
-            {"generation": generation, "candidate_state": report}, indent=2, sort_keys=True, default=str
+            {"summary": summary, "generation": generation, "promotion": promotion, "candidate_state": report},
+            indent=2,
+            sort_keys=True,
+            default=str,
         )
     )
-    # A missing preregistered promotion authorization is the EXPECTED steady
-    # state, not a failure: candidate generation succeeded, the certified
-    # calibrator stays active, and the state is reported. Exit 0.
+    if promotion_failed_closed:
+        # A policy, policy-lock or candidate-integrity violation. Distinct from
+        # every legitimate no-op so the daily pass can fail on exactly this.
+        return 4
+    # NOT_YET_MATURE / NO_CANDIDATE / ALREADY_ACTIVE / POLICY_DISABLED are all
+    # EXPECTED steady states: the candidate exists, the active calibrator is
+    # unchanged and verified, and the state is reported. Exit 0.
     return 0
 
 

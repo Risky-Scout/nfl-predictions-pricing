@@ -64,6 +64,7 @@ from nfl_hybrid.evaluation.chronological_calibration import (
 from nfl_hybrid.evaluation.week1_reliability import NOT_ESTIMABLE, binary_log_loss, brier, equal_mass_ece
 from nfl_hybrid.features import horizon_elo as he
 from nfl_hybrid.labels import edge_to_nullable_binary
+from nfl_hybrid.production import recalibration_2026 as rc
 
 SCHEMA_VERSION = "production-2026-v1"
 
@@ -100,6 +101,12 @@ FAIL_CLOSED_STATUSES: tuple[str, ...] = (
     "IDENTIFIER_FAILURE",
     "HASH_MISMATCH",
     "FORECAST_IMMUTABILITY_VIOLATION",
+    # The ACTIVE calibrator (baseline, or a promoted recalibration candidate)
+    # could not be resolved and verified. Never degraded into "run
+    # uncalibrated" or "fall back to the baseline": a card that silently used
+    # a different calibrator from the one its provenance claims is worse than
+    # no card.
+    "ACTIVE_CALIBRATOR_INVALID",
 )
 
 
@@ -411,10 +418,36 @@ def run_preflight(
         checks["certified_hashes"] = {"status": "MISMATCH", "detail": str(exc)}
         blocking.append("hash_mismatch")
 
-    seed_path = aroot / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
+    # The IMMUTABLE certified Fix-8 baseline must always be present, whether
+    # or not a recalibration candidate has been promoted over it: it is the
+    # calibrator production falls back to only by the explicit absence of a
+    # promotion pointer, and it is the reference a candidate's frozen
+    # family/config hashes are cross-checked against.
+    seed_path = rc.certified_seed_path(aroot)
     checks["fix8_calibration_seed"] = {"status": "OK" if seed_path.is_file() else "MISSING", "path": str(seed_path)}
     if not seed_path.is_file():
         blocking.append("calibration_seed_missing")
+
+    # Preflight validates the calibrator production will ACTUALLY price with,
+    # resolved through the single resolver
+    # (:func:`nfl_hybrid.production.recalibration_2026.resolve_active_calibrator`)
+    # that run_horizon_batch uses -- not merely that the baseline file exists.
+    # A broken or unverifiable promotion pointer is an infrastructure block
+    # here, exactly as it is a hard stop there, so a certified run can never
+    # get past READY with a calibrator that will fail at pricing time.
+    try:
+        active = rc.resolve_active_calibrator(aroot)
+        checks["active_calibrator"] = {
+            "status": "OK",
+            **active.provenance(),
+            "seed_path": None if active.seed_path is None else str(active.seed_path),
+            "streams_calibration_ready": {
+                stream: _frozen_stream_calibration_ready(active.seed.get(stream)) for stream in STREAM_NAMES
+            },
+        }
+    except rc.ActiveCalibratorError as exc:
+        checks["active_calibrator"] = {"status": "FAIL_CLOSED", "detail": str(exc)}
+        blocking.append("active_calibrator_invalid")
 
     # The COMPOSITE games population -- certified historical backfill.games
     # (2020-2025) PLUS the durable canonical BallDontLie 2026 REG/POST games.
@@ -1003,6 +1036,7 @@ def run_horizon_batch(
     repo_root: Path = REPO_ROOT, games: pd.DataFrame | None = None,
     market_capture_manifest: Path | str | None = None,
     games_population_root: Path | None = None,
+    calibrator_root: Path | None = None,
 ) -> dict:
     """One attempted production batch for ``horizon``. Always writes a run
     manifest (Section 15), even on a fail-closed status, and returns it.
@@ -1017,10 +1051,19 @@ def run_horizon_batch(
     certified/live locations regardless of ``operational_root`` -- they
     are read-only scientific evidence and live data feeds, not
     generated-artifact output, so there is nothing operational to isolate
-    for them. The calibration-seed lookup degrades gracefully (never
-    crashes) to an empty/uncalibrated seed when the real artifact root
-    itself is unavailable (e.g. a hermetic test with no
-    ``NFL_MODEL_ARTIFACT_ROOT``).
+    for them.
+
+    ``calibrator_root`` is where the ACTIVE calibrator estate (the immutable
+    certified Fix-8 baseline, the promotion pointer and the immutable
+    recalibration candidates) is read from; left ``None`` it is the real
+    artifact root, exactly as the Fix-8 seed lookup always was, and
+    ``operational_root`` deliberately does NOT redirect it -- which calibrator
+    production priced with is a property of the estate, not of where this run
+    happens to write its ledgers. The lookup degrades gracefully (never
+    crashes) to an empty/uncalibrated seed when that root itself is
+    unavailable (e.g. a hermetic test with no ``NFL_MODEL_ARTIFACT_ROOT``),
+    but a promotion pointer that exists and does not verify is a hard
+    ``ACTIVE_CALIBRATOR_INVALID`` stop, never a silent fallback.
 
     ``games`` is injectable so a test can pin the exact historical games
     population; production leaves it ``None`` (uses
@@ -1216,20 +1259,44 @@ def run_horizon_batch(
             result = rmr.reconstruct_market_at_cutoffs(coherent, targets, market=raw_key)
             consensus_by_market[market] = result.consensus
 
-    # The Fix-8 calibration seed is a read-only certified input, not
-    # generated-artifact output -- unlike ``run_preflight``'s
-    # ``artifact_root_path``, ``operational_root`` here exists ONLY to
-    # isolate this call's forecast-ledger/run-manifest/evaluation-ledger
-    # WRITES (see the docstring above), never to redirect where the real
-    # certified seed is read from. Always resolved against the real
-    # artifact root; gracefully degrades to an empty (uncalibrated) seed
-    # -- never a crash -- when that root itself is unavailable (e.g. a
-    # hermetic test, or a host with no NFL_MODEL_ARTIFACT_ROOT configured).
-    try:
-        seed_path = artifact_root() / "fix8-official-oof-calibration-2026" / "production_calibration_seed.json"
-        calibration_seed: dict[str, dict] = json.loads(seed_path.read_text()) if seed_path.is_file() else {}
-    except Exception:
-        calibration_seed = {}
+    # THE ONE ACTIVE-CALIBRATOR PATH. Production no longer hardcodes the Fix-8
+    # seed as the only possible live calibrator: it asks
+    # recalibration_2026.resolve_active_calibrator, which returns the immutable
+    # certified baseline when no promotion pointer exists and the referenced
+    # immutable candidate when one does, re-verifying every hash on every read.
+    #
+    # The calibrator estate is a read-only input, not this run's generated
+    # output -- unlike run_preflight's ``artifact_root_path``,
+    # ``operational_root`` exists ONLY to isolate this call's
+    # forecast-ledger/run-manifest/evaluation-ledger WRITES, never to redirect
+    # which calibrator production prices with. ``calibrator_root`` is the
+    # explicit override a test uses to point at a synthetic estate.
+    #
+    # FAIL CLOSED, NEVER FALL BACK: a pointer that exists but does not verify
+    # is a hard stop before a single forecast is written. Only a genuinely
+    # unavailable artifact root (a hermetic test, or a host with no
+    # NFL_MODEL_ARTIFACT_ROOT) degrades to an empty seed, which is the
+    # pre-existing uncalibrated state every stream already fails closed on.
+    resolved_calibrator_root = calibrator_root
+    if resolved_calibrator_root is None:
+        try:
+            resolved_calibrator_root = artifact_root()
+        except Exception:
+            resolved_calibrator_root = None
+    if resolved_calibrator_root is None:
+        active_calibrator = rc.unavailable_active_calibrator()
+    else:
+        try:
+            active_calibrator = rc.resolve_active_calibrator(Path(resolved_calibrator_root))
+        except rc.ActiveCalibratorError as exc:
+            return _finish(
+                "ACTIVE_CALIBRATOR_INVALID",
+                target_cutoff_utc=str(target_cutoff_utc),
+                source_readiness={"active_calibrator": {"status": "FAIL_CLOSED", "detail": str(exc)}},
+                detail=f"the active calibrator could not be verified: {exc}",
+            )
+    calibration_seed: dict[str, dict] = active_calibrator.seed
+    active_calibrator_provenance = active_calibrator.provenance()
 
     priced = price_and_calibrate(
         batch_resid, horizon=horizon, market_consensus=consensus_by_market, calibration_seed=calibration_seed,
@@ -1331,6 +1398,13 @@ def run_horizon_batch(
             "certified_baseline_sha": CERTIFIED_SHA, "horizon_feature_semantics_hash": feature_state_hash,
             "operational_model_spec_hash": hash_checks["operational_model_spec_hash"],
             "fix8_preregistration_hash": hash_checks["fix8_preregistration_hash"],
+            # WHICH calibrator produced this forecast's calibrated
+            # probabilities -- BASELINE or a promoted CANDIDATE, its seed hash,
+            # and the hash of the operational policy that authorized the
+            # promotion. Part of the forecast-of-record's deterministic payload
+            # alongside the other certified provenance hashes above, because a
+            # card is only reproducible if the calibrator it used is named.
+            **active_calibrator_provenance,
         }
 
         record = {
@@ -1354,7 +1428,10 @@ def run_horizon_batch(
             "forecast": prediction_payload, "markets": markets_payload,
             "market_state_hash": market_state_hash,
             "market_state": {"snapshot_available": market_snapshot_available, "error": market_error},
-            "provenance": {"git_commit": git_commit, "run_id": run_id, "created_at_utc": utc_now().isoformat(), **hash_checks},
+            "provenance": {
+                "git_commit": git_commit, "run_id": run_id, "created_at_utc": utc_now().isoformat(),
+                **hash_checks, **active_calibrator_provenance,
+            },
         })
 
         if model_ready:
@@ -1372,9 +1449,15 @@ def run_horizon_batch(
             "schedule": True, "elo": True, "market_snapshot_available": market_snapshot_available,
             "market_error": market_error, "live_market": live_market_provenance,
             "games_population": games_provenance,
+            "active_calibrator": {
+                **active_calibrator_provenance,
+                "seed_path": None if active_calibrator.seed_path is None else str(active_calibrator.seed_path),
+                "candidate_manifest_sha256": active_calibrator.candidate_manifest_sha256,
+            },
         },
         input_hashes={
-            **hash_checks, "games_population_row_count": int(len(games_df)),
+            **hash_checks, **active_calibrator_provenance,
+            "games_population_row_count": int(len(games_df)),
             # The exact REG+POST population this run consumed. run_preflight
             # records the identically-computed value, so a reviewer can prove
             # the two ran against the same games population.

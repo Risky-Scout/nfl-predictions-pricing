@@ -198,7 +198,11 @@ a clean no-op, not a failure. There is no DAILY forecast horizon;
    population update, fail-closed on conflicts;
 3. `attach_2026_results_from_population.py` + `report_2026_prospective_performance.py`
    — prospective evaluation;
-4. `generate_2026_recalibration_candidate.py` — candidate + promotion state.
+4. `generate_2026_recalibration_candidate.py --promote-if-eligible` — generate
+   the candidate, then automatically promote it when the operational policy and
+   the preregistered maturity firewall both allow it (section 6). Exit 0 covers
+   `PROMOTED`, `NOT_YET_MATURE`, `ALREADY_ACTIVE` and `NO_CANDIDATE`; exit 4 is
+   an integrity, policy or policy-lock violation and fails the pass.
 
 It publishes nothing, then the runner verifies the public feed with no
 expectations (a liveness and contract check of whatever is currently served).
@@ -236,14 +240,20 @@ A future game therefore cannot enter a fit (its availability is after every
 current cutoff), and a completed game cannot leak backward into an earlier
 cutoff's fit. Both directions are covered by tests.
 
+Automatic recalibration (section 6) rides on the same property: a candidate is
+fit over the same composite population, so newly completed games reach the
+calibrator through exactly the chronology that already governs the Ridge fit.
+
 ---
 
-## 6. Automatic recalibration and the promotion gate
+## 6. Automatic recalibration, and automatic promotion once mature
 
-`generate_2026_recalibration_candidate.py` runs every day. It reuses the
-certified chronological calibration machinery
-(`chronological_calibration`, `three_way`) to produce a candidate seed, and
-writes it — with exact stream memberships, thresholds and hashes — to
+### Candidate generation
+
+`generate_2026_recalibration_candidate.py` runs every day as stage 4 of the
+daily pass. It reuses the certified chronological calibration machinery
+(`chronological_calibration`, `three_way`) to produce a candidate seed and
+writes it — with exact per-stream memberships, thresholds and hashes — to
 
 ```
 $NFL_MODEL_ARTIFACT_ROOT/production-2026/recalibration-candidates/<candidate_id>/
@@ -251,25 +261,162 @@ $NFL_MODEL_ARTIFACT_ROOT/production-2026/recalibration-candidates/<candidate_id>
 └── candidate_manifest.json
 ```
 
-outside git.
+outside git, content-addressed and immutable. Regenerating identical evidence
+is an idempotent no-op rather than a new near-duplicate, because the candidate
+id *is* the hash of its own seed.
 
-Promotion is decided **only** by the frozen machine-readable preregistration
-`outputs/prospective_2026_strength_preregistration.json`. Today that document:
+### The two separate gates
 
-- carries no enabled `certified_calibrator_promotion_authorization` block, and
-- asserts `invariance.no_scientific_refit = true`.
+There are two questions, and conflating them is what would break the science.
 
-So `promotion_authorization` returns `PROMOTION_NOT_AUTHORIZED`, and
-`promote_candidate` raises `PromotionRefused` without touching the certified
-seed. An operator cannot manufacture an authorization: no environment variable,
-CLI flag or filesystem marker is consulted.
+`promotion_authorization` reads the historical preregistration
+`outputs/prospective_2026_strength_preregistration.json` and answers only this:
+does that document authorize a **scientific refit** — a new calibrator family
+or a new calibrator config? It answers no, permanently, because the document
+asserts `invariance.no_scientific_refit = true`. That document is not edited,
+reinterpreted or superseded.
 
-Steady state, which is the expected state:
+`config/recalibration_promotion_2026.json` is a **versioned operational
+overlay** and answers a different question: may the *already-certified*
+calibrator family and config be re-fitted on more 2026 evidence once the
+*already-preregistered* sample-maturity firewall is satisfied? It answers yes.
+The two answers are compatible because the policy is only accepted at all if it
+requires every candidate's calibrator family and both config hashes to **equal
+the certified ones**. A promotion is therefore the same estimator and the same
+config on more data — a recalibration, not a refit.
 
-- candidate generation runs automatically;
-- the certified calibrator remains active and byte-identical;
-- the workflow reports the candidate state;
-- promotion fails closed.
+There is deliberately **no** "the candidate must beat the active calibrator by
+X" threshold anywhere. Any such threshold would have to be chosen after
+observing 2026 results. Promotion is a deterministic scheduled recalibration
+behind a preregistered sample-size firewall, not a selection event.
+
+### The maturity firewall
+
+The game floor lives in exactly one place: `prospective_strength_2026.`
+`PROMOTION_ELIGIBLE_MIN_GAMES` (currently 200 unique completed 2026 games). The
+policy records *where* to read it, never *what* it is — `numeric_threshold_`
+`duplicated_here` is `false`, and the number appears nowhere in the policy
+bytes or in the promotion code. `PromotionPolicy.minimum_prospective_games()`
+imports the frozen module and reads the symbol, so the contract and the
+operational overlay cannot drift apart.
+
+Below the floor, `evaluate_promotion` returns `NOT_YET_MATURE`. That is a
+**success**: candidates keep being generated, Ridge retraining keeps following
+the existing chronology, and the current calibrator stays active. The daily
+pass exits 0.
+
+### The eleven requirements
+
+Above the floor, a candidate becomes active only when all of these hold.
+
+| # | Requirement |
+|---|---|
+| 1 | prospective maturity is `PROMOTION_ELIGIBLE` under the frozen rule |
+| 2 | the policy is enabled and its hash matches the policy lock |
+| 3 | the candidate carries exactly the four production streams |
+| 4 | every conditional calibrator is fitted |
+| 5 | every push calibration state is well-formed |
+| 6 | every parameter is finite, including each push bucket scale |
+| 7 | family and both config hashes equal the frozen certified ones |
+| 8 | the seed content hash and the manifest hashes verify |
+| 9 | training membership is internally consistent and chronologically possible |
+| 10 | membership has not regressed against the active candidate |
+| 11 | the candidate differs from the currently active one |
+
+Requirements 4 and 5 are checked by the **same** frozen predicate production
+pricing uses (`run_2026._frozen_stream_calibration_ready`), so a candidate can
+never pass promotion and then be rejected at pricing time.
+
+The order matters: maturity is checked before the candidate is validated.
+Before the floor a candidate legitimately has unfitted streams (too few
+labelled rows yet) and must report `NOT_YET_MATURE`; after the floor the same
+unfitted stream is genuine corruption and fails closed.
+
+### The active-calibrator pointer
+
+The certified baseline is never overwritten and never copied. Instead:
+
+```
+$NFL_MODEL_ARTIFACT_ROOT/production-2026/recalibration/
+├── active_calibrator.json          <- a tiny POINTER
+└── promotion-events/<event_hash>.json
+```
+
+**Absence of the pointer means the immutable Fix-8 baseline is active.** A
+promotion atomically rewrites that one small file (temp file plus
+`os.replace` in the same directory) to *reference* a candidate seed that
+already exists under `recalibration-candidates/`. The seed bytes are never
+duplicated, so there is no second calibration estate to keep in sync.
+
+The pointer records the schema version, the candidate id (or `BASELINE`), the
+exact seed path, the seed SHA256, the candidate manifest SHA256, the
+promotion-policy SHA256, `promoted_at_utc`, the git commit, the previous active
+candidate and its hash, the prospective unique completed-game count at
+promotion, and the training-membership hashes for all four streams.
+
+A promotion event is written **only when the active calibrator actually
+changes** — append-only and content-addressed. Re-running promotion against the
+already-active candidate writes nothing at all: no pointer rewrite, no second
+event, no seed copy.
+
+### One resolver, and no silent fallback
+
+`run_2026` no longer hardcodes the Fix-8 seed as the only possible live
+calibrator. Both `run_preflight` and `run_horizon_batch` call
+`recalibration_2026.resolve_active_calibrator`, which has exactly three
+outcomes:
+
+- **no pointer** → the verified immutable baseline;
+- **valid pointer** → the referenced immutable candidate, with the seed hash,
+  the manifest hash, the policy hash against the lock, and all four streams'
+  readiness re-verified on *every* read;
+- **anything else** → `ActiveCalibratorError`.
+
+A pointer that exists but does not verify **never** degrades to the baseline.
+Preflight turns that into the blocking problem `active_calibrator_invalid` (so
+a certified run cannot reach `READY`), and a batch turns it into the
+fail-closed status `ACTIVE_CALIBRATOR_INVALID` before a single forecast is
+written. A silent fallback would publish a card that claims one calibrator and
+used another, which is worse than publishing nothing.
+
+Only a genuinely unavailable artifact root (a hermetic test, or a host with no
+`NFL_MODEL_ARTIFACT_ROOT`) degrades to an empty seed — the pre-existing
+uncalibrated state every stream already fails closed on, and not a fallback
+from a broken promotion.
+
+### The policy lock
+
+On first operational use, one small first-write-wins lock is written to
+
+```
+$NFL_MODEL_ARTIFACT_ROOT/production-2026/recalibration-policy/policy_lock.json
+```
+
+recording the policy SHA256, the policy schema version, the git commit and the
+creation timestamp. The create is `O_CREAT|O_EXCL`, so two concurrent runs
+cannot both claim to have written it. Every later run verifies the same hash; a
+policy that changed after being locked raises `PolicyLockViolation` and the
+daily pass exits 4. A new policy is never silently accepted.
+
+An operator cannot manufacture a promotion. Nothing in the module consults an
+environment variable, a CLI flag or a filesystem marker, the daily script has
+no `--force` or `--bypass` option, and a policy that *declared* such a control
+— or that relaxed any requirement in the table above, omitted a stream,
+declared itself not fail-closed, made the baseline mutable, or restated the
+maturity threshold as a literal — is rejected by `_validate_policy_document`
+before any candidate is even examined.
+
+### Provenance
+
+Every forecast of record, every run manifest and every evaluation-ledger
+provenance block now carries `active_calibrator_source` (`BASELINE` or
+`CANDIDATE`), `active_calibrator_candidate_id`,
+`active_calibrator_seed_sha256` and `recalibration_policy_sha256`. A card is
+only reproducible if the calibrator it used is named.
+
+This is internal evidence only. The published `wizard-nfl-pricing-v2` contract
+is unchanged and structurally cannot absorb these fields: the exporter builds an
+explicit allow-list and asserts `tuple(public_game.keys()) == GAME_KEY_ORDER`.
 
 ---
 
