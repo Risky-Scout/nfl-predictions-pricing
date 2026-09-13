@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 
 from nfl_hybrid.evaluation import official_horizon_oof as ohf
+from nfl_hybrid.evaluation.chronological_oof import training_membership_hash
 from nfl_hybrid.features import horizon_elo as he
 from nfl_hybrid.selection import feature_deduction_2026 as fd
 
@@ -51,6 +52,215 @@ def _tiny_games() -> pd.DataFrame:
             "neutral_site": [False, False, False],
         }
     )
+
+
+def _matrix_with_unresolved_rows() -> pd.DataFrame:
+    """``_synthetic_matrix`` plus two SCHEDULED-but-unplayed games, shaped
+    exactly like the composite 2026 population: a projected
+    ``result_available_at_utc`` that precedes a later card's cutoff, and no
+    observed outcome at all. Scores are absent, never imputed."""
+    frame = _synthetic_matrix()
+    unresolved = pd.DataFrame(
+        [
+            # Resolves (projected) before cutoff3 -- so a purely temporal mask
+            # would sweep it into cutoff3's Ridge fit with a NaN label.
+            {"game_id": "U1", "season": 2024, "week": 2, "target_cutoff_utc": "2024-09-10T12:00:00Z",
+             "result_available_at_utc": "2024-09-16T03:00:00Z",
+             "home_margin": np.nan, "total_points": np.nan},
+            {"game_id": "U2", "season": 2024, "week": 2, "target_cutoff_utc": "2024-09-10T12:00:00Z",
+             "result_available_at_utc": "2024-09-16T04:00:00Z",
+             "home_margin": np.nan, "total_points": np.nan},
+        ]
+    )
+    unresolved["target_cutoff_utc"] = pd.to_datetime(unresolved["target_cutoff_utc"], utc=True)
+    unresolved["result_available_at_utc"] = pd.to_datetime(unresolved["result_available_at_utc"], utc=True)
+    rng = np.random.default_rng(19)
+    for col in ohf.ELO_FEATURE_COLUMNS:
+        unresolved[col] = rng.normal(size=len(unresolved))
+    return pd.concat([frame, unresolved], ignore_index=True)
+
+
+def _composite_population(*, completed_weeks: int = 15, scheduled_weeks: int = 6) -> pd.DataFrame:
+    """A population shaped like the live one: resolved history followed by
+    scheduled 2026 games carrying no score."""
+    teams = ["BUF", "MIA", "NE", "NYJ", "KC", "LAC", "DEN", "LV"]
+    rng = np.random.default_rng(11)
+    rows, n = [], 0
+    for week in range(1, completed_weeks + scheduled_weeks + 1):
+        monday = pd.Timestamp("2026-09-07") + pd.Timedelta(weeks=week - 1)
+        resolved = week <= completed_weeks
+        for pair in range(4):
+            kickoff = monday + pd.Timedelta(days=6, hours=17)
+            rows.append({
+                "game_id": f"2026_{week:02d}_{teams[pair * 2 + 1]}_{teams[pair * 2]}_{n}",
+                "season": 2026, "week": week, "season_type": "REG",
+                "home_team_id": teams[pair * 2], "away_team_id": teams[pair * 2 + 1],
+                "scheduled_kickoff_utc": kickoff.tz_localize("UTC"),
+                "home_score": int(rng.integers(10, 35)) if resolved else np.nan,
+                "away_score": int(rng.integers(10, 35)) if resolved else np.nan,
+                "neutral_site": False,
+            })
+            n += 1
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Regression: an unresolved game must never supply a TRAINING LABEL.
+#
+# The composite 2026 population is the first estate where "this game's result
+# is available" and "this game has an observed outcome" diverge: a scheduled,
+# unplayed game has a projected result_available_at_utc (kickoff + the frozen
+# settlement offset) that can precede a later card's cutoff while its score is
+# still absent. A purely temporal training mask therefore handed NaN labels to
+# Ridge ("Input y contains NaN"), and NaN residuals to the uncertainty pool.
+# ---------------------------------------------------------------------------
+def test_unresolved_scheduled_rows_never_enter_training():
+    matrix = _matrix_with_unresolved_rows()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    # cutoff3's temporal window contains U1 and U2, which have no outcome.
+    cutoff3 = predictions[predictions["game_id"].isin(["G5", "G6"])]
+    assert len(cutoff3) == 2
+    for ids in cutoff3["training_game_ids"]:
+        assert {"U1", "U2"}.isdisjoint(set(ids))
+
+
+def test_resolved_prior_games_still_enter_training():
+    """The other half of the contract: the fix must not shrink a legitimate
+    training set."""
+    matrix = _matrix_with_unresolved_rows()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    cutoff3 = predictions[predictions["game_id"].isin(["G5", "G6"])]
+    assert set(cutoff3.iloc[0]["training_game_ids"]) == {"G1", "G2", "G3", "G4"}
+    assert (cutoff3["training_game_count"] == 4).all()
+
+
+def test_unresolved_rows_remain_prediction_targets():
+    """An unplayed game is exactly what production needs a forecast FOR. It
+    must still be predicted -- it simply must not vote in the fit."""
+    matrix = _matrix_with_unresolved_rows()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    unresolved = predictions[predictions["game_id"].isin(["U1", "U2"])]
+    assert len(unresolved) == 2
+    assert (unresolved["status"] == "OOF").all()
+    assert unresolved["predicted_margin"].notna().all()
+    assert unresolved["predicted_total"].notna().all()
+
+
+def test_training_membership_describes_only_labeled_rows():
+    """training_game_count / training_game_ids / training_membership_hash must
+    describe the rows actually in the fit, not unresolved scheduled rows."""
+    matrix = _matrix_with_unresolved_rows()
+    labeled = set(
+        matrix.loc[matrix["home_margin"].notna() & matrix["total_points"].notna(), "game_id"].astype(str)
+    )
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    for _, row in predictions.iterrows():
+        ids = set(row["training_game_ids"])
+        assert ids <= labeled
+        if not row["training_game_ids_truncated"]:
+            assert row["training_game_count"] == len(ids)
+        assert row["training_membership_hash"] == training_membership_hash(sorted(ids))
+
+
+def test_no_nan_reaches_either_ridge_target_vector():
+    """The exact production failure, end to end from a composite population:
+    ``ValueError: Input y contains NaN``."""
+    games = _composite_population()
+    ledger = he.build_horizon_membership_ledger(games)
+    matrix = ohf.build_official_horizon_matrix(games, "TUE", ledger)
+    assert matrix["home_margin"].isna().any(), "fixture must contain unresolved games"
+
+    predictions, residual_ledger, _ = ohf.build_official_horizon_oof(
+        matrix, horizon="TUE", feature_state_hash="f" * 64
+    )
+
+    labeled = set(
+        matrix.loc[matrix["home_margin"].notna() & matrix["total_points"].notna(), "game_id"].astype(str)
+    )
+    for ids in predictions["training_game_ids"]:
+        assert set(ids) <= labeled
+    # Every unresolved game is still carried as a target row.
+    assert len(predictions) == len(matrix)
+    assert len(residual_ledger) == len(matrix)
+
+
+def test_unresolved_residuals_never_pollute_the_uncertainty_pool():
+    """``status == "OOF"`` means a forecast exists, not that the outcome does.
+    An unresolved row's NaN residual entering the pool would turn every later
+    SD/correlation into NaN silently, because np.std propagates NaN."""
+    games = _composite_population(completed_weeks=8, scheduled_weeks=4)
+    ledger = he.build_horizon_membership_ledger(games)
+    matrix = ohf.build_official_horizon_matrix(games, "TUE", ledger)
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=4, min_uncertainty_warmup=4)
+
+    _, residual_ledger, _ = ohf.build_official_horizon_oof(matrix, horizon="TUE", config=cfg)
+
+    oof = residual_ledger[residual_ledger["status"] == "OOF"]
+    assert (~np.isfinite(oof["margin_residual"].to_numpy(dtype=float))).any(), (
+        "fixture must contain unresolved OOF rows, otherwise this proves nothing"
+    )
+    eligible = residual_ledger[residual_ledger["uncertainty_eligible"]]
+    assert len(eligible) > 0
+    assert np.isfinite(eligible["margin_residual_sd_oof"].to_numpy(dtype=float)).all()
+    assert np.isfinite(eligible["total_residual_sd_oof"].to_numpy(dtype=float)).all()
+    assert np.isfinite(eligible["residual_correlation_oof"].to_numpy(dtype=float)).all()
+
+
+def test_chronological_no_leakage_rules_remain_intact():
+    """Strict ``result_available_at_utc < target_cutoff_utc``, no target in its
+    own fit, and the availability invariant still enforced."""
+    matrix = _matrix_with_unresolved_rows()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    resolution = dict(
+        zip(matrix["game_id"].astype(str), pd.to_datetime(matrix["result_available_at_utc"], utc=True))
+    )
+    for _, row in predictions.iterrows():
+        cutoff = pd.Timestamp(row["target_cutoff_utc"])
+        assert row["game_id"] not in set(row["training_game_ids"])
+        for train_id in row["training_game_ids"]:
+            assert resolution[train_id] < cutoff
+        if row["training_game_count"]:
+            assert pd.Timestamp(row["max_training_result_available_at_utc"]) < cutoff
+
+
+def test_the_label_filter_is_a_no_op_on_a_fully_resolved_matrix():
+    """Backward compatibility with the certified 2020-2025 results: where every
+    row is labelled, the training mask is exactly the purely temporal one."""
+    matrix = _synthetic_matrix()
+    assert matrix["home_margin"].notna().all()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(matrix, horizon="TUE", config=cfg)
+
+    resolution = pd.to_datetime(matrix["result_available_at_utc"], utc=True)
+    for _, row in predictions.iterrows():
+        expected = int((resolution < pd.Timestamp(row["target_cutoff_utc"])).sum())
+        assert row["training_game_count"] == expected
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_no_non_finite_label_of_any_kind_enters_training(bad):
+    """NaN is what production hit, but an infinity is no more trainable. The
+    eligibility mask is finiteness, not merely not-null."""
+    matrix = _synthetic_matrix()
+    cfg = ohf.OfficialHorizonOOFConfig(min_training_games=1, min_uncertainty_warmup=2)
+    poisoned = matrix.copy()
+    poisoned.loc[poisoned["game_id"] == "G1", "home_margin"] = bad
+
+    predictions, _ = ohf.generate_official_horizon_oof_predictions(poisoned, horizon="TUE", config=cfg)
+    for ids in predictions["training_game_ids"]:
+        assert "G1" not in set(ids)
+    # G1 is still predicted; it just cannot vote.
+    assert len(predictions[predictions["game_id"] == "G1"]) == 1
 
 
 def test_future_result_excluded_from_training():
