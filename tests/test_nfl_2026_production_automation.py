@@ -706,8 +706,13 @@ def test_workflow_dispatch_supports_an_explicit_existing_capture(workflow):
     assert "market_capture_manifest" in inputs
     assert "market_capture_sha256" in inputs
     certified = (REPO_ROOT / "ops/wizard/run_certified_card.sh").read_text()
-    # A declared hash mismatch must abort before anything runs.
-    assert "capture manifest sha256" in certified
+    # Capture identity is resolved by the integrity verifier, which always
+    # self-verifies the capture's own recorded content hash and fails closed
+    # when a declared hash matches neither of its two integrity objects.
+    assert "verify_capture_manifest_integrity.py" in certified
+    assert "--declared-sha256" in certified
+    assert "capture manifest integrity check failed" in certified
+    assert "exit 3" in certified
 
 
 # ===========================================================================

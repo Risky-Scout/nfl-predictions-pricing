@@ -8,8 +8,9 @@
 # model logic, no feature construction, no calibration, no market rule and no
 # schema.
 #
-#   1. verify the official BallDontLie capture manifest exists and hashes to
-#      exactly what the caller declared (retained verbatim in the run record);
+#   1. verify the official BallDontLie capture manifest exists, self-verifies
+#      its own recorded content hash, and resolves the hash the caller declared
+#      to one of its two integrity objects (both retained in the run record);
 #   2. production preflight against THAT capture -- must report READY;
 #   3. the certified six-Elo / Ridge-alpha-100 card for the horizon, priced
 #      from that capture, via scripts/run_2026_production_card.py;
@@ -67,11 +68,21 @@ if [ ! -f "${CAPTURE_MANIFEST}" ]; then
     echo "FAIL CLOSED: capture manifest not found on the server: ${CAPTURE_MANIFEST}" >&2
     exit 3
 fi
-actual_sha="$(sha256sum "${CAPTURE_MANIFEST}" | awk '{print $1}')"
-echo "capture_manifest=${CAPTURE_MANIFEST}"
-echo "capture_manifest_sha256=${actual_sha}"
-if [ -n "${CAPTURE_SHA256}" ] && [ "${actual_sha}" != "${CAPTURE_SHA256}" ]; then
-    echo "FAIL CLOSED: capture manifest sha256 ${actual_sha} != declared ${CAPTURE_SHA256}" >&2
+# A capture manifest has TWO integrity objects that are different by
+# construction -- the file hash, and the content hash the capture stores inside
+# itself as .manifest_sha256 (see scripts/verify_capture_manifest_integrity.py).
+# The verifier ALWAYS self-verifies the content hash, which is what detects a
+# mutated capture, and resolves a declared hash to whichever object it is, so a
+# correctly recorded value is never rejected for referring to the other object
+# and an unrecognised value is never accepted.
+set +e
+"${PY}" scripts/verify_capture_manifest_integrity.py \
+    "${CAPTURE_MANIFEST}" \
+    ${CAPTURE_SHA256:+--declared-sha256 "${CAPTURE_SHA256}"}
+capture_integrity_exit=$?
+set -e
+if [ "${capture_integrity_exit}" -ne 0 ]; then
+    echo "FAIL CLOSED: capture manifest integrity check failed for ${CAPTURE_MANIFEST}" >&2
     exit 3
 fi
 # The manifest is READ here and never rewritten: the capture is immutable

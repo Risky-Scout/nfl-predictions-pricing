@@ -18,8 +18,19 @@ Before the preregistered floor of
 ``prospective_strength_2026.PROMOTION_ELIGIBLE_MIN_GAMES`` unique completed
 2026 games, promotion reports ``NOT_YET_MATURE`` and exits 0: candidate
 generation and Ridge retraining keep running and the current calibrator stays
-active. That is a successful no-op, not a failure. Exit 4 is reserved for a
-genuine fail-closed condition -- a policy/lock/candidate integrity violation.
+active. That is a successful no-op, not a failure.
+
+Exit codes -- only 0 is a healthy day:
+  0  candidate generated, and promotion decided PROMOTED, NOT_YET_MATURE,
+     ALREADY_ACTIVE, NO_CANDIDATE or POLICY_DISABLED
+  1  candidate generation itself failed (e.g. a required historical estate is
+     absent on this host, or an unexpected exception)
+  2  the artifact root could not be resolved
+  3  the ACTIVE calibrator could not be resolved -- the certified baseline seed
+     is missing, or the active pointer is corrupt. Checked independently of the
+     promotion decision, because below the maturity floor promotion never needs
+     to resolve a calibrator and would otherwise hide this.
+  4  promotion policy, policy-lock or candidate integrity violation
 
 The pipeline is exactly the certified one, phase for phase, with no new
 scientific step:
@@ -289,9 +300,12 @@ def main(argv: list[str] | None = None) -> int:
         "active_calibrator_source": report["active_calibrator"].get("active_calibrator_source"),
         "active_calibrator_candidate_id": report["active_calibrator"].get("active_calibrator_candidate_id"),
         "active_calibrator_seed_sha256": report["active_calibrator"].get("active_calibrator_seed_sha256"),
+        "active_calibrator_status": report["active_calibrator"].get("active_calibrator_status"),
+        "active_calibrator_resolution": report["active_calibrator"].get("resolution"),
         "promotion_decision": None if promotion is None else promotion.get("status"),
         "promotion_reason": None if promotion is None else (promotion.get("reason") or promotion.get("detail")),
         "recalibration_policy_sha256": (report.get("promotion_policy") or {}).get("policy_sha256"),
+        "certified_baseline_present": report["certified_calibrator_present"],
         "certified_baseline_sha256": report["certified_calibrator_sha256"],
         "certified_baseline_immutable": True,
     }
@@ -307,6 +321,34 @@ def main(argv: list[str] | None = None) -> int:
         # A policy, policy-lock or candidate-integrity violation. Distinct from
         # every legitimate no-op so the daily pass can fail on exactly this.
         return 4
+
+    # An unresolvable ACTIVE calibrator is a fail-closed runtime state, and it
+    # is NOT covered by the promotion decision: below the maturity floor
+    # promotion returns NOT_YET_MATURE without ever resolving a calibrator, so
+    # a host missing the certified baseline seed would otherwise report a
+    # perfectly healthy day while being unable to price a single card. Reported
+    # separately from a promotion violation so the daily pass can say which
+    # one happened.
+    active = report["active_calibrator"]
+    if active.get("resolution") != "OK" or active.get("active_calibrator_status") == rc.ACTIVE_BASELINE_SEED_MISSING:
+        print(
+            json.dumps(
+                {
+                    "status": "FAIL_CLOSED",
+                    "detail": (
+                        "the active calibrator could not be resolved: "
+                        f"resolution={active.get('resolution')} "
+                        f"status={active.get('active_calibrator_status')} "
+                        f"certified_baseline_present={active.get('certified_baseline_present')} "
+                        f"{active.get('detail') or ''}"
+                    ).strip(),
+                },
+                indent=2,
+            ),
+            file=sys.stderr,
+        )
+        return 3
+
     # NOT_YET_MATURE / NO_CANDIDATE / ALREADY_ACTIVE / POLICY_DISABLED are all
     # EXPECTED steady states: the candidate exists, the active calibrator is
     # unchanged and verified, and the state is reported. Exit 0.
