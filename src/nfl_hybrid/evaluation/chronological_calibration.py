@@ -181,6 +181,13 @@ RAW_CALIBRATION_INPUT_COLUMNS = (
     "raw_away_probability",
     "raw_conditional_upper_probability",
     "binary_target",
+    # Whether this row's own outcome has actually been observed yet.
+    # ``binary_target`` is null for two entirely different reasons -- a
+    # resolved game that landed exactly on the line (a real push) and a game
+    # that has not been played at all -- so it cannot distinguish them on its
+    # own. Push-scale fitting needs that distinction, because counting an
+    # unplayed game as an observed push would invent an outcome.
+    "outcome_resolved",
     "raw_status",
 )
 
@@ -443,6 +450,7 @@ def build_raw_probabilities(
             "raw_away_probability": away,
             "raw_conditional_upper_probability": cond,
             "binary_target": edge_to_nullable_binary(edge),
+            "outcome_resolved": np.isfinite(actual.to_numpy(dtype=float)),
             "raw_status": np.where(ready, "RAW_READY", "RAW_UNAVAILABLE"),
         }
     )
@@ -734,13 +742,23 @@ def calibrate_chronological_push_probability(
     result_available = pd.to_datetime(frame["result_available_at_utc"], utc=True, errors="raise")
     ready_mask = (frame["raw_status"] == "RAW_READY").to_numpy()
     binary_numeric = pd.to_numeric(frame["binary_target"], errors="coerce").to_numpy(float)
-    # A RAW_READY row with a null binary_target is exactly a push (see
-    # nfl_hybrid.labels.edge_to_nullable_binary) -- the actual-push indicator
-    # push-scale fitting needs, available for every RAW_READY row regardless
-    # of whether it was "labeled" for conditional calibration (conditional
-    # calibration's own labeled_mask deliberately EXCLUDES pushes; push
-    # fitting needs them included).
-    actual_push = (ready_mask & ~np.isfinite(binary_numeric)).astype(int)
+    # A RESOLVED RAW_READY row with a null binary_target is exactly a push
+    # (see nfl_hybrid.labels.edge_to_nullable_binary) -- the actual-push
+    # indicator push-scale fitting needs, available for every such row
+    # regardless of whether it was "labeled" for conditional calibration
+    # (conditional calibration's own labeled_mask deliberately EXCLUDES
+    # pushes; push fitting needs them included).
+    #
+    # ``outcome_resolved`` is what makes that read valid. An unplayed game is
+    # RAW_READY -- it must be, since pricing an unplayed game is the entire
+    # point of a forward card -- and its binary_target is null too, so
+    # without this guard every unplayed game would be fitted as an OBSERVED
+    # PUSH. Such rows are excluded from the fit below rather than relabelled
+    # as non-pushes, because "not yet known" is not an observation of either
+    # class. On a fully resolved estate every RAW_READY row is resolved, so
+    # this changes nothing about the certified fits.
+    resolved_mask = frame["outcome_resolved"].fillna(False).astype(bool).to_numpy()
+    actual_push = (ready_mask & resolved_mask & ~np.isfinite(binary_numeric)).astype(int)
     model_push = pd.to_numeric(frame["raw_push_probability"], errors="coerce").to_numpy(float)
 
     push_frame = pd.DataFrame(
@@ -772,7 +790,7 @@ def calibrate_chronological_push_probability(
             ]
             if not calibratable:
                 continue
-            train_mask = ready_mask & (result_available < cutoff_i).to_numpy()
+            train_mask = ready_mask & resolved_mask & (result_available < cutoff_i).to_numpy()
             n_train = int(train_mask.sum())
             if n_train == 0:
                 continue
