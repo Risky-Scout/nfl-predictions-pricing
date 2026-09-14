@@ -50,7 +50,7 @@ PRE IS NEVER INCLUDED
   restarts preseason week numbering at 1, so a preseason row could otherwise
   collide with a regular-season Week-1 canonical game_id.
 
-UPCOMING GAMES CARRY NULL SCORES
+UPCOMING AND IN-PROGRESS GAMES CARRY NULL SCORES
   A scheduled 2026 game has ``home_score``/``away_score`` NULL. That is
   correct and required: the certified Elo replay only enqueues an update event
   for a game with both scores present
@@ -58,13 +58,27 @@ UPCOMING GAMES CARRY NULL SCORES
   future game's ``result_available_at_utc`` is after every current cutoff, so
   it can never enter a training batch.
 
+  An IN-PROGRESS game carries NULL scores for the same reason, and this is
+  the stronger of the two rules. A live scoreline is real data but it is not
+  an outcome, and because a recorded score is immutable here (see FAIL
+  CLOSED below), storing one would freeze an intermediate scoreline as the
+  game's final result. Only a score the provider itself reports as final is
+  a result: decided by the existing
+  :func:`nfl_hybrid.providers.balldontlie.finality.can_update_score_state`
+  gate (``status_state == "final"`` plus both scores present plus known
+  teams), never by score presence, elapsed kickoff time, or status text.
+  There is exactly one finality rule in this repository and this module
+  reuses it rather than restating it.
+
 FAIL CLOSED
   * A conflicting canonical identity (same ``game_id``, different teams or
     kickoff) -- whether between two 2026 evidence rows, between two captures,
     or between 2026 evidence and the certified historical estate -- raises
     :class:`GamesPopulationConflict`. Nothing is merged "best effort".
   * A recorded final score is immutable: evidence that changes an already
-    stored score raises :class:`GamesPopulationConflict`.
+    stored score raises :class:`GamesPopulationConflict`. Only a
+    provider-final score is ever recorded, so this immutability applies to
+    genuine results and never freezes a game that was merely underway.
   * A game whose result was already chronologically available as of the
     evidence's own as-of instant but whose scores are still unknown is a STALE
     UNRESOLVED row. It is excluded from the population and counted explicitly
@@ -84,6 +98,7 @@ from nfl_hybrid.data import bdl_market_bridge as bridge
 from nfl_hybrid.data.external_data import artifact_root, resolve
 from nfl_hybrid.features import horizon_elo as he
 from nfl_hybrid.providers.balldontlie import canonical as bdl_canonical
+from nfl_hybrid.providers.balldontlie import finality as bdl_finality
 
 SCHEMA_VERSION = "games-population-2026-v1"
 
@@ -201,7 +216,18 @@ def canonical_games_to_population_rows(normalized: pd.DataFrame) -> pd.DataFrame
     Renames only. PRESEASON rows are dropped (never renamed into REG), and a
     row missing any identity field fails closed rather than being filled in.
     """
-    required = set(_BDL_TO_POPULATION) | {"game_id", "season", "week", "season_type", "home_score", "away_score"}
+    required = set(_BDL_TO_POPULATION) | {
+        "game_id",
+        "season",
+        "week",
+        "season_type",
+        "home_score",
+        "away_score",
+        # Required, never optional: without the provider's own lifecycle
+        # value there is no way to tell a final score from a running one, and
+        # assuming final is exactly the defect this gate exists to prevent.
+        "status_state",
+    }
     missing = sorted(required - set(normalized.columns))
     if missing:
         raise GamesPopulationError(
@@ -224,6 +250,22 @@ def canonical_games_to_population_rows(normalized: pd.DataFrame) -> pd.DataFrame
             raise GamesPopulationError(f"{game_id}: canonical BDL row has an empty home/away team id")
         if home == away:
             raise GamesPopulationError(f"{game_id}: canonical BDL row has home_team_id == away_team_id ({home!r})")
+        # A score is only a RESULT once the provider says the game is over.
+        # A running score is real data, but it is not an outcome: recording
+        # it here would make it immutable under merge_population_rows and
+        # freeze an intermediate scoreline as the game's final result.
+        # Decided by the existing, live-verified finality gate -- never by
+        # score presence, elapsed kickoff time, or status text.
+        gate = bdl_finality.can_update_score_state(
+            bdl_finality.CanonicalGameFinality(
+                game_id=game_id,
+                status_state=record.get("status_state"),
+                home_team=home,
+                away_team=away,
+                home_score=_nullable_score(record.get("home_score")),
+                away_score=_nullable_score(record.get("away_score")),
+            )
+        )
         rows.append(
             {
                 "game_id": game_id,
@@ -235,8 +277,8 @@ def canonical_games_to_population_rows(normalized: pd.DataFrame) -> pd.DataFrame
                 "scheduled_kickoff_utc": _as_utc(
                     record["scheduled_kickoff_utc"], f"{game_id}: scheduled_kickoff_utc"
                 ),
-                "home_score": _nullable_score(record.get("home_score")),
-                "away_score": _nullable_score(record.get("away_score")),
+                "home_score": _nullable_score(record.get("home_score")) if gate.eligible else None,
+                "away_score": _nullable_score(record.get("away_score")) if gate.eligible else None,
             }
         )
     return _normalize_population_frame(pd.DataFrame(rows, columns=list(POPULATION_COLUMNS)))

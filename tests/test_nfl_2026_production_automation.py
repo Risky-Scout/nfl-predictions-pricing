@@ -12,6 +12,7 @@ tests validate are hashed exactly the way the real capture script hashes them.
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -45,9 +46,11 @@ def week1_games(*, season: int = 2026, week: int = 1, scored: bool = False) -> l
         row = _game_row(1000 + index, home, away, season=season, week=week)
         if scored:
             row["home_team_score"] = 20 + index
-            row["away_team_score"] = 17
+            # BDL's own field name for the away score. Spelling this
+            # "away_team_score" silently left the away score absent.
+            row["visitor_team_score"] = 17
             row["status"] = "Final"
-            row["status_state"] = "post"
+            row["status_state"] = "final"
         rows.append(row)
     return rows
 
@@ -249,6 +252,346 @@ def test_a_changed_recorded_score_fails_closed(tmp_path):
     altered[0]["home_team_score"] = 99
     with pytest.raises(gp26.GamesPopulationConflict, match="recorded result"):
         ingest(write_capture(tmp_path / "cap2", games=altered), aroot)
+
+
+# ===========================================================================
+# 6b. An IN-PROGRESS score is never a result
+#
+# Production regression (Sep 13 2026, game 2026_01_BAL_IND). The 19:55Z daily
+# capture caught the game in the fourth quarter at BAL 38 IND 23 and stored
+# that scoreline as the result. Because a recorded score is immutable, the
+# real final -- BAL 41 IND 23, after Baltimore's last field goal -- was then
+# rejected and the whole daily pass failed closed:
+#
+#   FAIL CLOSED: recorded result for game_id '2026_01_BAL_IND' changed:
+#   stored=(23.0, 38.0) incoming=(23.0, 41.0)
+#
+# Finality comes from the provider's own status_state, never from the mere
+# presence of a score or from elapsed kickoff time.
+# ===========================================================================
+def _bal_at_ind(*, home_score, away_score, status, status_state) -> list[dict]:
+    """The real fixture, in BDL's own raw shape: BAL visiting IND. IND is the
+    home team, so the population pair is (home=IND, away=BAL)."""
+    bal = next(team[0] for team in _BDL_TEAMS if team[1] == "BAL")
+    ind = next(team[0] for team in _BDL_TEAMS if team[1] == "IND")
+    row = _game_row(7001, ind, bal)
+    row["home_team_score"] = home_score
+    row["visitor_team_score"] = away_score
+    row["status"] = status
+    row["status_state"] = status_state
+    return [row]
+
+
+def _scores_of(population: pd.DataFrame, game_id: str) -> tuple[object, object]:
+    row = population.loc[population["game_id"] == game_id].iloc[0]
+    return row["home_score"], row["away_score"]
+
+
+def test_an_in_progress_game_with_a_score_is_not_recorded_as_a_result(tmp_path):
+    aroot = tmp_path / "artifacts"
+    ingest(
+        write_capture(
+            tmp_path / "q4",
+            games=_bal_at_ind(home_score=23, away_score=38, status="Q4 02:11", status_state="in_progress"),
+        ),
+        aroot,
+    )
+
+    population = gp26.read_durable_2026_population(aroot)[0]
+    home, away = _scores_of(population, "2026_01_BAL_IND")
+    assert pd.isna(home) and pd.isna(away), "a running scoreline is not an outcome"
+
+
+def test_an_in_progress_score_may_legitimately_advance_in_a_later_capture(tmp_path):
+    """The exact production sequence, end to end: the fourth-quarter capture
+    must not freeze 38-23, and the real final 41-23 must land cleanly."""
+    aroot = tmp_path / "artifacts"
+    ingest(
+        write_capture(
+            tmp_path / "q4",
+            games=_bal_at_ind(home_score=23, away_score=38, status="Q4 02:11", status_state="in_progress"),
+        ),
+        aroot,
+    )
+    # Baltimore kicks the field goal; a later capture sees a different score.
+    ingest(
+        write_capture(
+            tmp_path / "q4b",
+            games=_bal_at_ind(home_score=23, away_score=41, status="Q4 00:32", status_state="in_progress"),
+        ),
+        aroot,
+    )
+    ingest(
+        write_capture(
+            tmp_path / "final",
+            games=_bal_at_ind(home_score=23, away_score=41, status="Final", status_state="final"),
+        ),
+        aroot,
+    )
+
+    home, away = _scores_of(gp26.read_durable_2026_population(aroot)[0], "2026_01_BAL_IND")
+    assert (home, away) == (23.0, 41.0)
+
+
+def test_a_final_provider_state_makes_the_result_immutable(tmp_path):
+    """Once final, the result is durable: a later, less complete read can
+    never un-record it."""
+    aroot = tmp_path / "artifacts"
+    ingest(
+        write_capture(
+            tmp_path / "final",
+            games=_bal_at_ind(home_score=23, away_score=41, status="Final", status_state="final"),
+        ),
+        aroot,
+    )
+    ingest(
+        write_capture(
+            tmp_path / "blank",
+            games=_bal_at_ind(home_score=None, away_score=None, status="Scheduled", status_state="scheduled"),
+        ),
+        aroot,
+    )
+
+    home, away = _scores_of(gp26.read_durable_2026_population(aroot)[0], "2026_01_BAL_IND")
+    assert (home, away) == (23.0, 41.0)
+
+
+def test_a_conflicting_score_for_a_truly_final_game_still_fails_closed(tmp_path):
+    """The protection this defect was hiding behind must survive the fix: a
+    genuinely finalized result that later changes is still a hard stop."""
+    aroot = tmp_path / "artifacts"
+    ingest(
+        write_capture(
+            tmp_path / "final",
+            games=_bal_at_ind(home_score=23, away_score=41, status="Final", status_state="final"),
+        ),
+        aroot,
+    )
+
+    with pytest.raises(gp26.GamesPopulationConflict, match="recorded result"):
+        ingest(
+            write_capture(
+                tmp_path / "final2",
+                games=_bal_at_ind(home_score=23, away_score=44, status="Final", status_state="final"),
+            ),
+            aroot,
+        )
+    home, away = _scores_of(gp26.read_durable_2026_population(aroot)[0], "2026_01_BAL_IND")
+    assert (home, away) == (23.0, 41.0), "the stored result must be untouched by a rejected merge"
+
+
+@pytest.mark.parametrize(
+    "status_state",
+    ["scheduled", "in_progress", "postponed", "delayed", "suspended", "canceled", "abandoned", "unknown", None],
+)
+def test_only_a_final_provider_state_can_record_a_score(status_state):
+    """Every non-final lifecycle value, and a missing one, withholds the
+    score. Fail closed, never inferred from score presence."""
+    normalized = bdl_canonical.normalize_games(
+        _bal_at_ind(home_score=23, away_score=38, status="whatever", status_state=status_state),
+        season_type_hint="REG",
+    )
+    rows = gp26.canonical_games_to_population_rows(normalized)
+    assert pd.isna(rows.loc[0, "home_score"]) and pd.isna(rows.loc[0, "away_score"])
+
+
+def test_a_final_game_missing_one_score_is_not_a_result():
+    """can_update_score_state requires BOTH scores; half a scoreline is not
+    an outcome and must not become an immutable result."""
+    normalized = bdl_canonical.normalize_games(
+        _bal_at_ind(home_score=23, away_score=None, status="Final", status_state="final"),
+        season_type_hint="REG",
+    )
+    rows = gp26.canonical_games_to_population_rows(normalized)
+    assert pd.isna(rows.loc[0, "home_score"]) and pd.isna(rows.loc[0, "away_score"])
+
+
+def test_scheduled_and_future_games_are_unaffected(tmp_path):
+    """The fix must change nothing for games that have not started."""
+    aroot = tmp_path / "artifacts"
+    ingest(write_capture(tmp_path / "cap", games=week1_games()), aroot)
+
+    population = gp26.read_durable_2026_population(aroot)[0]
+    assert len(population) == 16
+    assert population["home_score"].isna().all()
+    assert population["away_score"].isna().all()
+
+
+def test_the_population_reuses_the_one_finality_rule_rather_than_restating_it():
+    """A structural guard, in the spirit of the module's existing
+    no-second-normalizer guard: finality must come from finality.py, so there
+    can never be two answers to "is this game over?"."""
+    import ast
+
+    source = (REPO_ROOT / "src/nfl_hybrid/data/games_population_2026.py").read_text()
+    assert "can_update_score_state" in source
+    # Check the CODE, not the prose: the module docstring legitimately
+    # describes the rule it defers to.
+    docstring = ast.get_docstring(ast.parse(source))
+    code = source.replace(docstring, "", 1) if docstring else source
+    for forbidden in ('status_state == "final"', "status_state == 'final'", "FINAL_STATUS_STATE ="):
+        assert forbidden not in code, "finality must not be re-implemented here"
+
+
+# ===========================================================================
+# 6c. Auditing and repairing a population that was already poisoned
+# ===========================================================================
+def _load_audit_tool():
+    import importlib.util
+
+    scripts_dir = str(REPO_ROOT / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    spec = importlib.util.spec_from_file_location(
+        "_population_finality_audit", REPO_ROOT / "scripts/audit_2026_games_population_finality.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _poisoned_estate(tmp_path) -> tuple[Path, Path]:
+    """Recreate the real production state: a population that already holds the
+    in-progress 38-23 as a result, and evidence carrying the true final 41-23.
+
+    The bad row is written directly, because the fixed code can no longer
+    produce it -- which is the point.
+    """
+    aroot = tmp_path / "artifacts"
+    droot = tmp_path / "data"
+
+    frozen = gp26.canonical_games_to_population_rows(
+        bdl_canonical.normalize_games(
+            _bal_at_ind(home_score=23, away_score=41, status="Final", status_state="final"),
+            season_type_hint="REG",
+        )
+    )
+    frozen.loc[0, "away_score"] = 38.0  # the intermediate scoreline, as stored
+    gp26.update_durable_2026_population(frozen, evidence=[], artifact_root_path=aroot)
+
+    season_type_dir = droot / "live-observation-log" / gp26_evidence_namespace() / "season=2026" / "season_type=REG"
+    write_capture(
+        season_type_dir,
+        games=_bal_at_ind(home_score=23, away_score=41, status="Final", status_state="final"),
+        horizon="GAMES_EVIDENCE",
+    )
+    return aroot, droot
+
+
+def gp26_evidence_namespace() -> str:
+    return "balldontlie-2026-games-evidence"
+
+
+def test_the_audit_names_every_prematurely_frozen_row(tmp_path):
+    aroot, droot = _poisoned_estate(tmp_path)
+    tool = _load_audit_tool()
+
+    population = gp26.read_durable_2026_population(aroot)[0]
+    truth = tool._evidence_truth(
+        tool.discover_latest_games_evidence(season=2026, data_root=droot), season=2026
+    )
+    findings = tool.audit(population, truth)
+
+    by_id = {f["game_id"]: f for f in findings}
+    assert by_id["2026_01_BAL_IND"]["verdict"] == tool.PREMATURELY_FROZEN_STALE
+    assert by_id["2026_01_BAL_IND"]["stored_away_score"] == 38.0
+    assert by_id["2026_01_BAL_IND"]["evidence_away_score"] == 41.0
+
+
+def test_the_audit_reports_every_row_rather_than_stopping_at_the_first(tmp_path):
+    """The merge fails closed on the first conflict; the audit must not, or it
+    could never establish the blast radius."""
+    aroot = tmp_path / "artifacts"
+    droot = tmp_path / "data"
+
+    final_games = week1_games(scored=True)
+    good = gp26.canonical_games_to_population_rows(
+        bdl_canonical.normalize_games(final_games, season_type_hint="REG")
+    )
+    # Three rows frozen at an earlier, lower scoreline.
+    poisoned = good.copy()
+    for position in range(3):
+        poisoned.loc[position, "away_score"] = 3.0
+    gp26.update_durable_2026_population(poisoned, evidence=[], artifact_root_path=aroot)
+
+    write_capture(
+        droot / "live-observation-log" / gp26_evidence_namespace() / "season=2026" / "season_type=REG",
+        games=final_games,
+        horizon="GAMES_EVIDENCE",
+    )
+
+    tool = _load_audit_tool()
+    findings = tool.audit(
+        gp26.read_durable_2026_population(aroot)[0],
+        tool._evidence_truth(tool.discover_latest_games_evidence(season=2026, data_root=droot), season=2026),
+    )
+
+    stale = [f for f in findings if f["verdict"] == tool.PREMATURELY_FROZEN_STALE]
+    assert len(findings) == 16, "every row must be classified"
+    assert len(stale) == 3, "all three defects must be reported, not just the first"
+    assert len([f for f in findings if f["verdict"] == tool.OK_FINAL]) == 13
+
+
+def test_the_audit_is_read_only(tmp_path):
+    aroot, droot = _poisoned_estate(tmp_path)
+    tool = _load_audit_tool()
+
+    before = {p: p.read_bytes() for p in sorted(aroot.rglob("*")) if p.is_file()}
+    exit_code = tool.main(["--data-root", str(droot), "--artifact-root", str(aroot)])
+    after = {p: p.read_bytes() for p in sorted(aroot.rglob("*")) if p.is_file()}
+
+    assert exit_code == 3, "a defective population must not report success"
+    assert before == after, "the audit must not modify anything"
+
+
+def test_repair_rebuilds_the_population_and_records_the_rejected_value(tmp_path):
+    aroot, droot = _poisoned_estate(tmp_path)
+    tool = _load_audit_tool()
+
+    assert tool.main(["--repair", "--confirm", "--data-root", str(droot), "--artifact-root", str(aroot)]) == 0
+
+    repaired = gp26.read_durable_2026_population(aroot)[0]
+    home, away = _scores_of(repaired, "2026_01_BAL_IND")
+    assert (home, away) == (23.0, 41.0)
+
+    provenance = json.loads((gp26.population_dir(aroot) / "canonical_games_2026.repair.json").read_text())
+    corrected = {c["game_id"]: c for c in provenance["corrected_cells"]}["2026_01_BAL_IND"]
+    assert corrected["rejected_away_score"] == 38.0
+    assert corrected["corrected_away_score"] == 41.0
+    assert Path(provenance["superseded_population_parquet"]).is_file()
+
+    # And the repaired population is clean on a re-audit.
+    assert tool.main(["--data-root", str(droot), "--artifact-root", str(aroot)]) == 0
+
+
+def test_repair_refuses_without_explicit_confirmation(tmp_path):
+    aroot, droot = _poisoned_estate(tmp_path)
+    tool = _load_audit_tool()
+
+    before = {p: p.read_bytes() for p in sorted(aroot.rglob("*")) if p.is_file()}
+    assert tool.main(["--repair", "--data-root", str(droot), "--artifact-root", str(aroot)]) == 2
+    assert {p: p.read_bytes() for p in sorted(aroot.rglob("*")) if p.is_file()} == before
+
+
+def test_a_clean_population_audits_clean(tmp_path):
+    aroot = tmp_path / "artifacts"
+    droot = tmp_path / "data"
+    final_games = week1_games(scored=True)
+    gp26.update_durable_2026_population(
+        gp26.canonical_games_to_population_rows(
+            bdl_canonical.normalize_games(final_games, season_type_hint="REG")
+        ),
+        evidence=[],
+        artifact_root_path=aroot,
+    )
+    write_capture(
+        droot / "live-observation-log" / gp26_evidence_namespace() / "season=2026" / "season_type=REG",
+        games=final_games,
+        horizon="GAMES_EVIDENCE",
+    )
+
+    tool = _load_audit_tool()
+    assert tool.main(["--data-root", str(droot), "--artifact-root", str(aroot)]) == 0
 
 
 def test_2026_evidence_claiming_a_historical_game_id_fails_closed(tmp_path, monkeypatch):
