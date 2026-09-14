@@ -52,7 +52,9 @@ def _game_row(bdl_id: int, home_id: int, away_id: int, *, season: int = 2026, we
         "home_team_score": None,
         "visitor_team_score": None,
         "status": "Scheduled",
-        "status_state": "pre",
+        # The live-verified BDL lifecycle value (client.KNOWN_STATUS_STATES),
+        # not an invented one -- finality is decided from this field.
+        "status_state": "scheduled",
     }
 
 
