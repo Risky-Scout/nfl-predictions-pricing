@@ -652,9 +652,21 @@ def attach_expanding_oof_uncertainty(
     # when that residual actually becomes available -- never by
     # target_cutoff_utc / processing order. A game predicted "later" can
     # still resolve earlier than one predicted "earlier", and vice versa.
-    oof = ordered[ordered["status"] == "OOF"].sort_values(
-        "result_available_at_utc", kind="stable"
-    )
+    #
+    # ``status == "OOF"`` means a forecast was produced, which is NOT the same
+    # as the outcome being known: an unplayed game is a legitimate prediction
+    # target, so it carries a forecast and a NaN residual. Its projected
+    # ``result_available_at_utc`` can precede a later card's cutoff, and an
+    # unfiltered pool would then admit that NaN and turn every subsequent SD
+    # and correlation into NaN -- silently, since np.std propagates rather
+    # than raising. A residual only joins the pool once it actually exists.
+    # On a fully resolved estate every OOF residual is finite, so this filter
+    # removes nothing and the certified 2020-2025 results are unchanged.
+    oof = ordered[ordered["status"] == "OOF"]
+    oof = oof[
+        np.isfinite(oof["margin_residual"].to_numpy(dtype=float))
+        & np.isfinite(oof["total_residual"].to_numpy(dtype=float))
+    ].sort_values("result_available_at_utc", kind="stable")
     timeline_available = pd.to_datetime(
         oof["result_available_at_utc"], utc=True
     ).to_numpy()
@@ -710,6 +722,13 @@ def production_uncertainty(
     if as_of.tzinfo is None:
         as_of = as_of.tz_localize("UTC")
     eligible = ledger[(ledger["status"] == "OOF") & (ledger["result_available_at_utc"] < as_of)]
+    # Same reason as in attach_expanding_oof_uncertainty: a forecast having
+    # been produced does not mean the outcome is known. A no-op on a fully
+    # resolved estate.
+    eligible = eligible[
+        np.isfinite(eligible["margin_residual"].to_numpy(dtype=float))
+        & np.isfinite(eligible["total_residual"].to_numpy(dtype=float))
+    ]
     if len(eligible) < min_uncertainty_warmup:
         return {
             "status": "INSUFFICIENT_WARMUP",

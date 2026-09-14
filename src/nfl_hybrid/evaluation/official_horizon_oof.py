@@ -208,6 +208,26 @@ def generate_official_horizon_oof_predictions(
     target_cutoff = pd.to_datetime(frame["target_cutoff_utc"], utc=True, errors="raise")
     result_available = pd.to_datetime(frame["result_available_at_utc"], utc=True, errors="raise")
 
+    # A training row needs BOTH a resolution time strictly before the target
+    # cutoff AND an actually observed outcome. Those are different facts, and
+    # the composite 2026 population is the first estate where they diverge:
+    # a scheduled-but-unplayed game has a projected
+    # ``result_available_at_utc`` (kickoff + the frozen settlement offset)
+    # that can precede a later card's cutoff while its score is still absent,
+    # so a purely temporal mask hands NaN labels to Ridge.
+    #
+    # Requiring BOTH targets keeps the paired margin/total fits on identical
+    # membership, which is what the single recorded
+    # ``training_membership_hash`` describes. Outcomes are never imputed,
+    # fabricated or forward-filled: an unresolved game simply does not vote
+    # until it has resolved, and it remains a prediction TARGET throughout.
+    # On a fully resolved estate every row is labelled, so this mask is
+    # identical to the purely temporal one and the certified 2020-2025
+    # results are unchanged.
+    labeled = np.isfinite(frame["home_margin"].to_numpy(dtype=float)) & np.isfinite(
+        frame["total_points"].to_numpy(dtype=float)
+    )
+
     batches: dict[pd.Timestamp, list[int]] = {}
     for i in range(len(frame)):
         batches.setdefault(target_cutoff.iloc[i], []).append(i)
@@ -216,7 +236,7 @@ def generate_official_horizon_oof_predictions(
     paired_fits = 0
     individual_fits = 0
     for cutoff_i, positions in sorted(batches.items(), key=lambda kv: kv[0]):
-        train_mask = (result_available < cutoff_i).to_numpy()
+        train_mask = (result_available < cutoff_i).to_numpy() & labeled
         train_ids = frame.loc[train_mask, "game_id"].tolist()
         training_count = len(train_ids)
         max_training_result_available = result_available.loc[train_mask].max() if training_count else pd.NaT
@@ -243,6 +263,14 @@ def generate_official_horizon_oof_predictions(
             x_train = frame.loc[train_mask, feature_columns].to_numpy(dtype=float)
             y_margin = frame.loc[train_mask, "home_margin"].to_numpy(dtype=float)
             y_total = frame.loc[train_mask, "total_points"].to_numpy(dtype=float)
+            # Defence in depth: fail here, naming the horizon and cutoff,
+            # rather than inside sklearn with no context.
+            if not (np.isfinite(y_margin).all() and np.isfinite(y_total).all()):
+                raise ValueError(
+                    f"{horizon} cutoff {cutoff_i}: {int((~np.isfinite(y_margin)).sum())} margin and "
+                    f"{int((~np.isfinite(y_total)).sum())} total training labels are not finite. A "
+                    "training row must have an observed outcome; outcomes are never imputed."
+                )
             x_target = frame.iloc[positions][feature_columns].to_numpy(dtype=float)
             with threadpool_limits(limits=1):
                 margin_pipe = _build_ridge_pipeline().fit(x_train, y_margin)

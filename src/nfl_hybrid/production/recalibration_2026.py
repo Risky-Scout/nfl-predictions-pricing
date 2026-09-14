@@ -402,9 +402,19 @@ def _stream_calibration_state(
     either family, its config, or the labelled-sample floor is re-decided
     here.
     """
+    if "outcome_resolved" not in raw.columns:
+        raise RecalibrationError(
+            "raw probability frame is missing 'outcome_resolved'; without it an unplayed game "
+            "cannot be told apart from a real push and would be fitted as an observed outcome"
+        )
     ready_mask = (raw["raw_status"] == "RAW_READY").to_numpy()
+    # Only a game that has actually been played can contribute an observed
+    # label to either fit. An unplayed game is legitimately RAW_READY -- it is
+    # what the forward card prices -- so readiness alone is not evidence.
+    resolved_mask = raw["outcome_resolved"].fillna(False).astype(bool).to_numpy()
+    fitting_mask = ready_mask & resolved_mask
     binary_numeric = pd.to_numeric(raw["binary_target"], errors="coerce").to_numpy(float)
-    labeled_mask = ready_mask & np.isfinite(binary_numeric)
+    labeled_mask = fitting_mask & np.isfinite(binary_numeric)
     n_labeled = int(labeled_mask.sum())
     conditional_upper = raw["raw_conditional_upper_probability"].to_numpy(dtype=float)
 
@@ -428,24 +438,30 @@ def _stream_calibration_state(
         }
 
     legacy_market = _LEGACY_PUSH_MARKET_NAME[market]
-    actual_push = (ready_mask & ~np.isfinite(binary_numeric)).astype(int)
+    # A resolved row whose binary target is null landed exactly on the line:
+    # a real push. An unresolved row is excluded from the fit entirely rather
+    # than relabelled a non-push, since "not yet known" is not an observation
+    # of either class.
+    actual_push = (fitting_mask & ~np.isfinite(binary_numeric)).astype(int)
     model_push = pd.to_numeric(raw["raw_push_probability"], errors="coerce").to_numpy(float)
     push_state = None
-    if ready_mask.any():
+    if fitting_mask.any():
         push_train = pd.DataFrame(
             {
-                "model_push_probability": model_push[ready_mask],
-                "actual_push": actual_push[ready_mask],
-                "market_line": np.asarray(threshold, dtype=float)[ready_mask],
+                "model_push_probability": model_push[fitting_mask],
+                "actual_push": actual_push[fitting_mask],
+                "market_line": np.asarray(threshold, dtype=float)[fitting_mask],
             }
         )
         global_scale, bucket_scales = _fit_push_scales(push_train, legacy_market, push_config)
         push_state = {"global_scale": global_scale, "bucket_scales": bucket_scales}
 
-    training_game_ids = sorted(str(g) for g in raw.loc[ready_mask, "game_id"])
+    # Describes the rows actually fitted, never scheduled rows that merely
+    # passed the readiness gate.
+    training_game_ids = sorted(str(g) for g in raw.loc[fitting_mask, "game_id"])
     max_result_available = (
-        pd.to_datetime(raw.loc[ready_mask, "result_available_at_utc"], utc=True).max()
-        if ready_mask.any() and "result_available_at_utc" in raw.columns
+        pd.to_datetime(raw.loc[fitting_mask, "result_available_at_utc"], utc=True).max()
+        if fitting_mask.any() and "result_available_at_utc" in raw.columns
         else None
     )
 

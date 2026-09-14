@@ -55,6 +55,7 @@ def _raw_frame(
     status_overrides: dict[int, str] | None = None,
     model_config_hash_overrides: dict[int, str] | None = None,
     forecast_horizon_overrides: dict[int, str] | None = None,
+    outcome_resolved_overrides: dict[int, bool] | None = None,
     single_cutoff: bool = False,
 ) -> pd.DataFrame:
     if single_cutoff:
@@ -93,6 +94,10 @@ def _raw_frame(
             "raw_away_probability": raw_away,
             "raw_conditional_upper_probability": cond,
             "binary_target": binary_target,
+            # Every synthetic row here is a played game, which is what the
+            # certified estate looks like. Override it to model a scheduled,
+            # unplayed game.
+            "outcome_resolved": True,
             "raw_status": "RAW_READY",
         }
     )
@@ -106,6 +111,8 @@ def _raw_frame(
         frame.loc[idx, "model_config_hash"] = v
     for idx, v in (forecast_horizon_overrides or {}).items():
         frame.loc[idx, "forecast_horizon"] = v
+    for idx, v in (outcome_resolved_overrides or {}).items():
+        frame.loc[idx, "outcome_resolved"] = v
     return frame
 
 
@@ -842,6 +849,126 @@ def test_push_calibration_membership_matches_conditional_when_no_actual_pushes()
 
     calibrated = pushed[pushed["push_calibration_policy"] == calib.PUSH_CALIBRATION_POLICY_CHRONOLOGICAL]
     assert (calibrated["push_calibration_membership_count"] == calibrated["calibration_sample_count"]).all()
+
+
+# ---------------------------------------------------------------------------
+# Regression: an UNPLAYED game must never be fitted as an observed push.
+#
+# binary_target is null for two unrelated reasons -- a resolved game that
+# landed exactly on the line (a real push) and a game that has not been played
+# at all. The composite 2026 population contains the second kind, and push
+# fitting previously read every null as a push, inventing outcomes.
+# ---------------------------------------------------------------------------
+def test_build_raw_probabilities_marks_unplayed_games_unresolved():
+    """The flag must be derived from whether the outcome exists, and must not
+    be confused with a real push."""
+    ledger = _fix3_shaped_residual_ledger(n=6)
+    ledger = ledger.reset_index(drop=True).copy()
+    # Row 0 is a genuine push (lands exactly on the line); row 1 is unplayed.
+    ledger.loc[0, "actual_margin"] = 3.0
+    ledger.loc[1, "actual_margin"] = np.nan
+
+    raw = calib.build_raw_probabilities(
+        ledger, market=calib.MARKET_ATS, forecast_horizon="kickoff_minus_10_minutes", threshold=-3.0
+    )
+
+    assert bool(raw.loc[0, "outcome_resolved"]) is True
+    assert pd.isna(raw.loc[0, "binary_target"])  # a real push
+    assert bool(raw.loc[1, "outcome_resolved"]) is False
+    assert pd.isna(raw.loc[1, "binary_target"])  # unplayed, not a push
+
+
+def test_an_unplayed_game_is_never_fitted_as_an_observed_push():
+    """The push-fit training membership must shrink by exactly the number of
+    unplayed rows -- they are excluded, not relabelled as non-pushes."""
+    from nfl_hybrid.evaluation.chronological_calibration import calibrate_chronological_push_probability
+
+    market_line = pd.Series([-3.0] * N_SYNTHETIC)
+    baseline_raw = _raw_frame()
+    baseline = calibrate_chronological_push_probability(
+        baseline_raw,
+        generate_chronological_calibration(baseline_raw, config=CFG),
+        market=calib.MARKET_ATS,
+        market_line=market_line,
+    )
+
+    # The same estate, except three early rows have not been played yet: no
+    # outcome, therefore a null binary_target.
+    unplayed = {0: False, 1: False, 2: False}
+    raw = _raw_frame(
+        outcome_resolved_overrides=unplayed,
+        binary_overrides={i: pd.NA for i in unplayed},
+    )
+    pushed = calibrate_chronological_push_probability(
+        raw,
+        generate_chronological_calibration(raw, config=CFG),
+        market=calib.MARKET_ATS,
+        market_line=market_line,
+    )
+
+    calibrated = pushed[pushed["push_calibration_policy"] == calib.PUSH_CALIBRATION_POLICY_CHRONOLOGICAL]
+    assert len(calibrated) > 0
+    base_counts = baseline.set_index("game_id")["push_calibration_membership_count"]
+    new_counts = calibrated.set_index("game_id")["push_calibration_membership_count"]
+    # Every one of the three unplayed rows resolves before these later
+    # cutoffs, so all three would have been swept into the old fit.
+    assert (base_counts.reindex(new_counts.index) - new_counts == len(unplayed)).all()
+
+
+def test_unplayed_rows_are_still_priced_and_push_calibrated():
+    """Excluding them from the FIT must not stop them being forecast targets --
+    pricing an unplayed game is the entire purpose of a forward card."""
+    from nfl_hybrid.evaluation.chronological_calibration import calibrate_chronological_push_probability
+
+    # Unplayed rows placed at the END, where enough prior history exists for
+    # them to actually be calibrated.
+    unplayed = {N_SYNTHETIC - 1: False, N_SYNTHETIC - 2: False}
+    raw = _raw_frame(
+        outcome_resolved_overrides=unplayed,
+        binary_overrides={i: pd.NA for i in unplayed},
+    )
+    ledger = generate_chronological_calibration(raw, config=CFG)
+    pushed = calibrate_chronological_push_probability(
+        raw, ledger, market=calib.MARKET_ATS, market_line=pd.Series([-3.0] * N_SYNTHETIC)
+    )
+
+    tail = pushed[pushed["game_id"].isin(raw.loc[list(unplayed), "game_id"])]
+    assert len(tail) == len(unplayed)
+    assert (tail["calibration_status"] == "CALIBRATED").all()
+    total = (
+        tail["calibrated_home_probability"]
+        + tail["calibrated_push_probability"]
+        + tail["calibrated_away_probability"]
+    )
+    assert np.allclose(total.to_numpy(dtype=float), 1.0, atol=1e-9)
+
+
+def test_a_real_push_still_counts_as_an_observed_push():
+    """The other half of the contract: the guard must not discard genuine
+    pushes, which are exactly what the push scales exist to model."""
+    from nfl_hybrid.evaluation.chronological_calibration import calibrate_chronological_push_probability
+
+    market_line = pd.Series([-3.0] * N_SYNTHETIC)
+    baseline_raw = _raw_frame()
+    baseline = calibrate_chronological_push_probability(
+        baseline_raw,
+        generate_chronological_calibration(baseline_raw, config=CFG),
+        market=calib.MARKET_ATS,
+        market_line=market_line,
+    )
+    # Resolved rows that landed on the line: null binary_target, still played.
+    raw = _raw_frame(binary_overrides={0: pd.NA, 1: pd.NA, 2: pd.NA})
+    pushed = calibrate_chronological_push_probability(
+        raw,
+        generate_chronological_calibration(raw, config=CFG),
+        market=calib.MARKET_ATS,
+        market_line=market_line,
+    )
+
+    calibrated = pushed[pushed["push_calibration_policy"] == calib.PUSH_CALIBRATION_POLICY_CHRONOLOGICAL]
+    base_counts = baseline.set_index("game_id")["push_calibration_membership_count"]
+    new_counts = calibrated.set_index("game_id")["push_calibration_membership_count"]
+    assert (base_counts.reindex(new_counts.index) == new_counts).all()
 
 
 def test_push_calibration_never_touches_uncalibrated_rows():
