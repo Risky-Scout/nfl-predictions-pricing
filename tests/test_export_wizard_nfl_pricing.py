@@ -467,7 +467,23 @@ def test_generated_at_utc_comes_from_run_created_at_utc(tmp_path):
 
 
 @pytest.mark.parametrize("bad_value", [None, "", "not-a-timestamp", "2026-09-08T15:30:00"])
-def test_invalid_run_created_at_utc_fails_closed(tmp_path, bad_value):
+def test_invalid_run_created_at_utc_on_the_forecasts_fails_closed(tmp_path, bad_value):
+    """The card's creation instant now comes from the immutable forecasts, so
+    that is where an unusable value must fail closed. A naive (offsetless)
+    timestamp is rejected alongside outright garbage."""
+    forecast_dir = tmp_path / "forecast-ledger" / "TUE"
+    record = _forecast_record(game_id="G1")
+    record["run_created_at_utc"] = bad_value
+    _write_record(forecast_dir, record)
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[record]))
+    with pytest.raises(exp.WizardExportError):
+        _card(manifest_path, forecast_dir)
+
+
+@pytest.mark.parametrize("bad_value", [None, ""])
+def test_a_manifest_without_a_usable_run_created_at_utc_still_fails_closed(tmp_path, bad_value):
+    """load_run_manifest's own contract is unchanged: the field must still be
+    present and non-empty even though the card no longer reads its value."""
     manifest_path, forecast_dir, _ = _single_game_card(tmp_path)
     manifest = json.loads(manifest_path.read_text())
     manifest["run_created_at_utc"] = bad_value
@@ -1005,29 +1021,31 @@ def test_predicted_home_margin_stays_signed_from_home_perspective(tmp_path):
 # 26-30: run-integrity fail-closed cases
 # --------------------------------------------------------------------------- #
 def test_duplicate_game_id_fails_closed(tmp_path):
+    """Two files claiming the SAME game in the SAME card is ambiguous: the
+    ledger's own path scheme cannot produce it, so a copied or renamed file is
+    the only way to get here and the exporter must refuse to guess."""
     forecast_dir = tmp_path / "forecast-ledger" / "TUE"
-    g1 = _forecast_record(game_id="G1", target_cutoff_utc=DEFAULT_CUTOFF)
-    g1_dup = _forecast_record(game_id="G1", target_cutoff_utc="2026-09-08T16:05:00+00:00")
+    g1 = _forecast_record(game_id="G1")
     _write_record(forecast_dir, g1)
-    _write_record(forecast_dir, g1_dup)
-    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[g1, g1_dup], game_count=2))
+    forecast_dir.joinpath("G1__copied-under-another-name.json").write_text(
+        json.dumps(g1, indent=2, sort_keys=True)
+    )
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[g1, g1], game_count=2))
     with pytest.raises(exp.WizardExportError, match="duplicate"):
         _card(manifest_path, forecast_dir)
 
 
-def test_mixed_run_id_fails_closed(tmp_path):
-    """A foreign run's forecast is never mixed into this run's card, so the
-    manifest's declared game_count cannot be satisfied -- FAIL CLOSED."""
+def test_another_cards_forecast_for_the_same_game_is_excluded_not_duplicated(tmp_path):
+    """The same game at a DIFFERENT cutoff is a different forecast of record,
+    not a duplicate -- it belongs to another card and is simply excluded."""
     forecast_dir = tmp_path / "forecast-ledger" / "TUE"
-    ours = _forecast_record(game_id="G1", run_id=DEFAULT_RUN_ID)
-    foreign = _forecast_record(game_id="G2", run_id="some-other-run-id")
+    ours = _forecast_record(game_id="G1", target_cutoff_utc=DEFAULT_CUTOFF)
+    other_card = _forecast_record(game_id="G1", target_cutoff_utc="2026-09-15T16:00:00+00:00")
     _write_record(forecast_dir, ours)
-    _write_record(forecast_dir, foreign)
-    manifest_path = _write_manifest(
-        tmp_path / "run-manifests", _manifest(records=[ours, foreign], game_count=2),
-    )
-    with pytest.raises(exp.WizardExportError, match="game_count"):
-        _card(manifest_path, forecast_dir)
+    _write_record(forecast_dir, other_card)
+    manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[ours]))
+    card = _card(manifest_path, forecast_dir)
+    assert [game["game_id"] for game in card["games"]] == ["G1"]
 
 
 def test_mixed_run_created_at_utc_within_one_run_fails_closed(tmp_path):
@@ -1064,13 +1082,16 @@ def test_mixed_week_fails_closed(tmp_path):
 
 
 def test_mixed_horizon_fails_closed(tmp_path):
+    """A FRI forecast can never be published on a TUE card. It is excluded as
+    another card's evidence, so the TUE card is left short of its declared
+    game_count and fails closed rather than publishing a mixed board."""
     forecast_dir = tmp_path / "forecast-ledger" / "TUE"
     g1 = _forecast_record(game_id="G1", horizon="TUE")
     g2 = _forecast_record(game_id="G2", horizon="FRI")
     _write_record(forecast_dir, g1)
     _write_record(forecast_dir, g2)
     manifest_path = _write_manifest(tmp_path / "run-manifests", _manifest(records=[g1, g2], horizon="TUE"))
-    with pytest.raises(exp.WizardExportError, match="horizon"):
+    with pytest.raises(exp.WizardExportError, match="game_count"):
         _card(manifest_path, forecast_dir)
 
 
