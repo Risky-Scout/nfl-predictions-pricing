@@ -7,6 +7,13 @@ EXPLICIT forecast-ledger horizon directory it produced -- and writes the
 public ``wizard-nfl-pricing-v2`` JSON contract consumed by the NFL Predictive
 Pricing page.
 
+The manifest names WHICH CARD to publish -- its ``(horizon,
+target_cutoff_utc)`` -- and declares the game count and forecast batch hash
+that card must reconcile against. It is not required to be the manifest of the
+run that first wrote the forecasts: the ledger is immutable, so an identical
+replay legitimately produces a new manifest over unchanged rows. See the
+selection section below.
+
 This script does NOT generate predictions, fit any model, compute or alter a
 predicted margin/total, calibrate anything, capture BallDontLie data, read
 prospective QB-shadow data, reconstruct a certified market, call any external
@@ -43,10 +50,14 @@ Frozen source field mapping (do not rediscover):
     public season                  <- prediction.season
     public week                    <- prediction.week
     public horizon                 <- top-level horizon
-    public generated_at_utc        <- run_created_at_utc (the ONE authoritative
-                                      shared run-creation timestamp; never
-                                      created_at_utc, mtime, target_cutoff_utc,
-                                      or the export's own clock)
+    public generated_at_utc        <- the selected forecasts' shared
+                                      run_created_at_utc (the ONE authoritative
+                                      card-creation timestamp, read from the
+                                      immutable rows rather than the manifest
+                                      so a replay reproduces identical bytes;
+                                      never created_at_utc, mtime,
+                                      target_cutoff_utc, or the export's own
+                                      clock)
 
 Publication gate. A game is priced only when its point forecast is genuinely
 a forecast and both certified markets are genuinely certified:
@@ -152,7 +163,7 @@ _validate_team = _v1._validate_team
 _validate_numeric = _v1._validate_numeric
 
 load_run_manifest = _v1.load_run_manifest
-select_run_forecasts = _v1.select_run_forecasts
+_load_forecast_records = _v1._load_forecast_records
 serialize_card = _v1.serialize_card
 archive_path = _v1.archive_path
 write_archive = _v1.write_archive
@@ -375,13 +386,161 @@ def _build_public_game(record: dict) -> tuple[datetime, dict]:
 
 
 # --------------------------------------------------------------------------- #
-# card assembly -- identical run-integrity discipline to v1: the manifest's
-# own run_id selects the forecasts, per-record prediction_hash is re-verified,
-# the batch hash must reproduce the manifest's declared value, and mixed
-# season/week/horizon/run_created_at_utc or a duplicate game_id fails closed.
+# forecast selection -- BY CARD IDENTITY, NOT BY RUN IDENTITY.
+#
+# WHY NOT run_id. The forecast ledger is immutable and first-write-wins, so an
+# identical replay is an IDEMPOTENT_NOOP: the rows keep the run_id of the run
+# that first wrote them, while every later invocation mints a fresh run_id
+# (``make_run_id`` appends a uuid4 fragment). Selecting on
+# ``record["run_id"] == manifest["run_id"]`` therefore matched ZERO rows on any
+# replay and reported the card as partial -- the exact production failure
+#
+#     selected 0 forecast record(s) for run '...__TUE__30b2bf7b'
+#     but the run manifest declares game_count=16
+#
+# even though all sixteen immutable forecasts were present and correct. The
+# run_id is a transient property of an execution, not of the forecast of
+# record, so requiring it inside immutable rows is unsound. Rewriting those
+# rows to carry a newer run_id would destroy the immutability guarantee that
+# makes them evidence, so it is never done.
+#
+# WHAT IDENTIFIES A CARD INSTEAD. A certified card is exactly the set of
+# forecasts for one ``(horizon, target_cutoff_utc)``: that pair is the
+# forecast-of-record identity the production writer keys the ledger path on
+# (``_identity_path`` -> ``<horizon>/<game_id>__<cutoff>.json``), so it cannot
+# drift from the rows it selects. Membership is then proved CRYPTOGRAPHICALLY
+# rather than by trusting a label: every record's own prediction_hash is
+# recomputed from its payload, and the batch hash recomputed from those
+# hashes must reproduce the value the manifest declared. That is strictly
+# stronger than the run_id filter it replaces -- a run_id is a string a file
+# can simply claim, whereas the batch hash cannot be satisfied by any set of
+# rows other than the exact set the run recorded.
+#
+# Selection is still confined to the explicit --forecast-dir, still has no
+# "find latest" behaviour, and still fails closed on a missing row, an extra
+# row, a mixed cutoff, a mixed horizon, an ambiguous or unidentifiable record,
+# a duplicate game, a tampered payload and a batch-hash mismatch.
+# --------------------------------------------------------------------------- #
+def _manifest_card_cutoff(manifest: dict) -> datetime:
+    raw = manifest.get("target_cutoff_utc")
+    if not isinstance(raw, str) or not raw:
+        _fail(
+            "run manifest has no target_cutoff_utc -- the certified card cutoff IS the forecast "
+            "identity this exporter selects on and is never inferred, defaulted or guessed"
+        )
+    return _parse_utc_instant(raw, field_name="run manifest target_cutoff_utc")
+
+
+def _record_card_identity(path: Path, record: dict) -> tuple[Any, datetime]:
+    """One record's own ``(horizon, target_cutoff_utc)`` identity.
+
+    A record that cannot state its identity FAILS CLOSED rather than being
+    skipped: an unidentifiable row cannot be proved to belong to another card,
+    so silently excluding it could publish a card that is quietly missing a
+    game while the count still appeared to reconcile.
+    """
+    raw = record.get("target_cutoff_utc")
+    if not isinstance(raw, str) or not raw:
+        _fail(
+            f"{path}: forecast record has no target_cutoff_utc -- an unidentifiable forecast "
+            "cannot be proved to belong to another card and is never silently excluded"
+        )
+    cutoff = _parse_utc_instant(raw, field_name=f"{path}: target_cutoff_utc")
+
+    # The top-level identity selection reads is NOT covered by prediction_hash,
+    # while the copy inside the hashed payload is. Requiring the two to agree
+    # closes the gap between what selection matched and what integrity signed.
+    prediction = record.get("prediction")
+    if not isinstance(prediction, dict):
+        _fail(f"{path}: forecast record has no prediction payload")
+    if prediction.get("horizon") != record.get("horizon"):
+        _fail(
+            f"{path}: top-level horizon {record.get('horizon')!r} disagrees with the signed payload's "
+            f"horizon {prediction.get('horizon')!r} -- ambiguous forecast identity"
+        )
+    payload_raw = prediction.get("target_cutoff_utc")
+    if not isinstance(payload_raw, str) or not payload_raw:
+        _fail(f"{path}: signed prediction payload has no target_cutoff_utc")
+    if _parse_utc_instant(payload_raw, field_name=f"{path}: prediction.target_cutoff_utc") != cutoff:
+        _fail(
+            f"{path}: top-level target_cutoff_utc {raw!r} disagrees with the signed payload's "
+            f"{payload_raw!r} -- ambiguous forecast identity"
+        )
+    return record.get("horizon"), cutoff
+
+
+def select_card_forecasts(manifest: dict, forecast_dir: Path) -> list[dict]:
+    """Every forecast of record for the manifest's certified card.
+
+    Selected by card identity; membership then proved against the manifest's
+    declared game count and forecast batch hash. A record belonging to another
+    card is excluded (the ledger legitimately accumulates every week's
+    evidence); a record that contradicts itself, duplicates a game, fails its
+    own hash or breaks the declared batch hash fails the export closed.
+    """
+    horizon = manifest["horizon"]
+    cutoff = _manifest_card_cutoff(manifest)
+
+    selected: list[dict] = []
+    seen_game_ids: set[str] = set()
+    for path, record in _load_forecast_records(forecast_dir):
+        record_horizon, record_cutoff = _record_card_identity(path, record)
+        if record_horizon != horizon or record_cutoff != cutoff:
+            continue  # another card's evidence -- excluded, never mixed in
+
+        game_id = record.get("game_id")
+        if not isinstance(game_id, str) or not game_id:
+            _fail(f"{path}: missing/empty top-level game_id")
+        if game_id in seen_game_ids:
+            _fail(
+                f"duplicate game_id {game_id!r} within the {horizon} card at {manifest['target_cutoff_utc']} "
+                "-- ambiguous forecast of record"
+            )
+        seen_game_ids.add(game_id)
+        selected.append(record)
+
+    expected_count = manifest["game_count"]
+    if len(selected) != expected_count:
+        _fail(
+            f"selected {len(selected)} forecast record(s) for the {horizon} card at "
+            f"{manifest['target_cutoff_utc']} but the run manifest declares game_count={expected_count} "
+            "-- refusing to publish a partial or over-selected card"
+        )
+    return selected
+
+
+def _card_generated_at_utc(selected: list[dict]) -> str:
+    """When this card's forecasts were CREATED, taken from the immutable rows.
+
+    Not from the manifest: a replay mints a new manifest with a new
+    ``run_created_at_utc``, so reading it there would make the same card
+    serialize to different bytes on every re-export and collide with its own
+    immutable archive. The rows carry the creation instant of the run that
+    actually produced them, which is both the authoritative answer and stable
+    across replays. One card has exactly one such instant; more than one means
+    rows from different runs were mixed, which fails closed.
+    """
+    stamps = {record.get("run_created_at_utc") for record in selected}
+    if len(stamps) > 1:
+        _fail(
+            "mixed run_created_at_utc across the selected forecasts "
+            f"({sorted(map(str, stamps))}) -- refusing to publish a card assembled from different runs"
+        )
+    stamp = stamps.pop()
+    if not isinstance(stamp, str) or not stamp:
+        _fail("selected forecasts carry no run_created_at_utc -- card creation instant cannot be established")
+    return _format_utc_z(_parse_utc_instant(stamp, field_name="run_created_at_utc"))
+
+
+# --------------------------------------------------------------------------- #
+# card assembly -- the same integrity discipline v1 froze, with selection
+# keyed to the card rather than to one execution of it: per-record
+# prediction_hash is re-verified, the batch hash must reproduce the manifest's
+# declared value, and mixed season/week/cutoff/horizon/run_created_at_utc or a
+# duplicate game_id fails closed.
 # --------------------------------------------------------------------------- #
 def build_public_card(manifest: dict, forecast_dir: Path) -> dict:
-    selected = select_run_forecasts(manifest, forecast_dir)
+    selected = select_card_forecasts(manifest, forecast_dir)
     if not selected:
         _fail(
             f"run {manifest['run_id']!r} status=SUCCESS but selected zero forecasts -- "
@@ -426,9 +585,7 @@ def build_public_card(manifest: dict, forecast_dir: Path) -> dict:
     dated_games.sort(key=lambda pair: (pair[0], pair[1]["game_id"]))
     games = [game for _, game in dated_games]
 
-    generated_at_utc = _format_utc_z(
-        _parse_utc_instant(manifest["run_created_at_utc"], field_name="run_created_at_utc"),
-    )
+    generated_at_utc = _card_generated_at_utc(selected)
 
     card = {
         "schema_version": SCHEMA_VERSION,
