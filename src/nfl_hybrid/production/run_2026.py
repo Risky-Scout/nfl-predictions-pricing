@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from hashlib import sha256
@@ -138,14 +139,50 @@ def _as_utc(ts: pd.Timestamp | str) -> pd.Timestamp:
     return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
 
 
+# Production deploys source with ``git archive``, so the installed tree has no
+# ``.git`` at all. ``ops/wizard/bootstrap_nfl_production.sh`` records the exact
+# triggering commit here instead, and refuses to install an archive without
+# one -- so on Wizard this file IS the provenance, not a hint about it.
+DEPLOYED_COMMIT_FILENAME = ".deployed_commit"
+
+_FULL_GIT_SHA = re.compile(r"\A[0-9a-fA-F]{40}\Z")
+
+
+def _deployed_commit(repo_root: Path = REPO_ROOT) -> str | None:
+    """The commit recorded by an archive deployment, or ``None``.
+
+    Validated strictly as a full 40-character hexadecimal SHA: a missing,
+    empty, truncated or otherwise malformed value is not provenance, and is
+    reported as unavailable so preflight still fails closed. Nothing is
+    inferred and no commit is ever synthesized.
+    """
+    try:
+        recorded = (Path(repo_root) / DEPLOYED_COMMIT_FILENAME).read_text().strip()
+    except OSError:
+        return None
+    return recorded if _FULL_GIT_SHA.match(recorded) else None
+
+
 def _git_commit(repo_root: Path = REPO_ROOT) -> str | None:
+    """The commit this run's source came from.
+
+    A normal git checkout answers for itself. An archive-installed production
+    checkout has no git metadata to ask, so the recorded deployment commit is
+    the authoritative answer rather than a fallback guess -- without it every
+    archive-installed tree would structurally fail preflight on
+    ``git_commit_unavailable``. A git repository is never initialized here to
+    manufacture one.
+    """
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=repo_root, check=True,
         )
-        return result.stdout.strip()
+        commit = result.stdout.strip()
+        if _FULL_GIT_SHA.match(commit):
+            return commit
     except Exception:
-        return None
+        pass
+    return _deployed_commit(repo_root)
 
 
 # ===========================================================================
