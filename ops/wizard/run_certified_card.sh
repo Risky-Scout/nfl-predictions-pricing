@@ -11,7 +11,8 @@
 #   1. verify the official BallDontLie capture manifest exists, self-verifies
 #      its own recorded content hash, and resolves the hash the caller declared
 #      to one of its two integrity objects (both retained in the run record);
-#   2. production preflight against THAT capture -- must report READY;
+#   2. production preflight against THAT capture, at the SAME as-of instant
+#      the card will be priced at -- must report READY;
 #   3. the certified six-Elo / Ridge-alpha-100 card for the horizon, priced
 #      from that capture, via scripts/run_2026_production_card.py;
 #   4. export the frozen wizard-nfl-pricing-v2 contract for the run;
@@ -89,6 +90,15 @@ fi
 # evidence and this run only points at it.
 
 # --- 2. preflight -- must be READY -----------------------------------------
+# ONE as-of for the whole run. Preflight cross-checks the capture against the
+# certified cutoff it resolves from this instant, so a replay that passes
+# --as-of to the card but not to preflight would have preflight judge the
+# capture against the CURRENT card's cutoff and reject a correct capture as an
+# unregistered live source. Both stages must be asked about the same instant,
+# so the value is built once here and reused verbatim below.
+as_of_args=()
+[ -n "${AS_OF}" ] && as_of_args=(--as-of "${AS_OF}")
+
 echo "=== 2. preflight ==="
 preflight_json="${WIZARD_NFL_LOG_DIR}/preflight-$(date -u +%Y%m%dT%H%M%SZ).json"
 set +e
@@ -96,6 +106,7 @@ set +e
     --preflight \
     --horizon "${HORIZON}" \
     --market-capture-manifest "${CAPTURE_MANIFEST}" \
+    "${as_of_args[@]}" \
     > "${preflight_json}"
 preflight_exit=$?
 set -e
@@ -110,8 +121,6 @@ fi
 # --- 3. certified card ------------------------------------------------------
 echo "=== 3. certified ${HORIZON} card ==="
 run_json="${WIZARD_NFL_LOG_DIR}/run-${HORIZON}-$(date -u +%Y%m%dT%H%M%SZ).json"
-as_of_args=()
-[ -n "${AS_OF}" ] && as_of_args=(--as-of "${AS_OF}")
 set +e
 "${PY}" scripts/run_2026_production_card.py \
     --horizon "${HORIZON}" \
