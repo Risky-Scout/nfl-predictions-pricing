@@ -192,6 +192,96 @@ class TestPreflightReadinessSemantics:
     def test_no_live_2026_market_key_registered_in_rmr(self):
         from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
         assert not any("2026" in key for key in rmr.RAW_ODDS_HISTORY_KEYS)
+# ===========================================================================
+# Source provenance on an archive-installed production checkout.
+#
+# Production deploys source with `git archive`, so Wizard's tree has no .git
+# and `git rev-parse HEAD` cannot answer. Before the fallback existed, every
+# archive-installed checkout failed preflight on `git_commit_unavailable`
+# regardless of how correctly it had been deployed.
+# ===========================================================================
+DEPLOYED_SHA = "daba059a9841528b6af0fa62a0b5b37d5c42f641"
+
+
+def test_a_normal_git_checkout_reports_its_own_head(tmp_path):
+    """The ordinary path is unchanged and still preferred: a real checkout
+    answers for itself, without consulting any recorded file."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, check=True)
+    (tmp_path / "f.txt").write_text("x")
+    subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "c"], cwd=tmp_path, check=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+    # A .deployed_commit naming something else must not win over real git.
+    (tmp_path / prod.DEPLOYED_COMMIT_FILENAME).write_text("f" * 40)
+    assert prod._git_commit(tmp_path) == head
+
+
+def test_an_archive_deployment_reports_the_recorded_commit(tmp_path):
+    """No .git anywhere, but the bootstrap recorded the triggering SHA."""
+    (tmp_path / prod.DEPLOYED_COMMIT_FILENAME).write_text(DEPLOYED_SHA)
+    assert prod._git_commit(tmp_path) == DEPLOYED_SHA
+
+
+def test_the_fallback_is_exactly_the_deployed_production_sha(tmp_path):
+    """Written the way bootstrap_nfl_production.sh writes it -- `printf '%s'`,
+    no trailing newline -- and read back byte-for-byte."""
+    (tmp_path / prod.DEPLOYED_COMMIT_FILENAME).write_bytes(DEPLOYED_SHA.encode())
+    resolved = prod._git_commit(tmp_path)
+    assert resolved == DEPLOYED_SHA
+    assert len(resolved) == 40
+
+    result = prod.run_preflight(artifact_root_path=tmp_path, repo_root=tmp_path)
+    assert result["checks"]["git_commit"] == {"status": "OK", "value": DEPLOYED_SHA}
+    assert "git_commit_unavailable" not in result["blocking_problems"]
+
+
+def test_a_missing_deployed_commit_remains_unavailable(tmp_path):
+    assert prod._git_commit(tmp_path) is None
+
+    result = prod.run_preflight(artifact_root_path=tmp_path, repo_root=tmp_path)
+    assert result["checks"]["git_commit"]["status"] == "UNAVAILABLE"
+    assert "git_commit_unavailable" in result["blocking_problems"]
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "",
+        "   ",
+        "daba059",                                     # abbreviated
+        "daba059a9841528b6af0fa62a0b5b37d5c42f64",     # 39 characters
+        "daba059a9841528b6af0fa62a0b5b37d5c42f6411",   # 41 characters
+        "zzba059a9841528b6af0fa62a0b5b37d5c42f641",    # not hexadecimal
+        "HEAD",
+        "refs/heads/main",
+    ],
+)
+def test_a_malformed_deployed_commit_remains_unavailable(tmp_path, malformed):
+    """A value that is not a full SHA is not provenance. Fail closed rather
+    than record a commit that cannot identify the deployed tree."""
+    (tmp_path / prod.DEPLOYED_COMMIT_FILENAME).write_text(malformed)
+    assert prod._git_commit(tmp_path) is None
+
+    result = prod.run_preflight(artifact_root_path=tmp_path, repo_root=tmp_path)
+    assert "git_commit_unavailable" in result["blocking_problems"]
+
+
+def test_no_git_repository_is_ever_created_to_manufacture_a_commit(tmp_path):
+    """Resolution is read-only: it must never initialize a repository, and
+    never invent a commit when it cannot find one."""
+    before = sorted(p.name for p in tmp_path.iterdir())
+    assert prod._git_commit(tmp_path) is None
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    assert not (tmp_path / ".git").exists()
+
+
 def test_preflight_calibration_seed_check_respects_artifact_root_path_override(tmp_path):
     """The bug this test guards against: run_preflight(artifact_root_path=...)
     must resolve the Fix-8 calibration seed under the SAME injected root it
