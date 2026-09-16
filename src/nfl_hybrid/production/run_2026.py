@@ -1074,6 +1074,8 @@ def run_horizon_batch(
     market_capture_manifest: Path | str | None = None,
     games_population_root: Path | None = None,
     calibrator_root: Path | None = None,
+    snapshot_stage: str | None = None,
+    stage_cutoffs: dict[str, pd.Timestamp] | None = None,
 ) -> dict:
     """One attempted production batch for ``horizon``. Always writes a run
     manifest (Section 15), even on a fail-closed status, and returns it.
@@ -1117,7 +1119,27 @@ def run_horizon_batch(
     validated against this batch's own season/week/horizon/target cutoff
     before a single quote is priced. Left ``None`` (the default), the market
     estate is read exactly as before, so historical/certified runs on a
-    machine with no 2026 capture behave identically to today."""
+    machine with no 2026 capture behave identically to today.
+
+    ``snapshot_stage`` / ``stage_cutoffs`` run this batch as an OPERATIONAL
+    OPEN/MID/CLOSE snapshot instead of at the card's own TUE/FRI noon cutoff.
+    ``stage_cutoffs`` maps game_id -> that game's stage instant and must name
+    ONE instant (games sharing a kickoff share a CLOSE, so a 1:00pm ET group
+    is one batch); the named games become this batch's whole membership and
+    that instant becomes its ``target_cutoff_utc``.
+
+    NO MODEL SCIENCE CHANGES when a stage is supplied. The six Elo features
+    stay exactly as certified -- card-scoped horizon-as-of, built from the
+    same membership ledger -- and so do the Ridge alpha, the feature
+    semantics hash, the paired margin/total fits and the training-eligibility
+    rule. The ONLY thing a stage alters is WHICH as-of instant the existing
+    chronological fit is performed at, which is the whole definition of a
+    snapshot stage: ``generate_official_horizon_oof_predictions`` already
+    batches by ``target_cutoff_utc`` and already trains on exactly the rows
+    with ``result_available_at_utc < cutoff`` that carry observed outcomes, so
+    a stage run gets point-in-time fitting for free rather than by a second
+    implementation of it. Left ``None`` (the default), every line below
+    behaves precisely as it does today."""
     as_of_utc = _as_utc(as_of_utc)
     aroot = operational_root if operational_root is not None else artifact_root()
     manifest_root = aroot / "production-2026" / "run-manifests"
@@ -1145,6 +1167,10 @@ def run_horizon_batch(
             output_hashes=extra.get("output_hashes", {}), status=status, started_at_utc=started_at,
             run_created_at_utc=run_created_at_utc, detail=extra.get("detail", ""),
         )
+        # Operational stage label. Always present so a reader never has to
+        # guess whether a manifest predates stages; ``None`` means this was a
+        # certified TUE/FRI card run, exactly as before.
+        manifest["snapshot_stage"] = snapshot_stage
         write_run_manifest(manifest_root, manifest)
         return manifest
 
@@ -1163,7 +1189,19 @@ def run_horizon_batch(
         return _finish("HASH_MISMATCH", detail=str(exc))
     feature_state_hash = hash_checks["horizon_feature_semantics_hash"]
 
-    target_cutoff_utc = current_or_recent_cutoff(as_of_utc, horizon)
+    if stage_cutoffs is not None:
+        instants = {_as_utc(value) for value in stage_cutoffs.values()}
+        if len(instants) != 1:
+            return _finish(
+                "SCHEDULE_UNAVAILABLE",
+                detail=(
+                    f"a {snapshot_stage} batch must name exactly one stage instant; got "
+                    f"{sorted(str(i) for i in instants)} -- group games by their own stage cutoff"
+                ),
+            )
+        target_cutoff_utc = instants.pop()
+    else:
+        target_cutoff_utc = current_or_recent_cutoff(as_of_utc, horizon)
     if target_cutoff_utc > as_of_utc:
         return _finish(
             "NOT_DUE", target_cutoff_utc=str(target_cutoff_utc),
@@ -1201,8 +1239,23 @@ def run_horizon_batch(
         return _finish("ELO_SOURCE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc), detail=str(exc))
 
     h = horizon.lower()
-    card_rows = membership_ledger[membership_ledger[f"{h}_cutoff_utc"] == target_cutoff_utc]
-    eligible_ids = set(card_rows.loc[card_rows[f"{h}_eligible"], "game_id"].astype(str))
+    if stage_cutoffs is not None:
+        # A stage batch's membership is the games the caller named -- their
+        # own kickoffs decided the instant. They must still be genuinely
+        # eligible for this horizon's certified card, so a stage can never
+        # smuggle in a game the frozen membership rule excludes.
+        named = {str(g) for g in stage_cutoffs}
+        card_rows = membership_ledger[membership_ledger["game_id"].astype(str).isin(named)]
+        eligible_ids = set(card_rows.loc[card_rows[f"{h}_eligible"], "game_id"].astype(str))
+        unknown = named - set(membership_ledger["game_id"].astype(str))
+        if unknown:
+            return _finish(
+                "SCHEDULE_UNAVAILABLE", target_cutoff_utc=str(target_cutoff_utc),
+                detail=f"stage games absent from the games population: {sorted(unknown)}",
+            )
+    else:
+        card_rows = membership_ledger[membership_ledger[f"{h}_cutoff_utc"] == target_cutoff_utc]
+        eligible_ids = set(card_rows.loc[card_rows[f"{h}_eligible"], "game_id"].astype(str))
     # Operational provenance only (no scientific-model behaviour change): the
     # canonical (season, week, season_type) card key is persisted with every
     # forecast so the prospective-strength contract can freeze its 2026
@@ -1218,6 +1271,16 @@ def run_horizon_batch(
 
     try:
         matrix = ohf.build_official_horizon_matrix(games_df, horizon, membership_ledger)
+        if stage_cutoffs is not None:
+            # THE ONLY scientific input a stage changes: the as-of instant the
+            # existing chronological fit is performed at. The six Elo features
+            # in every row are untouched, so the feature semantics hash still
+            # describes them; moving these rows' target_cutoff_utc simply puts
+            # them in their own batch, which the certified fitter then trains
+            # for using exactly the rows resolved before that instant.
+            matrix = matrix.copy()
+            override = matrix["game_id"].astype(str).isin(set(eligible_ids))
+            matrix.loc[override, "target_cutoff_utc"] = target_cutoff_utc
         predictions, residual_ledger, fit_counts = ohf.build_official_horizon_oof(
             matrix, horizon=horizon, feature_state_hash=feature_state_hash,
         )
@@ -1435,6 +1498,11 @@ def run_horizon_batch(
             "certified_baseline_sha": CERTIFIED_SHA, "horizon_feature_semantics_hash": feature_state_hash,
             "operational_model_spec_hash": hash_checks["operational_model_spec_hash"],
             "fix8_preregistration_hash": hash_checks["fix8_preregistration_hash"],
+            # Present ONLY on an operational stage snapshot, so a certified
+            # TUE/FRI card's deterministic payload -- and therefore its
+            # prediction_hash and the batch hash built from it -- stays
+            # byte-identical to every card already in the ledger.
+            **({"snapshot_stage": snapshot_stage} if snapshot_stage is not None else {}),
             # WHICH calibrator produced this forecast's calibrated
             # probabilities -- BASELINE or a promoted CANDIDATE, its seed hash,
             # and the hash of the operational policy that authorized the
