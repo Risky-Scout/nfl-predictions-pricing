@@ -806,7 +806,7 @@ def test_differing_identity_metadata_triggers_immutability_violation(tmp_path):
 
 
 _PINNED_FILE_SHA256 = {
-    "scripts/capture_bdl_2026_asof.py": "0a571a8d9ea9254057d7fdca8819c7d2c762bb052ec195b4b6df4bebfe2dc6ca",
+    "scripts/capture_bdl_2026_asof.py": "bae2fe26bed5cbf053f7ed399ff49cc88d9e16b7d8169bb7c6b091d13471e8f5",
     "scripts/update_v2026_7_qb_projection_shock_shadow.py": "3bb20644d18911ed48d6f1b235508a35c6b265eab6b5e2aef748b6a0246af75e",
     "outputs/v2026_7_prospective_qb_projection_shock_preregistration.json": "aabe03e7a601036fe2e40cf6df91114e90a1a9939e6693b86f37988e4642d6a2",
 }

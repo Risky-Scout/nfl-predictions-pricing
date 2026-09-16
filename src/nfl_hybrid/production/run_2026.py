@@ -277,6 +277,8 @@ def evaluate_live_market_source(
     expected_week: int | None = None,
     expected_horizon: str | None = None,
     expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    observation_not_after_utc: pd.Timestamp | str | None = None,
+    allowed_horizons: tuple[str, ...] = bridge.PRODUCTION_HORIZONS,
     artifact_root_path: Path | None = None,
 ) -> dict:
     """Evidence for whether a live 2026 market source is genuinely registered.
@@ -313,6 +315,8 @@ def evaluate_live_market_source(
             expected_week=expected_week,
             expected_horizon=expected_horizon,
             expected_target_cutoff_utc=expected_target_cutoff_utc,
+            observation_not_after_utc=observation_not_after_utc,
+            allowed_horizons=allowed_horizons,
             artifact_root_path=artifact_root_path,
         )
         coherence = {
@@ -1322,13 +1326,29 @@ def run_horizon_batch(
             expected_week = int(card_weeks[0])
         except ValueError:
             expected_week = None
+        # A stage snapshot is priced from a point-in-time STAGE observation
+        # taken at or before its instant, not from a capture frozen FOR a
+        # certified card cutoff. Expressing that as a different expectation --
+        # rather than pretending the stage instant is a card cutoff -- is what
+        # keeps the certified TUE/FRI contract below literally unchanged.
+        if snapshot_stage is not None:
+            stage_expectations = {
+                "expected_horizon": bridge.STAGE_HORIZON,
+                "allowed_horizons": bridge.STAGE_HORIZONS,
+                "expected_target_cutoff_utc": None,
+                "observation_not_after_utc": target_cutoff_utc,
+            }
+        else:
+            stage_expectations = {
+                "expected_horizon": horizon,
+                "expected_target_cutoff_utc": target_cutoff_utc,
+            }
         live_market = evaluate_live_market_source(
             market_capture_manifest,
             expected_season=card_seasons[0],
             expected_week=expected_week,
-            expected_horizon=horizon,
-            expected_target_cutoff_utc=target_cutoff_utc,
             artifact_root_path=aroot if operational_root is not None else None,
+            **stage_expectations,
         )
         if not live_market["registered"]:
             return _finish(

@@ -560,22 +560,41 @@ jobs:
 
       - name: Execute due OPEN/MID/CLOSE snapshots and republish
         id: sweep
+        env:
+          # The sweep refreshes provider evidence and takes a point-in-time
+          # market observation, so it needs exactly the provider credentials
+          # the daily and certified jobs already use. Injected into the remote
+          # process environment for this command only -- never written to disk
+          # on the server and never committed.
+          BALLDONTLIE_API_KEY: ${{ secrets.BALLDONTLIE_API_KEY }}
+          THE_ODDS_API_KEY: ${{ secrets.THE_ODDS_API_KEY }}
         run: |
           set -euo pipefail
-          home_leaf="${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}"
           args=""
-          [ -n "${AS_OF:-}" ] && args="${args} --as-of ${AS_OF}"
+          [ -n "${AS_OF:-}" ] && args="${args} --as-of '${AS_OF}'"
           [ "${PUBLISH_MODE:-dry_run}" != "publish" ] && args="${args} --dry-run-publish"
-          bash ops/wizard/remote.sh exec \
-            "bash ${home_leaf}/repo/ops/wizard/run_stage_snapshots.sh --stage ALL${args}" \
-            | tee /tmp/sweep.log
+
+          # WIZARD_NFL_HOME must be resolved on the SERVER, not here: the
+          # fallback mentions $HOME, which on the runner is the runner's home.
+          bash ops/wizard/remote.sh exec "
+            export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
+            export WIZARD_NFL_WEB_DIR='${WIZARD_NFL_WEB_DIR}'
+            export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
+            export THE_ODDS_API_KEY='${THE_ODDS_API_KEY}'
+            OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
+            bash \"\$OPS/run_stage_snapshots.sh\" --stage ALL${args}
+          " | tee /tmp/sweep.log
+
           grep -q "stage_snapshot_status=OK" /tmp/sweep.log
           {
             echo "published_sha256=$(sed -n 's/^PUBLISHED_SHA256=//p' /tmp/sweep.log | tail -1)"
+            echo "snapshot_action=$(sed -n 's/^snapshot_action=//p' /tmp/sweep.log | tail -1)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify the public feed is serving exactly these bytes
-        if: ${{ inputs.publish == 'publish' }}
+        # Only when this sweep actually published something. A clean no-op
+        # publishes nothing, so there are no new bytes to prove.
+        if: ${{ inputs.publish == 'publish' && steps.sweep.outputs.snapshot_action == 'EXECUTED' }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip >/dev/null
@@ -594,6 +613,7 @@ jobs:
             echo ""
             echo "| field | value |"
             echo "|---|---|"
+            echo "| snapshot_action | \`${{ steps.sweep.outputs.snapshot_action }}\` |"
             echo "| published_sha256 | \`${{ steps.sweep.outputs.published_sha256 }}\` |"
             echo "| publish mode | \`${{ inputs.publish || 'dry_run (scheduled)' }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
