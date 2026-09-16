@@ -58,7 +58,7 @@ on:
         type: choice
         required: true
         default: auto
-        options: [auto, daily_only, certified_only]
+        options: [auto, daily_only, certified_only, snapshot_only]
       horizon:
         description: "Force a certified horizon. Blank = decided by the certified due window."
         type: choice
@@ -103,6 +103,19 @@ on:
     - cron: "5 16 * * 2,5"
     - cron: "5 17 * * 2,5"
 
+    # OPEN/MID/CLOSE SNAPSHOT SWEEP. CLOSE is per game -- kickoff minus 60
+    # minutes -- so there is no single clock time to schedule it at; the sweep
+    # polls instead and executes whatever has become due. As with the
+    # certified crons, the cron is NEVER the gate: each game's own kickoff and
+    # the America/New_York card arithmetic decide what is due, so a firing
+    # with nothing due is a clean exit-0 no-op and DST needs no special case.
+    #
+    # Bounded on purpose rather than running every 15 minutes all year:
+    # dense on game days during the season, hourly otherwise (which is what
+    # picks up first-board OPEN discovery and the Friday-noon MID).
+    - cron: "*/15 * * 9,10,11,12,1 0,1,4"
+    - cron: "25 * * 9,10,11,12,1 2,3,5,6"
+
 permissions:
   contents: read
 
@@ -142,6 +155,7 @@ jobs:
       deployment_allowed: ${{ steps.gate.outputs.deployment_allowed }}
       run_daily: ${{ steps.gate.outputs.run_daily }}
       run_certified: ${{ steps.gate.outputs.run_certified }}
+      run_snapshot_sweep: ${{ steps.gate.outputs.run_snapshot_sweep }}
 
     steps:
       - name: Check out repository
@@ -195,23 +209,33 @@ jobs:
 
           run_daily=false
           run_certified=false
+          # The snapshot sweep decides for itself which OPEN/MID/CLOSE
+          # instants are due -- it cannot be resolved from the clock here,
+          # because CLOSE depends on each game's own kickoff. So this gate
+          # only says whether the sweep is ALLOWED to look, and the sweep
+          # exits 0 having done nothing when nothing is due.
+          run_snapshot_sweep=false
           case "${mode}" in
             daily_only)     [ "${DAILY_DUE}" = "true" ] && run_daily=true ;;
             certified_only) [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true ;;
+            snapshot_only)  run_snapshot_sweep=true ;;
             *)
               [ "${DAILY_DUE}" = "true" ] && run_daily=true
               [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true
+              run_snapshot_sweep=true
               ;;
           esac
           if [ "${deployment_allowed}" != "true" ]; then
             run_daily=false
             run_certified=false
+            run_snapshot_sweep=false
           fi
 
           {
             echo "deployment_allowed=${deployment_allowed}"
             echo "run_daily=${run_daily}"
             echo "run_certified=${run_certified}"
+            echo "run_snapshot_sweep=${run_snapshot_sweep}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -471,12 +495,116 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
-  # 4. Report. Always runs, so a not-eligible scheduled firing is visibly a
+  # 4. OPEN/MID/CLOSE snapshot sweep + current-week publication.
+  #
+  #    Runs the SAME evidence refresh, population update and recalibration
+  #    entrypoints the daily pass runs, then executes whatever stage instants
+  #    have become due and republishes the current-week feed. A firing with
+  #    nothing due is an exit-0 no-op.
+  #
+  #    Ordered after the certified job so that on a Tuesday the certified
+  #    card lands first and the sweep's republication then reflects it,
+  #    rather than the two racing for latest.json.
+  # ==========================================================================
+  snapshot-sweep:
+    name: Snapshot sweep (Wizard)
+    needs: [resolve, daily-maintenance, certified-production]
+    if: |
+      always()
+      && needs.resolve.result == 'success'
+      && needs.resolve.outputs.run_snapshot_sweep == 'true'
+      && github.ref == 'refs/heads/main'
+      && (needs.daily-maintenance.result == 'success' || needs.daily-maintenance.result == 'skipped')
+      && (needs.certified-production.result == 'success' || needs.certified-production.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: wizard-production
+
+    env:
+      WIZARD_SSH_HOST: ${{ secrets.WIZARD_SSH_HOST }}
+      WIZARD_SSH_PORT: ${{ secrets.WIZARD_SSH_PORT }}
+      WIZARD_SSH_USER: ${{ secrets.WIZARD_SSH_USER }}
+      WIZARD_NFL_HOME: ${{ secrets.WIZARD_NFL_HOME }}
+      WIZARD_NFL_WEB_DIR: ${{ secrets.WIZARD_NFL_WEB_DIR }}
+      AS_OF: ${{ inputs.as_of }}
+      PUBLISH_MODE: ${{ inputs.publish }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Prepare SSH
+        env:
+          WIZARD_SSH_PRIVATE_KEY: ${{ secrets.WIZARD_SSH_PRIVATE_KEY }}
+          WIZARD_SSH_KNOWN_HOSTS: ${{ secrets.WIZARD_SSH_KNOWN_HOSTS }}
+        run: bash ops/wizard/remote.sh prepare
+
+      - name: Stage source and ops helpers on Wizard
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz -o /tmp/nfl-source.tar.gz "${GITHUB_SHA}"
+          bash ops/wizard/remote.sh push-ops "${OPS_INBOX}" /tmp/nfl-source.tar.gz
+
+      - name: Bootstrap the Wizard NFL production layout
+        run: |
+          set -euo pipefail
+          bash ops/wizard/remote.sh exec \
+            "bash \$HOME/${OPS_INBOX}/bootstrap_nfl_production.sh \
+               --commit ${GITHUB_SHA} \
+               --source-archive \$HOME/${OPS_INBOX}/nfl-source.tar.gz"
+
+      - name: Execute due OPEN/MID/CLOSE snapshots and republish
+        id: sweep
+        run: |
+          set -euo pipefail
+          home_leaf="${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}"
+          args=""
+          [ -n "${AS_OF:-}" ] && args="${args} --as-of ${AS_OF}"
+          [ "${PUBLISH_MODE:-dry_run}" != "publish" ] && args="${args} --dry-run-publish"
+          bash ops/wizard/remote.sh exec \
+            "bash ${home_leaf}/repo/ops/wizard/run_stage_snapshots.sh --stage ALL${args}" \
+            | tee /tmp/sweep.log
+          grep -q "stage_snapshot_status=OK" /tmp/sweep.log
+          {
+            echo "published_sha256=$(sed -n 's/^PUBLISHED_SHA256=//p' /tmp/sweep.log | tail -1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify the public feed is serving exactly these bytes
+        if: ${{ inputs.publish == 'publish' }}
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip >/dev/null
+          python -m pip install -e ".[data]" >/dev/null
+          # Proves the live page and the live latest.json are the exact bytes
+          # this sweep published, and that they still satisfy the public
+          # contract -- from OUTSIDE the server, over the public URL.
+          python scripts/verify_public_nfl_feed.py \
+            --expect-sha256 "${{ steps.sweep.outputs.published_sha256 }}" \
+            --require-fresh-hours 24
+
+      - name: Summary
+        run: |
+          {
+            echo "### OPEN/MID/CLOSE snapshot sweep"
+            echo ""
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| published_sha256 | \`${{ steps.sweep.outputs.published_sha256 }}\` |"
+            echo "| publish mode | \`${{ inputs.publish || 'dry_run (scheduled)' }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ==========================================================================
+  # 5. Report. Always runs, so a not-eligible scheduled firing is visibly a
   #    clean no-op rather than a silent one.
   # ==========================================================================
   report:
     name: Report
-    needs: [resolve, daily-maintenance, certified-production]
+    needs: [resolve, daily-maintenance, certified-production, snapshot-sweep]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -492,6 +620,7 @@ jobs:
             echo "| resolve | \`${{ needs.resolve.result }}\` |"
             echo "| daily-maintenance | \`${{ needs.daily-maintenance.result }}\` |"
             echo "| certified-production | \`${{ needs.certified-production.result }}\` |"
+            echo "| snapshot-sweep | \`${{ needs.snapshot-sweep.result }}\` |"
             echo ""
             echo "certified_due=\`${{ needs.resolve.outputs.certified_due }}\`, basis=\`${{ needs.resolve.outputs.certified_basis }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -499,4 +628,5 @@ jobs:
           [ "${{ needs.resolve.result }}" = "success" ] || exit 1
           [ "${{ needs.daily-maintenance.result }}" != "failure" ] || exit 1
           [ "${{ needs.certified-production.result }}" != "failure" ] || exit 1
+          [ "${{ needs.snapshot-sweep.result }}" != "failure" ] || exit 1
           echo "outcome: OK (a skipped job means this invocation was not eligible -- a clean no-op)"
