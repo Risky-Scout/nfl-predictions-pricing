@@ -212,9 +212,11 @@ process's umask.
 ### Scheduling
 
 ```
-20 11 * * *      daily maintenance
- 5 16 * * 2,5    certified TUE/FRI, correct instant during EDT
- 5 17 * * 2,5    certified TUE/FRI, correct instant during EST
+20 11 * * *                    daily maintenance
+ 5 16 * * 2,5                  certified TUE/FRI, correct instant during EDT
+ 5 17 * * 2,5                  certified TUE/FRI, correct instant during EST
+*/15 * * 9,10,11,12,1 0,1,4    OPEN/MID/CLOSE sweep, game days (Sun/Mon/Thu)
+25 * * 9,10,11,12,1 2,3,5,6    OPEN/MID/CLOSE sweep, other days
 ```
 
 The cron expression is never the gate. `scripts/resolve_production_schedule.py`
@@ -225,6 +227,65 @@ calls the certified `run_2026.is_within_due_window` and
 that window resolves `certified_due=false` and the certified job is skipped —
 a clean no-op, not a failure. There is no DAILY forecast horizon;
 `certified_horizon` is only ever `TUE` or `FRI`.
+
+The two sweep crons are a poll, not a timetable, because CLOSE is per game —
+kickoff minus 60 minutes — so there is no single clock time to schedule it at.
+The sweep asks `snapshot_stages_2026` which instants have passed for the
+current week's games and executes those; a firing with nothing due exits 0
+having done nothing. That is also why they deliberately pin no hour: dueness
+comes from each game's own kickoff and from the same `America/New_York` card
+arithmetic, so the November transition needs no second cron. They are bounded
+to the season months to keep runner minutes and capture volume bounded, dense
+on game days and hourly otherwise (which is what picks up first-board OPEN
+discovery and the Friday-noon MID).
+
+A snapshot instant is exact even though its execution is not: the cutoff the
+model is fitted at and the market is reconstructed at is exactly kickoff minus
+60 minutes, while the execution happens on the first sweep after it. It has to
+be that way round — a market cannot be priced before it has been observed —
+and a future instant is never executed.
+
+### Snapshot sweep ([`run_stage_snapshots.sh`](../ops/wizard/run_stage_snapshots.sh))
+
+Refresh, retrain point-in-time, snapshot, publish — in that order, reusing the
+daily pass's own entrypoints for the first two and for recalibration so the two
+paths cannot disagree about the population or the active calibrator:
+
+1. `refresh_bdl_2026_games_evidence.py` — same script as the daily pass.
+2. `update_2026_games_population.py` — same script; fails closed on bad
+   evidence.
+3. `create_official_capture.sh` — a capture whose nominal cutoff IS this
+   sweep's instant.
+4. `run_2026_stage_snapshots.py` — every due OPEN/MID/CLOSE batch. Games that
+   share a kickoff share a CLOSE, so the 1:00pm ET group is one batch.
+5. `generate_2026_recalibration_candidate.py --promote-if-eligible` — same
+   script, same merged policy, same maturity firewall.
+6. `attach_2026_results_from_population.py` then
+   `report_2026_snapshot_performance.py` — results attach as their own records
+   and the season CSV/JSON is rewritten.
+7. `publish_2026_current_week.py` then `publish_wizard_nfl_local.py` — the
+   current-week feed is assembled, each game frozen at its own CLOSE, and
+   `latest.json` atomically replaced.
+8. `prune_replaceable_artifacts.py` — dry run unless `--prune-apply`.
+
+Exit codes are distinct per failure class: 2 usage, 3 evidence/population, 4
+stage execution, 5–9 the five recalibration failure classes, 10 feed assembly.
+Nothing is published when any of them fires.
+
+### Why a game's CLOSE is a one-way door
+
+Only a CLOSE snapshot is final and public for a game. Once published it is
+recorded in
+`production-2026/published-close-state/season=YYYY/week=WW/published_close_state.json`
+and reused verbatim on every later publication. A later pass that would change
+an already-closed game fails the whole publication rather than rewriting
+history, so a published close cannot drift even if its forecast were somehow
+re-derived. Games that have not closed publish from their best pregame
+snapshot (MID, else OPEN) and keep updating until their own CLOSE.
+
+Which stage a game was published from is operational bookkeeping and stays in
+that sidecar: the public payload remains exactly `wizard-nfl-pricing-v2`, with
+the same eleven game keys in the same order.
 
 ### Daily pass ([`run_daily_maintenance.sh`](../ops/wizard/run_daily_maintenance.sh))
 
