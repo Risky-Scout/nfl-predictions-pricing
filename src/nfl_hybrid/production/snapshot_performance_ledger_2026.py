@@ -198,10 +198,23 @@ def record_snapshot(artifact_root: Path, snapshot: dict) -> WriteResult:
     validate_stage(snapshot["snapshot_stage"])
     for numeric in ("model_home_margin", "model_total", "market_consensus_home_spread", "market_consensus_total"):
         _finite_or_none(snapshot.get(numeric), field_name=numeric)
-    if not isinstance(snapshot["market_book_quotes"], list):
+    quotes = snapshot["market_book_quotes"]
+    if not isinstance(quotes, list):
         raise PerformanceLedgerError(
             "market_book_quotes must be the list of exact per-book quotes the consensus was "
             "derived from -- a consensus with no book evidence behind it is not reviewable"
+        )
+    # An empty list is legitimate ONLY when there was no market to record. A
+    # consensus line with no books behind it would be an unreviewable number:
+    # nobody could later check which quotes produced it.
+    has_consensus = (
+        snapshot.get("market_consensus_home_spread") is not None
+        or snapshot.get("market_consensus_total") is not None
+    )
+    if has_consensus and not quotes:
+        raise PerformanceLedgerError(
+            f"{snapshot['game_id']} {snapshot['snapshot_stage']}: a consensus line was recorded with "
+            "no per-book quotes behind it -- the exact books a published number came from are not optional"
         )
 
     path = snapshot_path(

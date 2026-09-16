@@ -115,6 +115,22 @@ def test_a_consensus_with_no_per_book_evidence_is_refused(tmp_path):
         pl.record_snapshot(tmp_path, snap)
 
 
+def test_a_consensus_line_with_an_empty_book_list_is_refused(tmp_path):
+    """A published number whose books nobody can check is not reviewable."""
+    snap = _snapshot(st.STAGE_CLOSE, spread=-3.0, total=44.5, margin=6.0, model_total=47.0, at="2026-09-20T16:00:00Z")
+    snap["market_book_quotes"] = []
+    with pytest.raises(pl.PerformanceLedgerError, match="not optional"):
+        pl.record_snapshot(tmp_path, snap)
+
+
+def test_a_snapshot_with_no_market_at_all_may_record_no_books(tmp_path):
+    """The legitimate empty case: no consensus was established, so there are
+    no books to retain and none are demanded."""
+    snap = _snapshot(st.STAGE_OPEN, spread=None, total=None, margin=6.0, model_total=47.0, at="2026-09-14T14:00:00Z")
+    snap["market_book_quotes"] = []
+    assert pl.record_snapshot(tmp_path, snap).status == "WRITTEN"
+
+
 def test_an_unknown_stage_is_refused(tmp_path):
     snap = _snapshot(st.STAGE_CLOSE, spread=-3.0, total=44.5, margin=6.0, model_total=47.0, at="2026-09-20T16:00:00Z")
     snap["snapshot_stage"] = "TUE"

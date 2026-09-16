@@ -300,6 +300,69 @@ def test_a_replayed_performance_row_is_byte_identical(estate):
     assert {p: p.read_bytes() for p in sorted(root.rglob("*.json"))} == before
 
 
+def test_the_exact_books_behind_a_consensus_are_retained(tmp_path):
+    """Per-book retention is derived from the consensus's OWN record of which
+    books and instants it selected, so these are provably the quotes that
+    produced the published number."""
+    from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
+
+    snapshot_at = "2026-09-20T15:55:00Z"
+    quotes = pd.DataFrame(
+        [
+            {
+                "game_id": "G1", "bookmaker_key": book, "returned_snapshot_utc": pd.Timestamp(snapshot_at),
+                "market_last_update": pd.Timestamp("2026-09-20T15:50:00Z"),
+                "market": rmr.MARKET_SPREADS, "outcome_key": side,
+                "point": -3.0 if side == "home" else 3.0, "price_decimal": 1.91,
+            }
+            for book in ("draftkings", "fanduel", "betmgm")
+            for side in ("home", "away")
+        ]
+    )
+    entry = {
+        "market": {
+            "bookmaker_keys": ["draftkings", "fanduel", "betmgm"],
+            "selected_returned_snapshot_timestamps": [snapshot_at],
+        }
+    }
+    retained = ex.selected_book_quotes(
+        quotes, game_id="G1", market_entry=entry, raw_market=rmr.MARKET_SPREADS
+    )
+    assert sorted(q["bookmaker_key"] for q in retained) == ["betmgm", "draftkings", "fanduel"]
+    assert {q["line"] for q in retained} == {-3.0}
+    for quote in retained:
+        assert quote["market"] == rmr.MARKET_SPREADS
+        assert quote["returned_snapshot_utc"] == snapshot_at
+
+
+def test_a_book_the_consensus_did_not_select_is_not_retained(tmp_path):
+    from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
+
+    snapshot_at = "2026-09-20T15:55:00Z"
+    quotes = pd.DataFrame(
+        [
+            {
+                "game_id": "G1", "bookmaker_key": book, "returned_snapshot_utc": pd.Timestamp(snapshot_at),
+                "market_last_update": pd.Timestamp("2026-09-20T15:50:00Z"),
+                "market": rmr.MARKET_SPREADS, "outcome_key": side,
+                "point": -3.0 if side == "home" else 3.0, "price_decimal": 1.91,
+            }
+            for book in ("draftkings", "fanduel", "betmgm", "excluded_book")
+            for side in ("home", "away")
+        ]
+    )
+    entry = {
+        "market": {
+            "bookmaker_keys": ["draftkings", "fanduel", "betmgm"],
+            "selected_returned_snapshot_timestamps": [snapshot_at],
+        }
+    }
+    retained = ex.selected_book_quotes(
+        quotes, game_id="G1", market_entry=entry, raw_market=rmr.MARKET_SPREADS
+    )
+    assert "excluded_book" not in {q["bookmaker_key"] for q in retained}
+
+
 def test_a_failed_batch_records_no_performance_row(estate):
     card = estate["card"]
     earliest_close = min(st.close_cutoff_utc(k) for k in _kickoffs(card).values())
