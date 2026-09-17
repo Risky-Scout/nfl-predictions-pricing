@@ -58,11 +58,17 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"status": "NO_CURRENT_CARD", "card": card_info}, indent=2))
         return 0
 
-    quotes = None
-    if args.market_capture_manifest:
-        evidence = prod.evaluate_live_market_source(Path(args.market_capture_manifest))
-        if evidence["registered"] and evidence["source"] is not None:
-            quotes = evidence["source"].quotes
+    # Same STAGE semantics the sweep uses -- shared, not restated, so the two
+    # can never disagree about which captures are loadable.
+    quotes = (
+        None
+        if not args.market_capture_manifest
+        else _stage.load_stage_quotes(
+            Path(args.market_capture_manifest),
+            not_after_utc=as_of_utc,
+            artifact_root_path=artifact_root,
+        )
+    )
     observations = _stage.discover_open_observations(card, quotes=quotes)
 
     try:
