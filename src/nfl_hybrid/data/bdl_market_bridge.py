@@ -73,6 +73,14 @@ ODDS_CURRENT_LOGICAL_NAME = "odds_current"
 # Production captures are TUE/FRI only. SMOKE is schema evidence, never an
 # official production market.
 PRODUCTION_HORIZONS: tuple[str, ...] = ("TUE", "FRI")
+
+# A point-in-time OPEN/MID/CLOSE observation. Deliberately NOT in
+# PRODUCTION_HORIZONS: a stage capture can never be priced as a certified
+# TUE/FRI card, and a certified card can never be priced from one. Callers
+# that want a stage capture must ask for it explicitly via
+# ``allowed_horizons``, so no existing call site changes behaviour.
+STAGE_HORIZON = "STAGE"
+STAGE_HORIZONS: tuple[str, ...] = (STAGE_HORIZON,)
 PRODUCTION_SEASON_TYPES: tuple[str, ...] = ("REG", "POST")
 
 MARKET_SPREADS = "spreads"
@@ -281,6 +289,7 @@ def validate_capture_manifest(
     expected_week: int | None = None,
     expected_horizon: str | None = None,
     expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    observation_not_after_utc: pd.Timestamp | str | None = None,
     required_sources: tuple[str, ...] = REQUIRED_LOGICAL_SOURCES,
     allowed_horizons: tuple[str, ...] = PRODUCTION_HORIZONS,
 ) -> ValidatedCapture:
@@ -388,6 +397,20 @@ def validate_capture_manifest(
         raise BdlMarketBridgeError(f"capture week {week} != requested week {int(expected_week)}")
     if expected_horizon is not None and horizon != str(expected_horizon):
         raise BdlMarketBridgeError(f"capture horizon {horizon!r} != requested horizon {str(expected_horizon)!r}")
+    if observation_not_after_utc is not None:
+        # The STAGE rule, and deliberately a DIFFERENT rule from the certified
+        # one below. A card capture is frozen FOR one cutoff, so it must equal
+        # it. A stage observation is taken AT an instant and priced at a stage
+        # cutoff at or after it, so requiring equality would reject every
+        # honest observation; requiring "not after" is what forbids the thing
+        # that actually matters, which is pricing a snapshot from a market
+        # observed after its own instant.
+        limit = _as_utc(observation_not_after_utc, "stage snapshot cutoff")
+        if nominal_cutoff_utc > limit:
+            raise BdlMarketBridgeError(
+                f"capture observed the board at {nominal_cutoff_utc.isoformat()}, AFTER the stage "
+                f"cutoff {limit.isoformat()} it would be priced at -- refusing to look ahead"
+            )
     if expected_target_cutoff_utc is not None:
         target = _as_utc(expected_target_cutoff_utc, "production target_cutoff_utc")
         if nominal_cutoff_utc != target:
@@ -785,6 +808,8 @@ def load_live_market_source(
     expected_week: int | None = None,
     expected_horizon: str | None = None,
     expected_target_cutoff_utc: pd.Timestamp | str | None = None,
+    observation_not_after_utc: pd.Timestamp | str | None = None,
+    allowed_horizons: tuple[str, ...] = PRODUCTION_HORIZONS,
     artifact_root_path: Path | None = None,
 ) -> LiveMarketSource:
     """The one entry point a production run uses: validate the explicitly
@@ -799,6 +824,8 @@ def load_live_market_source(
         expected_week=expected_week,
         expected_horizon=expected_horizon,
         expected_target_cutoff_utc=expected_target_cutoff_utc,
+        observation_not_after_utc=observation_not_after_utc,
+        allowed_horizons=allowed_horizons,
     )
     quotes = build_bookmaker_quotes(capture)
     quotes_path = materialize_bookmaker_quotes(capture, quotes, artifact_root_path=artifact_root_path)

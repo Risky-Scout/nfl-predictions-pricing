@@ -99,16 +99,25 @@ echo "games_population=OK"
 # --- 3. market capture at THIS instant -------------------------------------
 capture_args=()
 if [ "${SKIP_CAPTURE}" -eq 0 ]; then
-    echo "=== 3. market capture ==="
+    echo "=== 3. point-in-time stage market observation ==="
+    # --stage-observation, NOT a TUE/FRI capture. A sweep runs whenever a
+    # stage instant has passed -- Wednesday, Friday noon, an hour before any
+    # kickoff -- and the certified TUE/FRI capture window would reject all of
+    # those. The observation records the board at THIS instant and is priced
+    # at a stage cutoff at or after it. The certified capture path is
+    # untouched and still fails closed outside its own window.
     set +e
-    capture_out="$(bash "${HERE}/create_official_capture.sh" --horizon TUE "${as_of_args[@]}" 2>&1)"
+    capture_out="$(bash "${HERE}/create_official_capture.sh" \
+        --horizon TUE --stage-observation "${as_of_args[@]}" 2>&1)"
     capture_exit=$?
     set -e
     echo "${capture_out}"
     if [ "${capture_exit}" -ne 0 ]; then
         echo "market_capture=UNAVAILABLE"
     else
-        manifest="$(printf '%s\n' "${capture_out}" | sed -n 's/^capture_manifest=//p' | tail -1)"
+        # The capture script's own machine-readable key. Parsing a different
+        # one silently dropped every successful capture.
+        manifest="$(printf '%s\n' "${capture_out}" | sed -n 's/^OFFICIAL_CAPTURE_MANIFEST=//p' | tail -1)"
         if [ -n "${manifest}" ] && [ -f "${manifest}" ]; then
             capture_args=(--market-capture-manifest "${manifest}")
             echo "market_capture=${manifest}"
@@ -138,6 +147,22 @@ if [ "${sweep_exit}" -ne 0 ]; then
 fi
 echo "stage_sweep=OK"
 
+# Did anything actually execute? A sweep that fires with no stage instant due
+# is the declared clean no-op, and it must not go on to assemble a feed: with
+# no snapshot for any game, assembly correctly refuses to publish an empty
+# card and would turn a legitimate no-op into exit 10.
+#
+# This is deliberately narrow. It asks only whether zero batches were DUE --
+# not whether execution failed (that already exited 4 above), and not whether
+# assembly would be happy. A sweep that did execute something always proceeds
+# to publication and still fails closed there on partial or ambiguous state.
+due_batches="$("${PY}" -c '
+import json,sys
+doc=json.load(open(sys.argv[1]))
+print(sum(stage.get("due_batches",0) for stage in doc.get("stages",[])))
+' "${sweep_json}")"
+echo "due_batches=${due_batches}"
+
 # --- 5. recalibration candidate + promotion --------------------------------
 # The SAME entrypoint and the SAME merged policy the daily pass uses, so the
 # existing maturity firewall decides promotion here exactly as it does there.
@@ -154,6 +179,16 @@ case "${recalibration_exit}" in
     3) echo "FAIL CLOSED: active calibrator unresolvable" >&2; exit 8 ;;
     *) echo "FAIL CLOSED: unexpected recalibration failure (exit ${recalibration_exit})" >&2; exit 9 ;;
 esac
+
+if [ "${due_batches}" -eq 0 ] && [ ! -f "${NFL_MODEL_ARTIFACT_ROOT}/public/wizardofodds/nfl-pricing/latest.json" ]; then
+    # Nothing was due and there is no published state to refresh or revalidate.
+    # Exit clean WITHOUT touching latest.json -- which is the whole point:
+    # creating or replacing it here would publish on a firing that produced no
+    # forecast at all.
+    echo "snapshot_action=NOOP_NOTHING_DUE"
+    echo "stage_snapshot_status=OK"
+    exit 0
+fi
 
 # --- 6. results and season reporting ---------------------------------------
 echo "=== 6. results + season reporting ==="
@@ -190,4 +225,9 @@ prune_args=(--artifact-root "${NFL_MODEL_ARTIFACT_ROOT}")
 [ "${PRUNE_APPLY}" -eq 1 ] && prune_args+=(--apply)
 "${PY}" scripts/prune_replaceable_artifacts.py "${prune_args[@]}"
 
+if [ "${due_batches}" -eq 0 ]; then
+    echo "snapshot_action=NOOP_NOTHING_DUE"
+else
+    echo "snapshot_action=EXECUTED"
+fi
 echo "stage_snapshot_status=OK"

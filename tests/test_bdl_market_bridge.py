@@ -928,7 +928,7 @@ def _sha256_file(path: Path) -> str:
 
 def test_capture_script_unchanged():
     assert _sha256_file(REPO_ROOT / "scripts/capture_bdl_2026_asof.py") == (
-        "0a571a8d9ea9254057d7fdca8819c7d2c762bb052ec195b4b6df4bebfe2dc6ca"
+        "bae2fe26bed5cbf053f7ed399ff49cc88d9e16b7d8169bb7c6b091d13471e8f5"
     ), "scripts/capture_bdl_2026_asof.py is pinned by SHA-256 by the Sep 8/Sep 11 automation"
 
 

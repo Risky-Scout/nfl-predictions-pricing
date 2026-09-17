@@ -23,10 +23,12 @@ set -euo pipefail
 
 HORIZON=""
 AS_OF=""
+STAGE_OBSERVATION=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --horizon) HORIZON="$2"; shift 2 ;;
-        --as-of)   AS_OF="$2"; shift 2 ;;
+        --horizon)            HORIZON="$2"; shift 2 ;;
+        --as-of)              AS_OF="$2"; shift 2 ;;
+        --stage-observation)  STAGE_OBSERVATION=1; shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -54,11 +56,24 @@ week="$(printf '%s' "${card_json}" | "${PY}" -c 'import json,sys; print(json.loa
 season_type="$(printf '%s' "${card_json}" | "${PY}" -c 'import json,sys; print(json.load(sys.stdin)["season_type"])')"
 cutoff="$(printf '%s' "${card_json}" | "${PY}" -c 'import json,sys; print(json.load(sys.stdin)["target_cutoff_utc"])')"
 
+# A STAGE observation records the board AT this instant, so its nominal
+# cutoff is now -- not the card's TUE/FRI noon, which is what forced a
+# midweek sweep through the certified window gate and failed off-window. The
+# card identity resolved above is still used, so the observation is tied to
+# the correct current-week games; only the horizon and the instant differ.
+# Requesting --horizon TUE/FRI is completely unaffected by this branch.
+if [ "${STAGE_OBSERVATION}" -eq 1 ]; then
+    capture_horizon="STAGE"
+    cutoff="$("${PY}" -c 'import datetime;print(datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z"))')"
+else
+    capture_horizon="${HORIZON}"
+fi
+
 capture_json="$("${PY}" scripts/capture_bdl_2026_asof.py \
     --season "${season}" \
     --week "${week}" \
     --season-type "${season_type}" \
-    --horizon "${HORIZON}" \
+    --horizon "${capture_horizon}" \
     --nominal-cutoff "${cutoff}")"
 printf '%s\n' "${capture_json}"
 

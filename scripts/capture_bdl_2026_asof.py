@@ -71,6 +71,27 @@ EASTERN = ZoneInfo("America/New_York")
 SEASON_TYPE_CODES: dict[str, int] = {"REG": 2, "POST": 3}
 
 HORIZON_OFFSET_DAYS: dict[str, int] = {"TUE": 1, "FRI": 4}  # from the card's Monday
+
+# A POINT-IN-TIME stage observation, for the OPEN/MID/CLOSE sweep.
+#
+# It is a first-class horizon rather than a reused TUE/FRI or a relabelled
+# SMOKE, because it is genuinely a different thing: TUE/FRI captures are
+# frozen for one certified card cutoff and must be taken inside that cutoff's
+# window, whereas a stage observation records whatever the board says at the
+# instant it is taken. Forcing one through the other's window gate is what
+# made a Wednesday sweep resolve a Tuesday cutoff and fail off-window.
+#
+# It is NOT a production card horizon: PRODUCTION_HORIZONS in the market
+# bridge still means exactly ("TUE", "FRI"), so a stage capture can never be
+# priced as a certified card, and the certified path is untouched.
+STAGE_HORIZON = "STAGE"
+
+# How stale an instant a stage capture may claim. The capture records the
+# market as observed AT its nominal cutoff, so back-dating it by hours would
+# be a false claim about when the board was seen. A sweep executes on the
+# firing after an instant becomes due, so a modest lag is normal and a large
+# one means something is wrong.
+STAGE_MAX_OBSERVATION_LAG = timedelta(hours=2)
 CUTOFF_LOCAL_TIME = dtime(12, 0)  # 12:00 PM America/New_York
 
 # Conservative capture window for a production TUE/FRI run, relative to the
@@ -209,6 +230,8 @@ def resolve_effective_horizon(
     recorded as a production cutoff capture."""
     if requested == "SMOKE":
         return "SMOKE", None
+    if requested == STAGE_HORIZON:
+        return STAGE_HORIZON, None
     if requested not in HORIZON_OFFSET_DAYS:
         raise ValueError(f"unknown horizon {requested!r}")
     if nominal_cutoff_utc is None:
@@ -707,7 +730,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--week", type=int, required=True)
     parser.add_argument("--season-type", choices=sorted(SEASON_TYPE_CODES), required=True,
                         help="REG or POST only -- preseason capture is unsupported.")
-    parser.add_argument("--horizon", choices=["TUE", "FRI", "SMOKE"], required=True)
+    parser.add_argument("--horizon", choices=["TUE", "FRI", STAGE_HORIZON, "SMOKE"], required=True)
     parser.add_argument("--nominal-cutoff", default=None,
                         help="ISO timestamp or bare date of the certified cutoff (naive/date => America/New_York).")
     parser.add_argument("--card-monday", default=None,
@@ -733,6 +756,34 @@ def main(argv: list[str] | None = None) -> int:
     if args.horizon in HORIZON_OFFSET_DAYS and cutoff is None:
         print(f"ERROR: {args.horizon} capture requires --nominal-cutoff or --card-monday.", file=sys.stderr)
         return 2
+
+    if args.horizon == STAGE_HORIZON:
+        # A stage observation IS its instant, so it is always explicit -- it is
+        # never derived from a card Monday, which would reintroduce exactly the
+        # TUE/FRI cutoff this horizon exists to avoid.
+        if cutoff is None:
+            print(
+                f"ERROR: a {STAGE_HORIZON} capture requires --nominal-cutoff: the instant it claims to "
+                "have observed the board at is never inferred.",
+                file=sys.stderr,
+            )
+            return 2
+        now = datetime.now(timezone.utc)
+        if cutoff > now:
+            print(
+                f"ERROR: {STAGE_HORIZON} capture nominal cutoff {cutoff.isoformat()} is in the future; "
+                "a market cannot be observed before it exists.",
+                file=sys.stderr,
+            )
+            return 2
+        if now - cutoff > STAGE_MAX_OBSERVATION_LAG:
+            print(
+                f"ERROR: {STAGE_HORIZON} capture at {now.isoformat()} claims to observe the board at "
+                f"{cutoff.isoformat()}, more than {STAGE_MAX_OBSERVATION_LAG} earlier. A stage capture "
+                "records what the board says NOW; it is never back-dated.",
+                file=sys.stderr,
+            )
+            return 2
 
     request = CaptureRequest(
         season=args.season,
