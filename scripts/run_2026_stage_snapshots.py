@@ -37,6 +37,7 @@ import pandas as pd
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
+from nfl_hybrid.data import bdl_market_bridge as bridge  # noqa: E402
 from nfl_hybrid.features import horizon_elo as he  # noqa: E402
 from nfl_hybrid.production import run_2026 as prod  # noqa: E402
 from nfl_hybrid.production import snapshot_execution_2026 as ex  # noqa: E402
@@ -73,6 +74,37 @@ def resolve_current_card(games: pd.DataFrame, as_of_utc) -> tuple[pd.DataFrame, 
         "week": weeks[0] if len(weeks) == 1 else weeks,
         "card_game_count": int(len(kickoffs)),
     }
+
+
+def load_stage_quotes(
+    market_capture_manifest, *, not_after_utc, artifact_root_path: Path | None = None
+) -> pd.DataFrame | None:
+    """The canonical per-book quotes from a STAGE capture, or ``None``.
+
+    STAGE is deliberately NOT in ``bridge.PRODUCTION_HORIZONS``, so loading a
+    stage capture through the default market-source contract rejects it as a
+    non-production horizon. That is what made OPEN discovery hand ``None`` to
+    the discoverer and report every game UNRESOLVED_STAGE even though the
+    capture was COMPLETE with 125 odds observations.
+
+    The stage expectations are stated EXPLICITLY here, exactly as the stage
+    batch path already states them, rather than by widening the default. A
+    certified TUE/FRI caller is unaffected, and a SMOKE or corrupt capture is
+    still refused.
+    """
+    evidence = prod.evaluate_live_market_source(
+        market_capture_manifest,
+        expected_horizon=bridge.STAGE_HORIZON,
+        allowed_horizons=bridge.STAGE_HORIZONS,
+        # Bounds the observation to this sweep's own instant, which matters
+        # for a replay with an explicit past --as-of: a capture taken later
+        # than the instant being replayed must not inform it.
+        observation_not_after_utc=not_after_utc,
+        artifact_root_path=artifact_root_path,
+    )
+    if not evidence["registered"] or evidence["source"] is None:
+        return None
+    return evidence["source"].quotes
 
 
 def discover_open_observations(
@@ -115,11 +147,13 @@ def run(
     if card_info["status"] != "OK":
         return {"status": "NO_CURRENT_CARD", "as_of_utc": str(as_of_utc), "card": card_info, "stages": []}
 
-    quotes = None
-    if market_capture_manifest is not None:
-        evidence = prod.evaluate_live_market_source(market_capture_manifest)
-        if evidence["registered"] and evidence["source"] is not None:
-            quotes = evidence["source"].quotes
+    quotes = (
+        None
+        if market_capture_manifest is None
+        else load_stage_quotes(
+            market_capture_manifest, not_after_utc=as_of_utc, artifact_root_path=operational_root
+        )
+    )
     observations = discover_open_observations(card, quotes=quotes)
 
     stages = list(st.SNAPSHOT_STAGES) if stage == STAGE_ALL else [st.validate_stage(stage)]

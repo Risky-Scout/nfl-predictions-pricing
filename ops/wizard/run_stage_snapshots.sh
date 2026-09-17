@@ -180,11 +180,25 @@ case "${recalibration_exit}" in
     *) echo "FAIL CLOSED: unexpected recalibration failure (exit ${recalibration_exit})" >&2; exit 9 ;;
 esac
 
-if [ "${due_batches}" -eq 0 ] && [ ! -f "${NFL_MODEL_ARTIFACT_ROOT}/public/wizardofodds/nfl-pricing/latest.json" ]; then
-    # Nothing was due and there is no published state to refresh or revalidate.
-    # Exit clean WITHOUT touching latest.json -- which is the whole point:
-    # creating or replacing it here would publish on a firing that produced no
-    # forecast at all.
+if [ "${due_batches}" -eq 0 ]; then
+    # ZERO DUE IS A NO-OP, FULL STOP.
+    #
+    # This used to also require that no artifact-side latest.json existed, on
+    # the theory that an existing feed should be refreshed. That was wrong in
+    # both directions. A sweep with nothing due has produced no new forecast,
+    # so there is nothing for a republication to say; and because the live
+    # estate DOES carry an old latest.json, the extra condition meant the
+    # guard never fired in production and every idle sweep drove on into feed
+    # assembly and failed with "no game in the current week has a publishable
+    # snapshot yet".
+    #
+    # An old artifact-side file is evidence of a PREVIOUS publication. It is
+    # not a reason to attempt a new one, and it is not something this sweep
+    # needs to revalidate -- the public verifier does that against the live
+    # URL after a run that actually published.
+    #
+    # Everything already done above (evidence refresh, population update,
+    # recalibration) stands; only assembly and publication are skipped.
     echo "snapshot_action=NOOP_NOTHING_DUE"
     echo "stage_snapshot_status=OK"
     exit 0
@@ -225,9 +239,7 @@ prune_args=(--artifact-root "${NFL_MODEL_ARTIFACT_ROOT}")
 [ "${PRUNE_APPLY}" -eq 1 ] && prune_args+=(--apply)
 "${PY}" scripts/prune_replaceable_artifacts.py "${prune_args[@]}"
 
-if [ "${due_batches}" -eq 0 ]; then
-    echo "snapshot_action=NOOP_NOTHING_DUE"
-else
-    echo "snapshot_action=EXECUTED"
-fi
+# Reaching here means at least one batch was due and executed: the zero-due
+# case returned above, before assembly.
+echo "snapshot_action=EXECUTED"
 echo "stage_snapshot_status=OK"
