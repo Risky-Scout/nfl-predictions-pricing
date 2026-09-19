@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -81,6 +81,13 @@ PRODUCTION_HORIZONS: tuple[str, ...] = ("TUE", "FRI")
 # ``allowed_horizons``, so no existing call site changes behaviour.
 STAGE_HORIZON = "STAGE"
 STAGE_HORIZONS: tuple[str, ...] = (STAGE_HORIZON,)
+
+# Where build_bookmaker_quotes records which provider rows it had to exclude,
+# and how many representative examples it keeps. Bounded so one pathological
+# capture cannot turn a provenance record into a log dump; the COUNTS are
+# always complete, only the examples are capped.
+EXCLUDED_ROWS_ATTR = "excluded_rows"
+EXCLUDED_ROW_EXAMPLE_LIMIT = 5
 PRODUCTION_SEASON_TYPES: tuple[str, ...] = ("REG", "POST")
 
 MARKET_SPREADS = "spreads"
@@ -636,6 +643,36 @@ def build_bookmaker_quotes(capture: ValidatedCapture) -> pd.DataFrame:
     """The canonical ``bookmaker_quotes`` frame for one validated capture,
     with exactly the certified columns and nothing else.
 
+    THE FAIL-CLOSED UNIT IS ONE PROVIDER ODDS ROW, which is what
+    :func:`certified_rows_for_odds_row` has always documented ("a missing side
+    or price fails the whole ROW closed"). A row that cannot be certified is
+    EXCLUDED here rather than aborting the capture.
+
+    That distinction is not cosmetic. BetMGM posted a total but no spread for
+    one game (``2026_02_IND_KC``) in the live 2026 Week-2 captures; one such
+    row out of 125 raised out of this loop, so the whole capture was rejected,
+    ``load_stage_quotes`` returned ``None`` and OPEN discovery reported every
+    one of the 16 games unobserved. A book that has priced totals but not yet
+    spreads is ordinary early-week behaviour, and the capture layer records it
+    without objection -- treating it as a reason to discard 124 good rows was
+    an escalation this module never intended.
+
+    NOTHING IS LOOSENED. Every check inside
+    :func:`certified_rows_for_odds_row` and :func:`_required_point` still
+    raises exactly as before; only the scope that catches it changed. A row is
+    excluded whole -- never partially built, never with a fabricated spread or
+    total. Structural failures stay fatal: the games/odds crosswalk
+    (:func:`_resolve_game_id`) runs OUTSIDE this boundary, so an odds row
+    naming an unknown game still fails the capture. And if EVERY row is
+    excluded the capture has no priceable market at all, which still fails
+    closed, carrying the underlying row reasons so the diagnosis is not lost.
+
+    The real protection against a thin board was always downstream anyway and
+    is untouched: the >=3 eligible-book minimum and the coherent two-sided
+    pairing in :mod:`nfl_hybrid.evaluation.raw_market_reconstruction`, plus the
+    global coherence gate in ``run_2026.evaluate_live_market_source``. A
+    capture that loses too many rows here simply fails those instead.
+
     Chronology is NOT re-implemented here: the certified Fix-8 rules
     (``market_last_update <= returned_snapshot_utc <= target_cutoff_utc``, the
     48-hour per-book maximum age, the >=3 eligible-book minimum) are applied
@@ -657,13 +694,39 @@ def build_bookmaker_quotes(capture: ValidatedCapture) -> pd.DataFrame:
         raise BdlMarketBridgeError("capture odds_current pages contained no odds rows")
 
     certified: list[dict] = []
+    excluded_count = 0
+    reason_counts: dict[str, int] = {}
+    examples: list[dict] = []
     for entry in rows:
-        certified.extend(
-            certified_rows_for_odds_row(
-                entry["_source_row"],
-                game_id=entry["_game_id"],
-                returned_snapshot_utc=entry["_snapshot"],
+        try:
+            # extend() only runs if the call returns, so a raising row
+            # contributes nothing -- there is no half-built row.
+            certified.extend(
+                certified_rows_for_odds_row(
+                    entry["_source_row"],
+                    game_id=entry["_game_id"],
+                    returned_snapshot_utc=entry["_snapshot"],
+                )
             )
+        except BdlMarketBridgeError as exc:
+            reason = str(exc)
+            excluded_count += 1
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
+            if len(examples) < EXCLUDED_ROW_EXAMPLE_LIMIT:
+                examples.append(
+                    {
+                        "game_id": entry["_game_id"],
+                        # Read raw: _vendor itself may be what rejected the row.
+                        "bookmaker_key": str(entry["_source_row"].get("vendor")),
+                        "reason": reason,
+                    }
+                )
+
+    if not certified:
+        raise BdlMarketBridgeError(
+            f"every one of the {len(rows)} odds row(s) in this capture failed certification, so it "
+            "carries no priceable market. Row rejection reason(s): "
+            + "; ".join(f"{reason} (x{count})" for reason, count in sorted(reason_counts.items()))
         )
 
     frame = pd.DataFrame(certified, columns=list(BOOKMAKER_QUOTE_COLUMNS))
@@ -675,7 +738,19 @@ def build_bookmaker_quotes(capture: ValidatedCapture) -> pd.DataFrame:
     frame["market_last_update"] = pd.to_datetime(frame["market_last_update"], utc=True)
     frame["point"] = frame["point"].astype(float)
     frame["price_decimal"] = frame["price_decimal"].astype(float)
-    return frame.reset_index(drop=True)
+    frame = frame.reset_index(drop=True)
+    # Carried on the frame the same way data/backfill.py carries its plan
+    # counts, so an exclusion is never silent, without a second telemetry
+    # mechanism. load_live_market_source lifts this into the provenance a
+    # production run already records. Not a parquet column: this describes
+    # rows that are ABSENT from the frame, so it is not per-row data.
+    frame.attrs[EXCLUDED_ROWS_ATTR] = {
+        "source_row_count": len(rows),
+        "excluded_row_count": excluded_count,
+        "excluded_reason_counts": dict(sorted(reason_counts.items())),
+        "excluded_examples": examples,
+    }
+    return frame
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +857,10 @@ class LiveMarketSource:
     quotes_path: Path
     quotes: pd.DataFrame
     content_sha256: str
+    # Which provider rows build_bookmaker_quotes had to exclude. Carried here
+    # because ``quotes`` is the RE-READ parquet frame and a round-trip drops
+    # DataFrame.attrs, so the record has to survive separately.
+    excluded_rows: dict = field(default_factory=dict)
 
     def provenance(self) -> dict:
         return {
@@ -798,6 +877,7 @@ class LiveMarketSource:
             "quote_row_count": int(len(self.quotes)),
             "game_count": int(self.quotes["game_id"].nunique()),
             "bookmaker_count": int(self.quotes["bookmaker_key"].nunique()),
+            "excluded_rows": dict(self.excluded_rows),
         }
 
 
@@ -839,5 +919,9 @@ def load_live_market_source(
             "the capture"
         )
     return LiveMarketSource(
-        capture=capture, quotes_path=quotes_path, quotes=reread, content_sha256=content_hash
+        capture=capture,
+        quotes_path=quotes_path,
+        quotes=reread,
+        content_sha256=content_hash,
+        excluded_rows=dict(quotes.attrs.get(EXCLUDED_ROWS_ATTR, {})),
     )
