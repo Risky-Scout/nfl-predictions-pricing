@@ -54,6 +54,12 @@ STAGE_OPEN = "OPEN"
 STAGE_MID = "MID"
 STAGE_CLOSE = "CLOSE"
 
+# The capture-manifest horizon label a point-in-time stage observation is
+# archived under. Named here so the archive reader and the capture writer
+# cannot drift; it is the provider-capture horizon, NOT one of the three
+# operational stages above.
+STAGE_CAPTURE_HORIZON = "STAGE"
+
 # Publication order, and the order a season progresses through them.
 SNAPSHOT_STAGES: tuple[str, ...] = (STAGE_OPEN, STAGE_MID, STAGE_CLOSE)
 

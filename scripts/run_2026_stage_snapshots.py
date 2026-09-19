@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -135,6 +136,7 @@ def run(
     as_of: str | None,
     operational_root: Path,
     market_capture_manifest: Path | None,
+    data_root: Path | None = None,
     games: pd.DataFrame | None = None,
     **batch_kwargs,
 ) -> dict:
@@ -147,14 +149,23 @@ def run(
     if card_info["status"] != "OK":
         return {"status": "NO_CURRENT_CARD", "as_of_utc": str(as_of_utc), "card": card_info, "stages": []}
 
-    quotes = (
-        None
-        if market_capture_manifest is None
-        else load_stage_quotes(
-            market_capture_manifest, not_after_utc=as_of_utc, artifact_root_path=operational_root
+    # OPEN is a fact about the season's ACCUMULATED evidence, and a historical
+    # MID/CLOSE can only be priced from an observation that predates it. Both
+    # need the archive, not just the capture this sweep happens to hold.
+    # Resolved only once a card exists, and tolerant of an unset root so a
+    # hermetic caller can run with no observation archive at all.
+    resolved_data_root = data_root if data_root is not None else os.environ.get("NFL_MODEL_DATA_ROOT")
+    archived = (
+        []
+        if resolved_data_root is None
+        else ex.archived_stage_captures(
+            Path(resolved_data_root), season=card_info["season"], week=card_info["week"]
         )
     )
-    observations = discover_open_observations(card, quotes=quotes)
+    accumulated, archive_provenance = (
+        (None, {"archived_capture_count": 0}) if not archived else ex.accumulated_stage_quotes(archived)
+    )
+    observations = discover_open_observations(card, quotes=accumulated)
 
     stages = list(st.SNAPSHOT_STAGES) if stage == STAGE_ALL else [st.validate_stage(stage)]
     results = [
@@ -165,8 +176,9 @@ def run(
             as_of_utc=as_of_utc,
             operational_root=operational_root,
             open_observations=observations,
-            market_capture_manifest=market_capture_manifest,
-            quotes=quotes,
+            archived_captures=archived,
+            season=card_info["season"],
+            week=card_info["week"],
             games=games,
             **batch_kwargs,
         )
@@ -176,6 +188,7 @@ def run(
         "status": "OK" if all(r["status"] == "OK" for r in results) else "FAIL_CLOSED",
         "as_of_utc": str(as_of_utc),
         "card": card_info,
+        "stage_archive": archive_provenance,
         "open_observations": {k: str(v) for k, v in sorted(observations.items())},
         "stages": results,
     }
@@ -187,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--as-of", default=None)
     parser.add_argument("--operational-root", default=None)
     parser.add_argument("--market-capture-manifest", default=None)
+    parser.add_argument("--data-root", default=None, help="Override NFL_MODEL_DATA_ROOT (tests).")
     args = parser.parse_args(argv)
 
     root = Path(args.operational_root) if args.operational_root else prod.artifact_root()
@@ -195,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
         as_of=args.as_of,
         operational_root=root,
         market_capture_manifest=Path(args.market_capture_manifest) if args.market_capture_manifest else None,
+        data_root=Path(args.data_root) if args.data_root else None,
     )
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
     # Exit 0 for a clean no-op (nothing due) as well as for successful
