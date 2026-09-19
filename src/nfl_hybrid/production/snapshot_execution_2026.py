@@ -37,6 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from nfl_hybrid.data import bdl_market_bridge as bridge
 from nfl_hybrid.evaluation import raw_market_reconstruction as rmr
 from nfl_hybrid.production import run_2026 as prod
 from nfl_hybrid.production import snapshot_performance_ledger_2026 as pl
@@ -47,10 +48,129 @@ SKIP_NOT_DUE = "NOT_DUE"
 SKIP_POST_KICKOFF = "POST_KICKOFF"
 SKIP_UNRESOLVED_STAGE = "UNRESOLVED_STAGE"
 SKIP_ALREADY_RECORDED = "ALREADY_RECORDED"
+SKIP_NO_ARCHIVED_EVIDENCE = "NO_ARCHIVED_EVIDENCE_AT_OR_BEFORE_CUTOFF"
 
 
 class SnapshotExecutionError(RuntimeError):
     """Fail-closed execution error."""
+
+
+# Where the immutable STAGE observation archive lives, relative to
+# NFL_MODEL_DATA_ROOT. Same tree capture_bdl_2026_asof.py writes to; this
+# module only ever READS it.
+STAGE_ARCHIVE_NAMESPACE = "live-observation-log/balldontlie-2026"
+
+
+@dataclass(frozen=True)
+class ArchivedCapture:
+    """One archived STAGE observation: where it is, and when it observed."""
+
+    manifest_path: Path
+    observed_at_utc: pd.Timestamp
+
+
+def archived_stage_captures(data_root: Path, *, season: int, week) -> list[ArchivedCapture]:
+    """Every archived STAGE capture for one card, oldest observation first.
+
+    Selection reads only each manifest's ``nominal_cutoff_utc`` -- the instant
+    it observed the board -- so listing the archive stays cheap even with
+    hundreds of captures. A manifest that cannot state when it observed is
+    skipped here rather than raising: it simply cannot be placed on the
+    timeline, and the callers below verify every capture they actually use.
+    """
+    week_label = f"{int(week):02d}" if str(week).isdigit() else str(week)
+    pattern = (
+        Path(STAGE_ARCHIVE_NAMESPACE)
+        / f"season={int(season)}"
+        / f"week={week_label}"
+        / f"horizon={st.STAGE_CAPTURE_HORIZON}"
+        / "capture=*"
+        / "manifest.json"
+    )
+    found: list[ArchivedCapture] = []
+    for path in sorted(Path(data_root).glob(str(pattern))):
+        try:
+            observed = pd.Timestamp(json.loads(path.read_text())["nominal_cutoff_utc"])
+        except Exception:
+            continue
+        if observed is pd.NaT or pd.isna(observed):
+            continue
+        observed = observed.tz_localize("UTC") if observed.tzinfo is None else observed.tz_convert("UTC")
+        found.append(ArchivedCapture(manifest_path=path, observed_at_utc=observed))
+    return sorted(found, key=lambda c: (c.observed_at_utc, str(c.manifest_path)))
+
+
+def newest_capture_at_or_before(
+    captures: list[ArchivedCapture], cutoff
+) -> ArchivedCapture | None:
+    """The freshest observation that is still not after ``cutoff``.
+
+    This is what makes a HISTORICAL stage reachable. A sweep running today
+    holds a capture observed today, which ``observation_not_after_utc``
+    correctly refuses for a cutoff that has already passed -- so MID and CLOSE
+    were unreachable the moment their instant went by. Reaching back to the
+    last capture taken before the cutoff prices the stage from evidence that
+    genuinely predates it, with the no-lookahead rule fully intact rather than
+    relaxed.
+    """
+    limit = prod._as_utc(cutoff)
+    eligible = [c for c in captures if c.observed_at_utc <= limit]
+    return max(eligible, key=lambda c: c.observed_at_utc) if eligible else None
+
+
+def accumulated_stage_quotes(
+    captures: list[ArchivedCapture], *, artifact_root_path: Path | None = None
+) -> tuple[pd.DataFrame | None, dict]:
+    """Every archived observation's quotes, concatenated oldest first.
+
+    OPEN means "the FIRST valid market observed", which is a fact about the
+    whole season's evidence, not about whichever capture a sweep happens to be
+    holding. Resolving it from one capture made OPEN move forward every sweep
+    and collide with the immutable ledger; resolving it from the accumulated
+    archive makes it deterministic -- the same archive yields the same answer
+    on every future sweep.
+
+    A capture that fails validation is skipped and counted, not fatal: an
+    archive spanning months should not be held hostage by one bad file, and
+    the same row-level reasoning already governs a single capture's odds rows.
+    """
+    frames: list[pd.DataFrame] = []
+    rejected: list[dict] = []
+    for capture in captures:
+        try:
+            validated = bridge.validate_capture_manifest(
+                capture.manifest_path,
+                expected_horizon=bridge.STAGE_HORIZON,
+                allowed_horizons=bridge.STAGE_HORIZONS,
+            )
+            frames.append(bridge.build_bookmaker_quotes(validated))
+        except Exception as exc:
+            rejected.append(
+                {"manifest_path": str(capture.manifest_path), "reason": f"{type(exc).__name__}: {exc}"}
+            )
+    provenance = {
+        "archived_capture_count": len(captures),
+        "usable_capture_count": len(frames),
+        "rejected_capture_count": len(rejected),
+        "rejected_captures": rejected[:ARCHIVE_REJECTION_EXAMPLE_LIMIT],
+    }
+    if not frames:
+        return None, provenance
+
+    accumulated = pd.concat(frames, ignore_index=True).drop_duplicates(
+        subset=list(bridge.BOOKMAKER_QUOTE_COLUMNS)
+    )
+    accumulated["returned_snapshot_utc"] = pd.to_datetime(
+        accumulated["returned_snapshot_utc"], utc=True
+    )
+    accumulated = accumulated.sort_values(
+        ["returned_snapshot_utc", "game_id", "bookmaker_key"], kind="stable"
+    ).reset_index(drop=True)
+    provenance["accumulated_quote_rows"] = int(len(accumulated))
+    return accumulated, provenance
+
+
+ARCHIVE_REJECTION_EXAMPLE_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -84,22 +204,39 @@ def plan_stage_batches(
     card: pd.DataFrame,
     as_of_utc,
     open_observations: dict[str, pd.Timestamp] | None = None,
+    operational_root: Path | None = None,
+    season: int | None = None,
+    week=None,
 ) -> tuple[list[StageBatch], dict[str, str]]:
     """Group the card's games into the due batches for ``stage``.
 
     ``card`` needs ``game_id`` and ``scheduled_kickoff_utc``. Returns the due
     batches plus, for every game not in one, the reason -- so an automation
     pass can log why a game was left alone instead of silently omitting it.
+
+    When ``operational_root`` (with ``season``/``week``) is supplied, a stage
+    already recorded in the performance ledger is treated as COMPLETE and
+    skipped. A pregame snapshot is immutable, so recomputing one every sweep
+    can only either waste the work or -- as it did in production -- collide
+    with the record it wrote earlier. Skipping keeps
+    ``SnapshotImmutabilityViolation`` for what it is meant to catch: a genuine
+    contradiction, not the routine act of sweeping twice.
     """
     st.validate_stage(stage)
     as_of = prod._as_utc(as_of_utc)
     observations = open_observations or {}
     earliest = st.card_earliest_kickoff_utc(card["scheduled_kickoff_utc"])
+    check_recorded = operational_root is not None and season is not None and week is not None
 
     by_instant: dict[pd.Timestamp, list[str]] = {}
     skipped: dict[str, str] = {}
     for row in card.itertuples(index=False):
         game_id = str(row.game_id)
+        if check_recorded and pl.read_snapshot(
+            operational_root, season=season, week=week, game_id=game_id, stage=stage
+        ) is not None:
+            skipped[game_id] = SKIP_ALREADY_RECORDED
+            continue
         schedule = st.resolve_game_snapshots(
             game_id=game_id,
             scheduled_kickoff_utc=row.scheduled_kickoff_utc,
@@ -349,24 +486,61 @@ def run_due_stage_snapshots(
     open_observations: dict[str, pd.Timestamp] | None = None,
     market_capture_manifest: Path | str | None = None,
     quotes: pd.DataFrame | None = None,
+    archived_captures: list[ArchivedCapture] | None = None,
+    season: int | None = None,
+    week=None,
     **batch_kwargs,
 ) -> dict:
-    """Every due batch for one stage. The entry point automation calls."""
+    """Every due batch for one stage. The entry point automation calls.
+
+    With ``archived_captures`` supplied, each batch is priced from the newest
+    archived observation at or before ITS OWN cutoff, rather than from one
+    capture shared by every stage. That is what makes a historical MID or
+    CLOSE reachable at all. Without it, behaviour is exactly as before.
+    """
     batches, skipped = plan_stage_batches(
-        stage=stage, card=card, as_of_utc=as_of_utc, open_observations=open_observations
+        stage=stage,
+        card=card,
+        as_of_utc=as_of_utc,
+        open_observations=open_observations,
+        operational_root=operational_root,
+        season=season,
+        week=week,
     )
-    executions = [
-        execute_stage_batch(
-            batch,
-            horizon=horizon,
-            operational_root=operational_root,
-            as_of_utc=as_of_utc,
-            market_capture_manifest=market_capture_manifest,
-            quotes=quotes,
-            **batch_kwargs,
+
+    executions: list[StageExecution] = []
+    for batch in batches:
+        batch_manifest, batch_quotes = market_capture_manifest, quotes
+        if archived_captures is not None:
+            chosen = newest_capture_at_or_before(archived_captures, batch.cutoff_utc)
+            if chosen is None:
+                # No observation predates this stage instant, so there is
+                # nothing that could price it without looking ahead.
+                executions.append(
+                    StageExecution(
+                        stage=batch.stage,
+                        cutoff_utc=batch.cutoff_utc,
+                        game_ids=batch.game_ids,
+                        run_status="MARKET_SOURCE_UNAVAILABLE",
+                        run_id="",
+                        ledger_writes=(),
+                        skipped=SKIP_NO_ARCHIVED_EVIDENCE,
+                    )
+                )
+                continue
+            batch_manifest = chosen.manifest_path
+            batch_quotes, _ = accumulated_stage_quotes([chosen])
+        executions.append(
+            execute_stage_batch(
+                batch,
+                horizon=horizon,
+                operational_root=operational_root,
+                as_of_utc=as_of_utc,
+                market_capture_manifest=batch_manifest,
+                quotes=batch_quotes,
+                **batch_kwargs,
+            )
         )
-        for batch in batches
-    ]
     return {
         "stage": stage,
         "as_of_utc": str(prod._as_utc(as_of_utc)),
