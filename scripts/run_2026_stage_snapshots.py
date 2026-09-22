@@ -21,9 +21,24 @@ the model is fitted at and the market is reconstructed at -- while the
 execution happens on the next sweep after it. A future instant is never
 executed.
 
+HISTORICAL REPAIR. By default the sweep asks which card is CURRENT, which is
+right for unattended operation and wrong for repair: once the card advances a
+past week becomes unreachable, so any gap in it can never be filled. Naming a
+season/week explicitly selects that card instead. Only the selection changes --
+every stage rule, cutoff, market gate and ledger guard downstream is the same
+code the scheduled sweep runs.
+
+This entry point never publishes and never writes ``latest.json`` in either
+mode; publication is a separate script the orchestrator calls afterwards. So
+repairing a past week structurally cannot disturb the current public feed.
+
 Usage:
   python scripts/run_2026_stage_snapshots.py --stage ALL
   python scripts/run_2026_stage_snapshots.py --stage CLOSE --as-of 2026-09-20T16:05:00Z
+
+  # Historical repair -- plan first, then write.
+  python scripts/run_2026_stage_snapshots.py --stage ALL --season 2026 --week 2 --dry-run
+  python scripts/run_2026_stage_snapshots.py --stage ALL --season 2026 --week 2
 """
 from __future__ import annotations
 
@@ -73,6 +88,46 @@ def resolve_current_card(games: pd.DataFrame, as_of_utc) -> tuple[pd.DataFrame, 
         "tue_cutoff_utc": str(tue_cutoff),
         "season": seasons[0] if len(seasons) == 1 else seasons,
         "week": weeks[0] if len(weeks) == 1 else weeks,
+        "card_game_count": int(len(kickoffs)),
+    }
+
+
+def resolve_historical_card(games: pd.DataFrame, *, season: int, week) -> tuple[pd.DataFrame, dict]:
+    """One EXPLICITLY named card, for repairing a week that has gone by.
+
+    The sweep normally asks "which card is current?", which is right for
+    unattended operation and wrong for repair: once the card advances, a
+    past week becomes unreachable and any gap in it can never be filled.
+    Week 2's OPEN rows were quarantined for correction while Week 2 was
+    current, and the card moved to Week 3 before the corrected rows were
+    written -- so they would have stayed missing forever.
+
+    The card still comes from the SAME certified membership ledger the
+    current-card path uses; the only difference is that the operator names
+    the week instead of the clock choosing it. Nothing about stage cutoffs,
+    market evidence or model behaviour changes as a result.
+    """
+    ledger = he.build_horizon_membership_ledger(games)
+    match = ledger[
+        (ledger["season"].astype(int) == int(season))
+        & (ledger["week"].astype(str) == str(week))
+    ]
+    if match.empty:
+        return pd.DataFrame(columns=["game_id", "scheduled_kickoff_utc"]), {
+            "status": "NO_SUCH_CARD",
+            "season": int(season),
+            "week": str(week),
+        }
+    cutoffs = sorted({str(c) for c in match["tue_cutoff_utc"]})
+    kickoffs = games[games["game_id"].astype(str).isin(set(match["game_id"].astype(str)))][
+        ["game_id", "scheduled_kickoff_utc"]
+    ].reset_index(drop=True)
+    return kickoffs, {
+        "status": "OK",
+        "mode": "HISTORICAL_REPAIR",
+        "tue_cutoff_utc": cutoffs[0] if len(cutoffs) == 1 else cutoffs,
+        "season": int(season),
+        "week": str(week),
         "card_game_count": int(len(kickoffs)),
     }
 
@@ -138,16 +193,44 @@ def run(
     market_capture_manifest: Path | None,
     data_root: Path | None = None,
     games: pd.DataFrame | None = None,
+    historical_season: int | None = None,
+    historical_week=None,
+    dry_run: bool = False,
     **batch_kwargs,
 ) -> dict:
+    """One sweep. Current-card by default; an explicitly named card on repair.
+
+    ``historical_season``/``historical_week`` switch ONLY which card is
+    selected. Every stage rule downstream is the same code the scheduled
+    sweep runs, so a repaired week is resolved exactly as it would have been
+    at the time.
+
+    This entry point never publishes and never writes ``latest.json`` in
+    either mode -- publication is a separate script the sweep orchestrator
+    calls afterwards -- so repairing a past week structurally cannot disturb
+    the current public feed.
+    """
     as_of_utc = prod._as_utc(as_of) if as_of else prod.utc_now()
+    historical = historical_season is not None or historical_week is not None
+    if historical and (historical_season is None or historical_week is None):
+        raise SystemExit("historical repair requires BOTH --season and --week")
     if games is None:
         games, _ = prod.load_games_population_with_provenance()
         games = prod.filter_reg_post(games)
 
-    card, card_info = resolve_current_card(games, as_of_utc)
+    if historical:
+        card, card_info = resolve_historical_card(
+            games, season=historical_season, week=historical_week
+        )
+    else:
+        card, card_info = resolve_current_card(games, as_of_utc)
     if card_info["status"] != "OK":
-        return {"status": "NO_CURRENT_CARD", "as_of_utc": str(as_of_utc), "card": card_info, "stages": []}
+        return {
+            "status": card_info["status"],
+            "as_of_utc": str(as_of_utc),
+            "card": card_info,
+            "stages": [],
+        }
 
     # OPEN is a fact about the season's ACCUMULATED evidence, and a historical
     # MID/CLOSE can only be priced from an observation that predates it. Both
@@ -168,6 +251,42 @@ def run(
     observations = discover_open_observations(card, quotes=accumulated)
 
     stages = list(st.SNAPSHOT_STAGES) if stage == STAGE_ALL else [st.validate_stage(stage)]
+
+    if dry_run:
+        # Plan only. Names every stage that WOULD be written, and why each
+        # game is otherwise skipped, without touching the ledger.
+        planned = []
+        for one in stages:
+            batches, skipped = ex.plan_stage_batches(
+                stage=one,
+                card=card,
+                as_of_utc=as_of_utc,
+                open_observations=observations,
+                operational_root=operational_root,
+                season=card_info["season"],
+                week=card_info["week"],
+            )
+            planned.append(
+                {
+                    "stage": one,
+                    "due_batches": len(batches),
+                    "would_write": [
+                        {"cutoff_utc": str(b.cutoff_utc), "game_ids": list(b.game_ids)}
+                        for b in batches
+                    ],
+                    "skipped": skipped,
+                }
+            )
+        return {
+            "status": "DRY_RUN",
+            "as_of_utc": str(as_of_utc),
+            "card": card_info,
+            "stage_archive": archive_provenance,
+            "open_observations": {k: str(v) for k, v in sorted(observations.items())},
+            "stages": planned,
+            "wrote_nothing": True,
+        }
+
     results = [
         ex.run_due_stage_snapshots(
             stage=one,
@@ -201,6 +320,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--operational-root", default=None)
     parser.add_argument("--market-capture-manifest", default=None)
     parser.add_argument("--data-root", default=None, help="Override NFL_MODEL_DATA_ROOT (tests).")
+    parser.add_argument(
+        "--season", type=int, default=None,
+        help="Repair an explicitly named past card. Requires --week. Default: the current card.",
+    )
+    parser.add_argument("--week", default=None, help="Repair this week. Requires --season.")
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Report what would be written and write nothing.",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.operational_root) if args.operational_root else prod.artifact_root()
@@ -210,11 +338,14 @@ def main(argv: list[str] | None = None) -> int:
         operational_root=root,
         market_capture_manifest=Path(args.market_capture_manifest) if args.market_capture_manifest else None,
         data_root=Path(args.data_root) if args.data_root else None,
+        historical_season=args.season,
+        historical_week=args.week,
+        dry_run=args.dry_run,
     )
     print(json.dumps(result, indent=2, sort_keys=True, default=str))
     # Exit 0 for a clean no-op (nothing due) as well as for successful
     # execution; a scheduled sweep that finds nothing to do is not a failure.
-    return 0 if result["status"] in ("OK", "NO_CURRENT_CARD") else 3
+    return 0 if result["status"] in ("OK", "DRY_RUN", "NO_CURRENT_CARD") else 3
 
 
 if __name__ == "__main__":
