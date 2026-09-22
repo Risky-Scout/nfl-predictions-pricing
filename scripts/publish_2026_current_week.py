@@ -53,7 +53,11 @@ def main(argv: list[str] | None = None) -> int:
     as_of_utc = prod._as_utc(args.as_of) if args.as_of else prod.utc_now()
 
     games = prod.filter_reg_post(prod.load_games_population_with_provenance()[0])
-    card, card_info = _stage.resolve_current_card(games, as_of_utc)
+    # The card that is still publicly LIVE, which during a rollover is not
+    # the same as the card that has become current -- see
+    # resolve_publication_card. Shared with the sweep so the two cannot
+    # disagree about which week the page is showing.
+    card, card_info = _stage.resolve_publication_card(games, as_of_utc)
     if card_info["status"] != "OK":
         print(json.dumps({"status": "NO_CURRENT_CARD", "card": card_info}, indent=2))
         return 0

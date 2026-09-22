@@ -208,6 +208,50 @@ def resolve_active_cards(
     return active
 
 
+def resolve_publication_card(games: pd.DataFrame, as_of_utc) -> tuple[pd.DataFrame, dict]:
+    """The card the PUBLIC feed should show right now.
+
+    The feed carries exactly one ``(season, week)``, so a rollover forces a
+    choice, and "whichever card is current" is the wrong one. The card turns
+    over on its TUE cutoff, which in 2026 was the Monday MORNING -- so the
+    public page would have dropped Week 2's Monday-night game roughly 18
+    hours before it kicked off, and its CLOSE, landing at 23:15Z, would never
+    have reached the feed at all.
+
+    Publish the OLDEST still-active card that has a game yet to kick off.
+    That keeps a week on the page for exactly as long as it still has
+    something to show, and hands over the moment it does not:
+
+        Mon 05:50Z  Week 2 -- Monday-nighter still ahead
+        Mon 23:30Z  Week 2 -- its CLOSE is now recorded and publishable
+        Tue 01:00Z  Week 3 -- Week 2 has no pregame game left
+
+    A previous card whose games have all kicked off can never pin the page,
+    even if some stage of it is still unrecorded, because the rule asks about
+    KICKOFFS rather than about ledger state. Those are deliberately different
+    questions: execution activity says whether a stage can still be recorded,
+    while publication liveness says whether the public still has a game to
+    look at. A week whose stages are all written is finished for the sweep
+    but still live on the page until its last game starts.
+    """
+    as_of = prod._as_utc(as_of_utc)
+    current_card, current_info = resolve_current_card(games, as_of)
+    if current_info["status"] != "OK":
+        return current_card, current_info
+
+    candidates = []
+    previous = _previous_card(games, current_info["tue_cutoff_utc"])
+    if previous is not None:
+        candidates.append(previous)
+    candidates.append((current_card, current_info))
+
+    for card, info in candidates:  # oldest first
+        if any(prod._as_utc(k) > as_of for k in card["scheduled_kickoff_utc"]):
+            return card, {**info, "publication_role": "LIVE_CARD"}
+    # Nothing anywhere is still pregame; keep serving the current card.
+    return current_card, {**current_info, "publication_role": "CURRENT_NOTHING_PREGAME"}
+
+
 def _previous_card(games: pd.DataFrame, current_cutoff) -> tuple[pd.DataFrame, dict] | None:
     """The card immediately before the current one, or ``None``.
 

@@ -393,3 +393,69 @@ def test_the_feed_publishes_close_ahead_of_open_and_mid():
     feed = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(feed)
     assert feed.PUBLICATION_PREFERENCE[0] == st.STAGE_CLOSE
+
+
+# ===========================================================================
+# 6. The PUBLIC feed must not hand over before the previous week is done.
+#
+# The feed carries exactly one (season, week), so a rollover forces a choice.
+# Publishing "whichever card is current" would have dropped Week 2's
+# Monday-night game from the page ~18 hours before it kicked off, and its
+# CLOSE at 23:15Z would never have reached the feed at all.
+# ===========================================================================
+def test_the_page_keeps_the_previous_week_while_its_game_is_still_ahead(estate):
+    _, info = entry.resolve_publication_card(estate["games"], MONDAY_MORNING)
+    assert info["week"] == "2"
+    assert info["publication_role"] == "LIVE_CARD"
+
+
+def test_the_current_card_alone_would_have_dropped_the_monday_game(estate):
+    """Pins the defect, so it cannot silently return."""
+    _, current = entry.resolve_current_card(estate["games"], MONDAY_MORNING)
+    assert current["week"] == "3"
+    mnf = estate["games"].loc[
+        estate["games"]["game_id"] == W2_MON_GAME, "scheduled_kickoff_utc"
+    ].iloc[0]
+    assert pd.Timestamp(mnf) > MONDAY_MORNING
+
+
+def test_the_due_monday_close_is_on_the_published_card(estate):
+    """The requirement: a legitimately due previous-week CLOSE stays eligible
+    for the normal publication path."""
+    _sweep(estate, AFTER_MONDAY_CLOSE)
+    card, info = entry.resolve_publication_card(estate["games"], AFTER_MONDAY_CLOSE)
+    assert info["week"] == "2"
+    assert W2_MON_GAME in set(card["game_id"])
+    assert _recorded(estate, week=2, game_id=W2_MON_GAME, stage=st.STAGE_CLOSE) is not None
+
+
+def test_the_page_hands_over_once_the_previous_week_has_kicked_off(estate):
+    _, info = entry.resolve_publication_card(estate["games"], pd.Timestamp("2026-09-22T01:00:00Z"))
+    assert info["week"] == "3"
+
+
+def test_an_ordinary_midweek_instant_publishes_the_current_card(estate):
+    _sweep(estate, AFTER_MONDAY_CLOSE)
+    _, info = entry.resolve_publication_card(estate["games"], pd.Timestamp("2026-09-23T12:00:00Z"))
+    assert info["week"] == "3"
+
+
+def test_a_stalled_previous_card_cannot_pin_the_page(estate):
+    """Kickoffs decide, not ledger state -- so an unrecorded stage on a week
+    whose games have all been played never holds the page hostage."""
+    after_all_week2_kickoffs = pd.Timestamp("2026-09-22T06:00:00Z")
+    card = estate["games"][estate["games"]["week"] == 2][["game_id", "scheduled_kickoff_utc"]]
+    assert entry.card_still_stage_active(
+        card, season=2026, week="2", operational_root=estate["artifacts"]
+    ), "precondition: Week 2 still has unrecorded stages"
+
+    _, info = entry.resolve_publication_card(estate["games"], after_all_week2_kickoffs)
+    assert info["week"] == "3"
+
+
+def test_the_publisher_uses_the_shared_publication_resolver():
+    """Stated once, not twice: the publisher and the sweep cannot disagree
+    about which week the page is showing."""
+    source = (REPO_ROOT / "scripts" / "publish_2026_current_week.py").read_text(encoding="utf-8")
+    assert "_stage.resolve_publication_card" in source
+    assert "_stage.resolve_current_card" not in source
