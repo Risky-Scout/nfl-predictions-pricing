@@ -40,12 +40,23 @@ stage_entry = _load(REPO_ROOT / "scripts" / "run_2026_stage_snapshots.py", "_sta
 
 
 # ===========================================================================
-# 1. Zero due means no-op, regardless of any old artifact-side latest.json.
+# 1. Zero due is a no-op in the STAGE LEDGER, and nothing more than that.
 #
 #    WHAT THE OLD TEST MISSED: it built an estate with NO latest.json, so the
 #    guard's second condition was vacuously true and the bug was invisible.
 #    The live estate carries one from a previous publication, so the guard
 #    never fired and every idle sweep drove into assembly and exit 10.
+#
+#    SUPERSEDED IN PART. The hotfix this section was written for fixed that by
+#    returning from the sweep on a zero-due firing, which was only safe while
+#    assembly refused a week with no CLOSE yet. Once PR #58 gave such a week a
+#    valid empty envelope, the early return became the defect: publication was
+#    unreachable on exactly the idle sweeps that needed it. A zero-due sweep
+#    now continues to publication and the publisher decides. What survives
+#    unchanged, and is still asserted below, is that the verdict depends only
+#    on the due count -- never on the state of the filesystem -- and that a
+#    failing assembly still fails the sweep closed.
+#    tests/test_zero_due_still_publishes.py owns the new contract in full.
 # ===========================================================================
 STUB = """#!/usr/bin/env bash
 set -euo pipefail
@@ -59,21 +70,31 @@ case "${1}" in
 */attach_2026_results_from_population.py) echo attached ;;
 */report_2026_snapshot_performance.py) echo reported ;;
 */publish_2026_current_week.py)
-  # The live failure mode: with nothing executed, assembly correctly refuses.
-  # If the sweep ever invokes this on a zero-due firing, the test fails.
   echo "FEED_ASSEMBLER_WAS_INVOKED" >&2
-  echo 'FAIL_CLOSED: no game in the current week has a publishable snapshot yet' >&2
-  exit 2 ;;
+  out=""
+  while [ $# -gt 0 ]; do
+    if [ "${1}" = "--output" ]; then out="${2}"; shift 2; else shift; fi
+  done
+  if [ "@PUBLISH_EXIT@" -ne 0 ]; then
+    echo 'FAIL_CLOSED: no game in the current week has a publishable snapshot yet' >&2
+    exit @PUBLISH_EXIT@
+  fi
+  mkdir -p "$(dirname "${out}")"
+  printf '%s\\n' '@PUBLISHED_FEED@' > "${out}"
+  ;;
 */publish_wizard_nfl_local.py) echo published ;;
 */prune_replaceable_artifacts.py) echo pruned ;;
 *) echo "unexpected: ${1}" >&2; exit 97 ;;
 esac
 """
 
-EXISTING_FEED = b'{"schema_version": "wizard-nfl-pricing-v2", "games": []}\n'
+EXISTING_FEED = b'{"schema_version": "wizard-nfl-pricing-v2", "week": 1, "games": []}\n'
+PUBLISHED_FEED = '{"schema_version": "wizard-nfl-pricing-v2", "week": 3, "games": []}'
 
 
-def _estate(tmp_path: Path, *, due: int, with_existing_feed: bool) -> dict:
+def _estate(
+    tmp_path: Path, *, due: int, with_existing_feed: bool, publish_exit: int = 0
+) -> dict:
     home = tmp_path / "nfl-production-2026"
     for sub in ("repo/scripts", "venv/bin", "logs", "artifacts", "state"):
         (home / sub).mkdir(parents=True, exist_ok=True)
@@ -84,7 +105,15 @@ def _estate(tmp_path: Path, *, due: int, with_existing_feed: bool) -> dict:
         feed_path.write_bytes(EXISTING_FEED)
 
     stub = home / "venv" / "bin" / "python"
-    stub.write_text(STUB.replace("@PY@", sys.executable).replace("@DUE@", str(due)), encoding="utf-8")
+    body = STUB
+    for token, value in (
+        ("@PY@", sys.executable),
+        ("@DUE@", str(due)),
+        ("@PUBLISH_EXIT@", str(publish_exit)),
+        ("@PUBLISHED_FEED@", PUBLISHED_FEED),
+    ):
+        body = body.replace(token, value)
+    stub.write_text(body, encoding="utf-8")
     stub.chmod(0o755)
 
     return {"home": home, "feed": feed_path}
@@ -103,8 +132,8 @@ def _run_sweep(estate: dict, *extra: str) -> subprocess.CompletedProcess:
     )
 
 
-def test_zero_due_no_ops_even_when_an_old_feed_exists(tmp_path):
-    """The exact live condition. The assembler is rigged to fail if called."""
+def test_zero_due_is_still_a_stage_ledger_no_op_when_an_old_feed_exists(tmp_path):
+    """The exact live condition. Nothing executes, and the sweep says so."""
     estate = _estate(tmp_path, due=0, with_existing_feed=True)
     result = _run_sweep(estate)
 
@@ -113,31 +142,32 @@ def test_zero_due_no_ops_even_when_an_old_feed_exists(tmp_path):
     assert "stage_snapshot_status=OK" in result.stdout
 
 
-def test_the_feed_assembler_is_never_invoked_on_a_zero_due_sweep(tmp_path):
+def test_the_feed_assembler_is_invoked_on_a_zero_due_sweep(tmp_path):
+    """The inversion. Publication is no longer conditional on execution."""
     estate = _estate(tmp_path, due=0, with_existing_feed=True)
     result = _run_sweep(estate)
-    assert "FEED_ASSEMBLER_WAS_INVOKED" not in (result.stdout + result.stderr)
-    assert "=== 7. current-week publication ===" not in result.stdout
+    assert "FEED_ASSEMBLER_WAS_INVOKED" in (result.stdout + result.stderr)
+    assert "=== 7. current-week publication ===" in result.stdout
 
 
-def test_the_existing_feed_is_left_byte_identical(tmp_path):
+def test_the_existing_feed_is_replaced_by_the_current_week(tmp_path):
     estate = _estate(tmp_path, due=0, with_existing_feed=True)
     _run_sweep(estate)
-    assert estate["feed"].read_bytes() == EXISTING_FEED
+    assert estate["feed"].read_bytes() != EXISTING_FEED
+    assert json.loads(estate["feed"].read_text())["week"] == 3
 
 
-def test_zero_due_still_no_ops_when_no_feed_exists(tmp_path):
-    """The case the old test covered stays covered."""
+def test_zero_due_publishes_a_first_feed_when_none_exists(tmp_path):
     estate = _estate(tmp_path, due=0, with_existing_feed=False)
     result = _run_sweep(estate)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "snapshot_action=NOOP_NOTHING_DUE" in result.stdout
-    assert not estate["feed"].exists()
+    assert json.loads(estate["feed"].read_text())["week"] == 3
 
 
 def test_the_no_op_still_completes_the_work_that_precedes_it(tmp_path):
-    """Evidence refresh, population update and recalibration are not skipped
-    -- only assembly and publication are."""
+    """Evidence refresh, population update and recalibration were never part
+    of the no-op, and still are not."""
     estate = _estate(tmp_path, due=0, with_existing_feed=True)
     result = _run_sweep(estate)
     assert "games_evidence_refresh=OK" in result.stdout
@@ -149,12 +179,21 @@ def test_a_real_executed_batch_still_proceeds_to_publication(tmp_path):
     """The no-op must not swallow a genuine run. With a due batch the sweep
     reaches assembly -- and here the rigged assembler makes it fail closed,
     which is exactly the behaviour that must survive."""
-    estate = _estate(tmp_path, due=2, with_existing_feed=True)
+    estate = _estate(tmp_path, due=2, with_existing_feed=True, publish_exit=2)
     result = _run_sweep(estate)
 
     assert result.returncode == 10, result.stdout + result.stderr
     assert "FEED_ASSEMBLER_WAS_INVOKED" in result.stderr
     assert "snapshot_action=NOOP_NOTHING_DUE" not in result.stdout
+
+
+def test_a_zero_due_sweep_fails_closed_on_the_same_assembly_failure(tmp_path):
+    """And a no-op does not get a softer verdict than an executed run."""
+    estate = _estate(tmp_path, due=0, with_existing_feed=True, publish_exit=2)
+    result = _run_sweep(estate)
+
+    assert result.returncode == 10, result.stdout + result.stderr
+    assert estate["feed"].read_bytes() == EXISTING_FEED
 
 
 def test_the_guard_reads_only_the_due_count(tmp_path):

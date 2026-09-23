@@ -592,9 +592,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify the public feed is serving exactly these bytes
-        # Only when this sweep actually published something. A clean no-op
-        # publishes nothing, so there are no new bytes to prove.
-        if: ${{ inputs.publish == 'publish' && steps.sweep.outputs.snapshot_action == 'EXECUTED' }}
+        # Keyed on whether bytes were actually PUBLISHED, not on whether a
+        # stage executed. A sweep with nothing due still publishes the current
+        # week -- that is the whole point of the empty-envelope path -- so
+        # gating on snapshot_action would skip verification of a real
+        # publication. An empty published_sha256 means nothing was written.
+        if: ${{ inputs.publish == 'publish' && steps.sweep.outputs.published_sha256 != '' }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip >/dev/null

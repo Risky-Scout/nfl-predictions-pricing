@@ -286,23 +286,29 @@ def test_the_certified_cutoff_rule_is_exactly_as_strict_as_before(tmp_path):
 
 
 # ===========================================================================
-# 3. A zero-due sweep is a clean no-op that publishes nothing.
+# 3. A zero-due sweep is a clean no-op IN THE STAGE LEDGER.
 #
 #    Live: FAIL_CLOSED "no game in the current week has a publishable
 #          snapshot yet", exit 10, on a firing with due_batches=0.
+#
+#    The first fix made that firing return before assembly. PR #58 then gave
+#    an unclosed week a valid empty envelope, which made the early return the
+#    new defect -- see tests/test_zero_due_still_publishes.py. The no-op is
+#    now about what EXECUTED, not about what is published.
 # ===========================================================================
-def test_the_sweep_counts_due_batches_before_deciding_to_publish(sweep_text):
+def test_the_sweep_counts_due_batches_before_reporting_what_executed(sweep_text):
     assert "due_batches=" in sweep_text
-    assert sweep_text.index("due_batches=") < sweep_text.index("publish_2026_current_week.py")
+    assert sweep_text.index("due_batches=") < sweep_text.index("snapshot_action=")
 
 
-def test_a_zero_due_sweep_exits_clean_without_touching_latest_json(sweep_text):
-    block = sweep_text[sweep_text.index("NOOP_NOTHING_DUE") - 800: sweep_text.index("=== 6.")]
-    assert "snapshot_action=NOOP_NOTHING_DUE" in block
-    assert "stage_snapshot_status=OK" in block
-    assert "exit 0" in block
-    # The no-op returns BEFORE assembly, so latest.json is never written.
-    assert sweep_text.index("NOOP_NOTHING_DUE") < sweep_text.index("publish_2026_current_week.py")
+def test_a_zero_due_sweep_reports_a_no_op_without_terminating(sweep_text):
+    assert "snapshot_action=NOOP_NOTHING_DUE" in sweep_text
+    assert "stage_snapshot_status=OK" in sweep_text
+    # The no-op reports itself AFTER publication, because publication is not
+    # what it is a no-op about.
+    assert sweep_text.index("publish_2026_current_week.py") < sweep_text.index(
+        "snapshot_action=NOOP_NOTHING_DUE"
+    )
 
 
 def test_the_no_op_is_narrow_and_never_masks_a_real_failure(sweep_text):
@@ -323,15 +329,17 @@ def test_dry_run_never_publishes(sweep_text):
     assert "publish_args+=(--dry-run)" in sweep_text
 
 
-def test_the_workflow_only_verifies_public_bytes_when_something_was_published(workflow):
+def test_the_workflow_verifies_public_bytes_whenever_something_was_published(workflow):
+    """Keyed on the bytes, not on the stage ledger: an idle sweep publishes
+    the current week too, and those bytes deserve the same proof."""
     steps = workflow["jobs"]["snapshot-sweep"]["steps"]
     verify = next(s for s in steps if "verify_public_nfl_feed.py" in str(s.get("run", "")))
-    assert "snapshot_action == 'EXECUTED'" in verify["if"]
+    assert "published_sha256 != ''" in verify["if"]
 
 
 def test_a_zero_due_sweep_runs_end_to_end_and_exits_zero(tmp_path):
-    """The real script, on a real (synthetic) estate with nothing due and no
-    published state. Exit 0, the declared status, and no latest.json."""
+    """The real script, on a real (synthetic) estate with nothing due. Exit
+    0, the declared no-op status, and the current week published anyway."""
     home = tmp_path / "nfl-production-2026"
     for sub in ("repo/scripts", "venv/bin", "logs", "artifacts", "state"):
         (home / sub).mkdir(parents=True, exist_ok=True)
@@ -347,6 +355,18 @@ def test_a_zero_due_sweep_runs_end_to_end_and_exits_zero(tmp_path):
         "*/run_2026_stage_snapshots.py)\n"
         '  echo \'{"status": "OK", "stages": [{"stage": "OPEN", "due_batches": 0, "executions": []}]}\' ;;\n'
         "*/generate_2026_recalibration_candidate.py) echo recalibration ;;\n"
+        "*/attach_2026_results_from_population.py) echo attached ;;\n"
+        "*/report_2026_snapshot_performance.py) echo reported ;;\n"
+        "*/publish_2026_current_week.py)\n"
+        '  out=""\n'
+        '  while [ $# -gt 0 ]; do\n'
+        '    if [ "${1}" = "--output" ]; then out="${2}"; shift 2; else shift; fi\n'
+        "  done\n"
+        '  mkdir -p "$(dirname "${out}")"\n'
+        "  printf '%s' '{\"schema_version\": \"wizard-nfl-pricing-v2\", \"games\": []}'"
+        ' > "${out}" ;;\n'
+        "*/publish_wizard_nfl_local.py) echo published ;;\n"
+        "*/prune_replaceable_artifacts.py) echo pruned ;;\n"
         '*) echo "unexpected: ${1}" >&2; exit 97 ;;\n'
         "esac\n",
         encoding="utf-8",
@@ -365,7 +385,7 @@ def test_a_zero_due_sweep_runs_end_to_end_and_exits_zero(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "snapshot_action=NOOP_NOTHING_DUE" in result.stdout
     assert "stage_snapshot_status=OK" in result.stdout
-    assert not (home / "artifacts" / "public").exists()
+    assert "=== 7. current-week publication ===" in result.stdout
 
 
 # ===========================================================================
