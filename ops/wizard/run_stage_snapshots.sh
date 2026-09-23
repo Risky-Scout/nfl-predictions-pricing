@@ -180,28 +180,23 @@ case "${recalibration_exit}" in
     *) echo "FAIL CLOSED: unexpected recalibration failure (exit ${recalibration_exit})" >&2; exit 9 ;;
 esac
 
+# NOTHING NEW TO EXECUTE IS NOT THE SAME AS NOTHING TO PUBLISH.
+#
+# This used to `exit 0` right here whenever due_batches was zero. That was
+# added when feed assembly still failed closed on a week with no CLOSE yet, so
+# skipping publication was the only way an idle sweep could succeed. PR #58
+# removed that reason -- an empty current week now publishes a valid envelope
+# -- and the guard then became the thing PREVENTING the fix from ever running:
+# publication was unreachable on exactly the sweeps that needed it, and the
+# public page kept serving a Week-1 card from 2026-09-15.
+#
+# So the sweep no longer stops here. Stage execution is still a no-op and
+# still reports NOOP_NOTHING_DUE; the difference is that the ordinary
+# publication stage below now runs either way and decides for itself what the
+# current week should show. Nothing is fabricated to force it: no stage is
+# invented, no capture is taken, and the publisher still publishes CLOSE-only.
 if [ "${due_batches}" -eq 0 ]; then
-    # ZERO DUE IS A NO-OP, FULL STOP.
-    #
-    # This used to also require that no artifact-side latest.json existed, on
-    # the theory that an existing feed should be refreshed. That was wrong in
-    # both directions. A sweep with nothing due has produced no new forecast,
-    # so there is nothing for a republication to say; and because the live
-    # estate DOES carry an old latest.json, the extra condition meant the
-    # guard never fired in production and every idle sweep drove on into feed
-    # assembly and failed with "no game in the current week has a publishable
-    # snapshot yet".
-    #
-    # An old artifact-side file is evidence of a PREVIOUS publication. It is
-    # not a reason to attempt a new one, and it is not something this sweep
-    # needs to revalidate -- the public verifier does that against the live
-    # URL after a run that actually published.
-    #
-    # Everything already done above (evidence refresh, population update,
-    # recalibration) stands; only assembly and publication are skipped.
-    echo "snapshot_action=NOOP_NOTHING_DUE"
-    echo "stage_snapshot_status=OK"
-    exit 0
+    echo "stage_execution=NOOP_NOTHING_DUE"
 fi
 
 # --- 6. results and season reporting ---------------------------------------
@@ -239,7 +234,13 @@ prune_args=(--artifact-root "${NFL_MODEL_ARTIFACT_ROOT}")
 [ "${PRUNE_APPLY}" -eq 1 ] && prune_args+=(--apply)
 "${PY}" scripts/prune_replaceable_artifacts.py "${prune_args[@]}"
 
-# Reaching here means at least one batch was due and executed: the zero-due
-# case returned above, before assembly.
-echo "snapshot_action=EXECUTED"
+# Both paths reach here now. snapshot_action describes what STAGE EXECUTION
+# did, which is the thing that was or was not due; whether anything was
+# published is a separate fact, reported by the publisher itself and by
+# PUBLISHED_SHA256 above.
+if [ "${due_batches}" -eq 0 ]; then
+    echo "snapshot_action=NOOP_NOTHING_DUE"
+else
+    echo "snapshot_action=EXECUTED"
+fi
 echo "stage_snapshot_status=OK"
