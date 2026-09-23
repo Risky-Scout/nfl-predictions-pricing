@@ -57,6 +57,7 @@ from nfl_hybrid.data import bdl_market_bridge as bridge  # noqa: E402
 from nfl_hybrid.features import horizon_elo as he  # noqa: E402
 from nfl_hybrid.production import run_2026 as prod  # noqa: E402
 from nfl_hybrid.production import snapshot_execution_2026 as ex  # noqa: E402
+from nfl_hybrid.production import snapshot_performance_ledger_2026 as pl  # noqa: E402
 from nfl_hybrid.production import snapshot_stages_2026 as st  # noqa: E402
 
 STAGE_ALL = "ALL"
@@ -128,6 +129,154 @@ def resolve_historical_card(games: pd.DataFrame, *, season: int, week) -> tuple[
         "tue_cutoff_utc": cutoffs[0] if len(cutoffs) == 1 else cutoffs,
         "season": int(season),
         "week": str(week),
+        "card_game_count": int(len(kickoffs)),
+    }
+
+
+def card_still_stage_active(
+    card: pd.DataFrame, *, season: int, week, operational_root: Path
+) -> bool:
+    """Whether any stage on this card can still legitimately be recorded.
+
+    A card is finished when every game's resolvable stage is already in the
+    performance ledger. Until then it stays active -- including for stages
+    whose cutoff has not arrived yet, which is the whole point: a Monday-night
+    CLOSE is still ahead of us on the Monday morning the next card becomes
+    current.
+
+    OPEN is deliberately NOT counted here. It depends on observed market
+    evidence that may never have existed for a game, so an unobservable OPEN
+    would keep a finished card active forever. MID and CLOSE are derived from
+    the schedule and are therefore always resolvable for a pregame game.
+    """
+    for row in card.itertuples(index=False):
+        kickoff = prod._as_utc(row.scheduled_kickoff_utc)
+        for stage in (st.STAGE_MID, st.STAGE_CLOSE):
+            if pl.read_snapshot(
+                operational_root, season=season, week=week,
+                game_id=str(row.game_id), stage=stage,
+            ) is not None:
+                continue
+            cutoff = (
+                st.close_cutoff_utc(kickoff)
+                if stage == st.STAGE_CLOSE
+                else st.mid_anchor_utc(st.card_earliest_kickoff_utc(card["scheduled_kickoff_utc"]))
+            )
+            if st.is_strictly_pregame(cutoff, kickoff):
+                return True
+    return False
+
+
+def resolve_active_cards(
+    games: pd.DataFrame, as_of_utc, *, operational_root: Path | None = None
+) -> list[tuple[pd.DataFrame, dict]]:
+    """Every card a sweep must process right now, oldest first.
+
+    THE ROLLOVER GAP THIS CLOSES. The card becomes "current" on its own TUE
+    cutoff, but the PREVIOUS card is not finished then -- its Monday-night
+    game still closes at kickoff minus 60, which in 2026 Week 2 was
+    ``2026-09-21T23:15:00Z``, roughly 17 hours AFTER the sweep had already
+    advanced to Week 3. A sweep that only ever looks at the current card
+    therefore walks away from a CLOSE that has not happened yet, and once it
+    does the stage can never be recorded by any scheduled run.
+
+    Returning the previous card alongside the current one fixes that without
+    delaying anything: next week's OPEN evidence keeps accumulating on the
+    current card in the same sweep. The previous card drops out as soon as its
+    remaining stages are recorded, so this is bounded to a real overlap rather
+    than an ever-growing backlog.
+    """
+    current_card, current_info = resolve_current_card(games, as_of_utc)
+    if current_info["status"] != "OK":
+        return [(current_card, current_info)]
+
+    active: list[tuple[pd.DataFrame, dict]] = []
+    if operational_root is not None:
+        previous = _previous_card(games, current_info["tue_cutoff_utc"])
+        if previous is not None:
+            previous_card, previous_info = previous
+            if card_still_stage_active(
+                previous_card,
+                season=previous_info["season"],
+                week=previous_info["week"],
+                operational_root=operational_root,
+            ):
+                previous_info = {**previous_info, "role": "PREVIOUS_STILL_ACTIVE"}
+                active.append((previous_card, previous_info))
+
+    active.append((current_card, {**current_info, "role": "CURRENT"}))
+    return active
+
+
+def resolve_publication_card(games: pd.DataFrame, as_of_utc) -> tuple[pd.DataFrame, dict]:
+    """The card the PUBLIC feed should show right now.
+
+    The feed carries exactly one ``(season, week)``, so a rollover forces a
+    choice, and "whichever card is current" is the wrong one. The card turns
+    over on its TUE cutoff, which in 2026 was the Monday MORNING -- so the
+    public page would have dropped Week 2's Monday-night game roughly 18
+    hours before it kicked off, and its CLOSE, landing at 23:15Z, would never
+    have reached the feed at all.
+
+    Publish the OLDEST still-active card that has a game yet to kick off.
+    That keeps a week on the page for exactly as long as it still has
+    something to show, and hands over the moment it does not:
+
+        Mon 05:50Z  Week 2 -- Monday-nighter still ahead
+        Mon 23:30Z  Week 2 -- its CLOSE is now recorded and publishable
+        Tue 01:00Z  Week 3 -- Week 2 has no pregame game left
+
+    A previous card whose games have all kicked off can never pin the page,
+    even if some stage of it is still unrecorded, because the rule asks about
+    KICKOFFS rather than about ledger state. Those are deliberately different
+    questions: execution activity says whether a stage can still be recorded,
+    while publication liveness says whether the public still has a game to
+    look at. A week whose stages are all written is finished for the sweep
+    but still live on the page until its last game starts.
+    """
+    as_of = prod._as_utc(as_of_utc)
+    current_card, current_info = resolve_current_card(games, as_of)
+    if current_info["status"] != "OK":
+        return current_card, current_info
+
+    candidates = []
+    previous = _previous_card(games, current_info["tue_cutoff_utc"])
+    if previous is not None:
+        candidates.append(previous)
+    candidates.append((current_card, current_info))
+
+    for card, info in candidates:  # oldest first
+        if any(prod._as_utc(k) > as_of for k in card["scheduled_kickoff_utc"]):
+            return card, {**info, "publication_role": "LIVE_CARD"}
+    # Nothing anywhere is still pregame; keep serving the current card.
+    return current_card, {**current_info, "publication_role": "CURRENT_NOTHING_PREGAME"}
+
+
+def _previous_card(games: pd.DataFrame, current_cutoff) -> tuple[pd.DataFrame, dict] | None:
+    """The card immediately before the current one, or ``None``.
+
+    Exactly one card back. A longer lookback would be a backlog sweeper, which
+    is a different thing and would quietly re-open weeks that were closed
+    deliberately.
+    """
+    ledger = he.build_horizon_membership_ledger(games)
+    cutoffs = sorted({pd.Timestamp(c) for c in ledger["tue_cutoff_utc"]})
+    current = pd.Timestamp(current_cutoff)
+    earlier = [c for c in cutoffs if c < current]
+    if not earlier:
+        return None
+
+    match = ledger[ledger["tue_cutoff_utc"] == max(earlier)]
+    seasons = sorted({int(s) for s in match["season"]})
+    weeks = sorted({str(w) for w in match["week"]})
+    kickoffs = games[games["game_id"].astype(str).isin(set(match["game_id"].astype(str)))][
+        ["game_id", "scheduled_kickoff_utc"]
+    ].reset_index(drop=True)
+    return kickoffs, {
+        "status": "OK",
+        "tue_cutoff_utc": str(max(earlier)),
+        "season": seasons[0] if len(seasons) == 1 else seasons,
+        "week": weeks[0] if len(weeks) == 1 else weeks,
         "card_game_count": int(len(kickoffs)),
     }
 
@@ -219,12 +368,14 @@ def run(
         games = prod.filter_reg_post(games)
 
     if historical:
-        card, card_info = resolve_historical_card(
-            games, season=historical_season, week=historical_week
-        )
+        active = [resolve_historical_card(games, season=historical_season, week=historical_week)]
     else:
-        card, card_info = resolve_current_card(games, as_of_utc)
-    if card_info["status"] != "OK":
+        # EVERY card still stage-active, not just the current one -- see
+        # resolve_active_cards for the Monday-night rollover this closes.
+        active = resolve_active_cards(games, as_of_utc, operational_root=operational_root)
+
+    if all(info["status"] != "OK" for _, info in active):
+        card_info = active[0][1]
         return {
             "status": card_info["status"],
             "as_of_utc": str(as_of_utc),
@@ -232,17 +383,73 @@ def run(
             "stages": [],
         }
 
+    stages = list(st.SNAPSHOT_STAGES) if stage == STAGE_ALL else [st.validate_stage(stage)]
+    resolved_data_root = data_root if data_root is not None else os.environ.get("NFL_MODEL_DATA_ROOT")
+
+    processed = [
+        _process_card(
+            card=card,
+            card_info=card_info,
+            stages=stages,
+            as_of_utc=as_of_utc,
+            operational_root=operational_root,
+            data_root=resolved_data_root,
+            games=games,
+            dry_run=dry_run,
+            **batch_kwargs,
+        )
+        for card, card_info in active
+        if card_info["status"] == "OK"
+    ]
+
+    everything = [stage_result for card in processed for stage_result in card["stages"]]
+    return {
+        "status": (
+            "DRY_RUN"
+            if dry_run
+            else ("OK" if all(s["status"] == "OK" for s in everything) else "FAIL_CLOSED")
+        ),
+        "as_of_utc": str(as_of_utc),
+        # The card this sweep considers primary, kept for readers that only
+        # ever expected one.
+        "card": processed[-1]["card"],
+        "active_cards": [card["card"] for card in processed],
+        "cards": processed,
+        "stage_archive": processed[-1]["stage_archive"],
+        "open_observations": processed[-1]["open_observations"],
+        "stages": everything,
+        **({"wrote_nothing": True} if dry_run else {}),
+    }
+
+
+def _process_card(
+    *,
+    card: pd.DataFrame,
+    card_info: dict,
+    stages: list[str],
+    as_of_utc,
+    operational_root: Path,
+    data_root,
+    games: pd.DataFrame | None,
+    dry_run: bool,
+    **batch_kwargs,
+) -> dict:
+    """One card, end to end. Identical to the single-card path it replaces.
+
+    Each card resolves its OWN observation archive, so processing two cards in
+    one sweep shares no evidence between them and creates no duplicate
+    capture, dataset or artifact -- each simply reads the archive that already
+    exists for its week.
+    """
     # OPEN is a fact about the season's ACCUMULATED evidence, and a historical
     # MID/CLOSE can only be priced from an observation that predates it. Both
     # need the archive, not just the capture this sweep happens to hold.
-    # Resolved only once a card exists, and tolerant of an unset root so a
-    # hermetic caller can run with no observation archive at all.
-    resolved_data_root = data_root if data_root is not None else os.environ.get("NFL_MODEL_DATA_ROOT")
+    # Tolerant of an unset root so a hermetic caller can run with no archive.
     archived = (
         []
-        if resolved_data_root is None
+        if data_root is None
         else ex.archived_stage_captures(
-            Path(resolved_data_root), season=card_info["season"], week=card_info["week"]
+            Path(data_root), season=card_info["season"], week=card_info["week"]
         )
     )
     accumulated, archive_provenance = (
@@ -250,12 +457,10 @@ def run(
     )
     observations = discover_open_observations(card, quotes=accumulated)
 
-    stages = list(st.SNAPSHOT_STAGES) if stage == STAGE_ALL else [st.validate_stage(stage)]
-
     if dry_run:
         # Plan only. Names every stage that WOULD be written, and why each
         # game is otherwise skipped, without touching the ledger.
-        planned = []
+        results = []
         for one in stages:
             batches, skipped = ex.plan_stage_batches(
                 stage=one,
@@ -266,9 +471,11 @@ def run(
                 season=card_info["season"],
                 week=card_info["week"],
             )
-            planned.append(
+            results.append(
                 {
                     "stage": one,
+                    "status": "DRY_RUN",
+                    "week": card_info["week"],
                     "due_batches": len(batches),
                     "would_write": [
                         {"cutoff_utc": str(b.cutoff_utc), "game_ids": list(b.game_ids)}
@@ -277,35 +484,28 @@ def run(
                     "skipped": skipped,
                 }
             )
-        return {
-            "status": "DRY_RUN",
-            "as_of_utc": str(as_of_utc),
-            "card": card_info,
-            "stage_archive": archive_provenance,
-            "open_observations": {k: str(v) for k, v in sorted(observations.items())},
-            "stages": planned,
-            "wrote_nothing": True,
-        }
+    else:
+        results = [
+            {
+                **ex.run_due_stage_snapshots(
+                    stage=one,
+                    horizon="TUE",
+                    card=card,
+                    as_of_utc=as_of_utc,
+                    operational_root=operational_root,
+                    open_observations=observations,
+                    archived_captures=archived,
+                    season=card_info["season"],
+                    week=card_info["week"],
+                    games=games,
+                    **batch_kwargs,
+                ),
+                "week": card_info["week"],
+            }
+            for one in stages
+        ]
 
-    results = [
-        ex.run_due_stage_snapshots(
-            stage=one,
-            horizon="TUE",
-            card=card,
-            as_of_utc=as_of_utc,
-            operational_root=operational_root,
-            open_observations=observations,
-            archived_captures=archived,
-            season=card_info["season"],
-            week=card_info["week"],
-            games=games,
-            **batch_kwargs,
-        )
-        for one in stages
-    ]
     return {
-        "status": "OK" if all(r["status"] == "OK" for r in results) else "FAIL_CLOSED",
-        "as_of_utc": str(as_of_utc),
         "card": card_info,
         "stage_archive": archive_provenance,
         "open_observations": {k: str(v) for k, v in sorted(observations.items())},
