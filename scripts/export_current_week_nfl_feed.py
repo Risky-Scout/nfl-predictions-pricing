@@ -24,10 +24,19 @@ whole publication closed rather than rewriting history -- so a game's
 published close can never drift, even if its forecast ledger were somehow
 re-derived.
 
-FUTURE GAMES STILL MOVE. A game that has not reached its CLOSE publishes from
-the best pregame snapshot it has -- MID if there is one, otherwise OPEN -- and
-is free to change on the next pass. That is the point: the page shows the
-current week, not a frozen Week-1 replay.
+CLOSE-ONLY. The public product is the closing projection. A game appears on
+the page once, when its CLOSE is recorded, and never before: OPEN and MID are
+archival performance evidence and are never a public fallback. The feed
+therefore ACCUMULATES through the week, gaining each game as it closes.
+
+A WEEK WITH NOTHING CLOSED YET IS STILL PUBLISHED. Between a week's last
+kickoff and the next week's first CLOSE there is genuinely nothing closed to
+show, and refusing to publish then is what left the page serving a Week-1
+card for eight days -- every attempt exited non-zero, so ``latest.json`` was
+never replaced and the site silently advertised a finished week as current.
+An empty envelope for the CORRECT week is the honest answer, and publication
+never falls back to an older week merely because the current one has no
+closes yet.
 
 NOTHING IS INVENTED. A game with no usable snapshot is simply absent from the
 feed; it is never published with a placeholder line, a stale line from another
@@ -72,7 +81,12 @@ TOP_LEVEL_KEY_ORDER = _v2.TOP_LEVEL_KEY_ORDER
 GAME_KEY_ORDER = _v2.GAME_KEY_ORDER
 
 # Best-available order: a game publishes from the latest stage it has reached.
-PUBLICATION_PREFERENCE = (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
+# CLOSE-ONLY. The public product is the closing projection; OPEN and MID are
+# archival performance evidence and are never a public fallback. The earlier
+# best-available order could in principle have shown a MID or OPEN price as
+# though it were final, which is a different product from the one this page
+# promises.
+PUBLICATION_PREFERENCE = (st.STAGE_CLOSE,)
 
 SIDECAR_NAME = "published_close_state.json"
 
@@ -240,9 +254,19 @@ def build_current_week_feed(
         ))
         unpublishable.pop(game_id, None)
 
-    if not dated:
-        _fail("no game in the current week has a publishable snapshot yet -- refusing to publish an empty feed")
-
+    # ZERO CLOSES IS A LEGITIMATE WEEK, NOT A FAILURE.
+    #
+    # Between a week's last kickoff and the next week's first CLOSE there is
+    # genuinely nothing closed to show. Treating that as fail-closed is what
+    # left the public page serving the Week-1 card for eight days: every
+    # publication attempt exited non-zero, so latest.json was never replaced
+    # and the site silently advertised a stale week as current.
+    #
+    # Publishing an empty envelope for the CORRECT week is the honest answer.
+    # It says "this is the current week and nothing has closed yet" instead of
+    # "here is a week that finished days ago". Fail-closed is reserved for
+    # actual corruption -- a contradicted frozen close, an unidentifiable
+    # record, a malformed game -- all of which still raise above.
     dated.sort(key=lambda pair: (pair[0], pair[1]["game_id"]))
     feed = {
         "schema_version": SCHEMA_VERSION,
@@ -293,7 +317,10 @@ def publish_current_week_feed(
     saved = save_close_state(artifact_root, season=season, week=week, state=state)
 
     return {
-        "status": "OK",
+        # Both are successes. AWAITING_FIRST_CLOSE simply names the state so
+        # an operator reading a log can tell "nothing has closed yet" apart
+        # from "something went wrong", without either failing the workflow.
+        "status": "OK" if feed["games"] else "OK_AWAITING_FIRST_CLOSE",
         "season": feed["season"],
         "week": feed["week"],
         "game_count": len(feed["games"]),
