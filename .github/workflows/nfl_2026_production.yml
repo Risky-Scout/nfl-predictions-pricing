@@ -156,6 +156,9 @@ jobs:
       run_daily: ${{ steps.gate.outputs.run_daily }}
       run_certified: ${{ steps.gate.outputs.run_certified }}
       run_snapshot_sweep: ${{ steps.gate.outputs.run_snapshot_sweep }}
+      # THE one publish decision. Every downstream job reads this output --
+      # none of them looks at inputs.publish again.
+      publish_mode: ${{ steps.gate.outputs.publish_mode }}
 
     steps:
       - name: Check out repository
@@ -194,9 +197,39 @@ jobs:
           MODE: ${{ inputs.mode }}
           DAILY_DUE: ${{ steps.decide.outputs.daily_due }}
           CERTIFIED_DUE: ${{ steps.decide.outputs.certified_due }}
+          PUBLISH_INPUT: ${{ inputs.publish }}
         run: |
           set -euo pipefail
           mode="${MODE:-auto}"
+
+          # EFFECTIVE PUBLISH MODE, DECIDED ONCE, HERE.
+          #
+          # `inputs` only exists for workflow_dispatch, so on a scheduled
+          # firing PUBLISH_INPUT is empty. That emptiness used to be read two
+          # different ways: the certified job took it to mean "publish", and
+          # the snapshot sweep took it to mean "dry_run". The sweep's reading
+          # was the accident. Scheduled production IS the production path --
+          # it is the only thing that runs unattended -- so a scheduled sweep
+          # that validates a card and throws it away publishes nothing, ever.
+          # That is what kept the public page on a Week-1 card even after the
+          # assembler, the sweep control flow and the deployment validator had
+          # all been fixed: run 36039577444 succeeded end to end and reported
+          # deployment status DRY_RUN.
+          #
+          # An empty input therefore means a schedule, and a schedule
+          # publishes. A workflow_dispatch always carries the choice (it is
+          # `required` with a default), so a manual run still says for itself
+          # whether it is a rehearsal. An unrecognised value is neither, and
+          # is refused rather than guessed at.
+          case "${PUBLISH_INPUT:-}" in
+            "")      publish_mode=publish ;;
+            publish) publish_mode=publish ;;
+            dry_run) publish_mode=dry_run ;;
+            *)
+              echo "FAIL CLOSED: unrecognised publish input '${PUBLISH_INPUT}'" >&2
+              exit 1
+              ;;
+          esac
 
           # Deployment -- anything that touches the Wizard server -- is allowed
           # from main only. Belt and braces with the wizard-production
@@ -236,6 +269,7 @@ jobs:
             echo "run_daily=${run_daily}"
             echo "run_certified=${run_certified}"
             echo "run_snapshot_sweep=${run_snapshot_sweep}"
+            echo "publish_mode=${publish_mode}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
@@ -252,6 +286,7 @@ jobs:
             echo "| certified_horizon | \`${{ steps.decide.outputs.certified_horizon }}\` |"
             echo "| certified_basis | \`${{ steps.decide.outputs.certified_basis }}\` |"
             echo "| deployment_allowed (main only) | \`${{ steps.gate.outputs.deployment_allowed }}\` |"
+            echo "| publish_mode | \`${{ steps.gate.outputs.publish_mode }}\` |"
             echo "| run_daily | \`${{ steps.gate.outputs.run_daily }}\` |"
             echo "| run_certified | \`${{ steps.gate.outputs.run_certified }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -370,7 +405,7 @@ jobs:
       SUPPLIED_MANIFEST: ${{ inputs.market_capture_manifest }}
       EXPECTED_CAPTURE_SHA256: ${{ inputs.market_capture_sha256 }}
       AS_OF: ${{ inputs.as_of }}
-      PUBLISH_MODE: ${{ inputs.publish || 'publish' }}
+      PUBLISH_MODE: ${{ needs.resolve.outputs.publish_mode }}
 
     steps:
       - name: Check out repository
@@ -465,7 +500,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify the public NFL page serves exactly this card
-        if: ${{ (inputs.publish || 'publish') == 'publish' }}
+        if: ${{ needs.resolve.outputs.publish_mode == 'publish' }}
         env:
           EXPECTED_SHA256: ${{ steps.certified.outputs.published_sha256 }}
         run: |
@@ -491,7 +526,7 @@ jobs:
             echo "| capture sha256 | \`${{ steps.certified.outputs.capture_sha256 }}\` |"
             echo "| run_id | \`${{ steps.certified.outputs.run_id }}\` |"
             echo "| published sha256 | \`${{ steps.certified.outputs.published_sha256 }}\` |"
-            echo "| publish mode | \`${{ inputs.publish || 'publish' }}\` |"
+            echo "| publish mode | \`${{ needs.resolve.outputs.publish_mode }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================
@@ -527,7 +562,7 @@ jobs:
       WIZARD_NFL_HOME: ${{ secrets.WIZARD_NFL_HOME }}
       WIZARD_NFL_WEB_DIR: ${{ secrets.WIZARD_NFL_WEB_DIR }}
       AS_OF: ${{ inputs.as_of }}
-      PUBLISH_MODE: ${{ inputs.publish }}
+      PUBLISH_MODE: ${{ needs.resolve.outputs.publish_mode }}
 
     steps:
       - name: Check out repository
@@ -572,7 +607,9 @@ jobs:
           set -euo pipefail
           args=""
           [ -n "${AS_OF:-}" ] && args="${args} --as-of '${AS_OF}'"
-          [ "${PUBLISH_MODE:-dry_run}" != "publish" ] && args="${args} --dry-run-publish"
+          # Same test the certified job makes, against the same resolved
+          # value: only an explicit dry run withholds publication.
+          [ "${PUBLISH_MODE}" = "dry_run" ] && args="${args} --dry-run-publish"
 
           # WIZARD_NFL_HOME must be resolved on the SERVER, not here: the
           # fallback mentions $HOME, which on the runner is the runner's home.
@@ -597,7 +634,7 @@ jobs:
         # week -- that is the whole point of the empty-envelope path -- so
         # gating on snapshot_action would skip verification of a real
         # publication. An empty published_sha256 means nothing was written.
-        if: ${{ inputs.publish == 'publish' && steps.sweep.outputs.published_sha256 != '' }}
+        if: ${{ needs.resolve.outputs.publish_mode == 'publish' && steps.sweep.outputs.published_sha256 != '' }}
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip >/dev/null
@@ -618,7 +655,7 @@ jobs:
             echo "|---|---|"
             echo "| snapshot_action | \`${{ steps.sweep.outputs.snapshot_action }}\` |"
             echo "| published_sha256 | \`${{ steps.sweep.outputs.published_sha256 }}\` |"
-            echo "| publish mode | \`${{ inputs.publish || 'dry_run (scheduled)' }}\` |"
+            echo "| publish mode | \`${{ needs.resolve.outputs.publish_mode }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ==========================================================================

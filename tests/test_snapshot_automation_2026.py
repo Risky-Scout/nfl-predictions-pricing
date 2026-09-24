@@ -10,6 +10,7 @@ Python. Nothing here contacts a server, a provider or the network.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import time
@@ -132,12 +133,14 @@ def test_stage_dueness_is_decided_by_the_sweep_not_the_gate(workflow):
     assert "run_snapshot_sweep" in gate
 
     # The gate says only whether the sweep MAY look; it never computes a stage
-    # instant itself. Checked against the CODE, not the comments explaining it.
+    # instant itself. Checked against the CODE, not the comments explaining it,
+    # and on whole words -- the stage name CLOSE is the subject here, not the
+    # CLOSED in an unrelated fail-closed message.
     code = "\n".join(
         line for line in gate.splitlines() if not line.strip().startswith("#")
     )
     for stage_logic in ("CLOSE", "OPEN", "MID", "kickoff", "60"):
-        assert stage_logic not in code, stage_logic
+        assert not re.search(rf"\b{stage_logic}\b", code), stage_logic
 
 
 def test_the_snapshot_only_dispatch_mode_exists(workflow):
