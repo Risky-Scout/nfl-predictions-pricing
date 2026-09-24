@@ -544,6 +544,13 @@
   // no sample data substitution.
   var NO_DATA_MESSAGE = "No NFL predictive pricing data is currently available.";
 
+  // NOT a failure. The published week becomes public the moment it becomes
+  // the current week, and its games appear one at a time as each reaches its
+  // CLOSE snapshot. Saying so is more honest than implying the feed is broken.
+  var AWAITING_FIRST_CLOSE_MESSAGE = "No games have reached the public CLOSE snapshot yet.";
+
+  var EM_DASH = "\u2014";
+
   var PICK_EM = "PICK'EM";
   var PICK_EM_SHORT = "PK";
   var NO_EDGE = "NO EDGE";
@@ -648,9 +655,9 @@
     if (Object.prototype.toString.call(payload.games) !== "[object Array]") {
       invalid("games is not an array");
     }
-    if (payload.games.length === 0) {
-      invalid("games is empty");
-    }
+    // An empty array is a valid published week that has not closed a game
+    // yet, so it is not rejected here. Every game that IS present is checked
+    // exactly as strictly as before by the loop below.
 
     var seenGameIds = {};
     var games = [];
@@ -980,8 +987,38 @@
   // ------------------------------------------------------------------ //
   // render / fail closed
   // ------------------------------------------------------------------ //
+  function cardIdentity(card) {
+    return "Season " + card.season + " \u00b7 Week " + card.week + " \u00b7 " + ALLOWED_HORIZONS[card.horizon] + " Forecast";
+  }
+
+  // The published week is real and is named; it simply has nothing on the
+  // board yet. The week and the model stamp are shown, the market stamp has
+  // no games to be "as of", and the board and the compare form stay out of
+  // the way until there is something in them.
+  function renderAwaitingFirstClose(card) {
+    boardBodyEl.textContent = "";
+    boardEl.hidden = true;
+    compareSectionEl.hidden = true;
+
+    identityEl.textContent = cardIdentity(card);
+    identityEl.hidden = false;
+
+    generatedAtEl.textContent = renderEastern(STAMP_FORMAT, requireInstant(card.generatedAtUtc, "generated_at_utc"));
+    marketAsOfEl.textContent = EM_DASH;
+    stampsEl.hidden = false;
+
+    messageEl.textContent = AWAITING_FIRST_CLOSE_MESSAGE;
+    messageEl.hidden = false;
+  }
+
   function renderCard(card) {
     var index;
+
+    if (card.games.length === 0) {
+      renderAwaitingFirstClose(card);
+      return;
+    }
+
     var latestMarketAsOfEpochMs = card.games[0].marketAsOfEpochMs;
 
     for (index = 0; index < card.games.length; index += 1) {
@@ -991,7 +1028,7 @@
       boardBodyEl.appendChild(buildRow(card.games[index]));
     }
 
-    identityEl.textContent = "Season " + card.season + " \u00b7 Week " + card.week + " \u00b7 " + ALLOWED_HORIZONS[card.horizon] + " Forecast";
+    identityEl.textContent = cardIdentity(card);
     identityEl.hidden = false;
 
     generatedAtEl.textContent = renderEastern(STAMP_FORMAT, requireInstant(card.generatedAtUtc, "generated_at_utc"));
