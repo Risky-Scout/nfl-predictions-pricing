@@ -523,7 +523,12 @@ def test_the_verifier_runs_whenever_bytes_were_published(workflow):
 
 def test_the_verifier_is_still_skipped_when_nothing_was_published(workflow):
     """An empty published_sha256 -- the sweep failed before publication, or
-    was a dry run -- must not send the verifier at a stale public URL."""
+    was a dry run -- must not send the verifier at a stale public URL.
+
+    The publish half of the condition now reads the resolve job's single
+    resolved mode rather than the raw dispatch input, because on a scheduled
+    firing that input does not exist; see
+    tests/test_scheduled_publication_mode.py."""
     steps = workflow["jobs"]["snapshot-sweep"]["steps"]
     verify = next(s for s in steps if "verify_public_nfl_feed.py" in str(s.get("run", "")))
-    assert "inputs.publish == 'publish'" in verify["if"]
+    assert "needs.resolve.outputs.publish_mode == 'publish'" in verify["if"]
