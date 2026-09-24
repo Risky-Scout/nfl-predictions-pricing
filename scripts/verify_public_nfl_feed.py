@@ -21,7 +21,11 @@ WHY VERIFY FROM OUTSIDE
 THE FEED IS VALIDATED WITH THE EXISTING CONTRACT
   :func:`scripts.publish_sportsodds_nfl.validate_public_payload` -- the same
   frozen ``wizard-nfl-pricing-v2`` gate the publisher applies. No second
-  schema is defined here.
+  schema is defined here, and that is exactly why this script needs no rule
+  of its own about an empty week: a current week with no CLOSE yet carries
+  ``games: []``, the shared validator accepts it, and so does this verifier.
+  Deliberately, the ``--expect-sha256`` proof is unaffected -- an empty card
+  still has to be byte-for-byte the card the run published.
 
 OPTIONAL EXACT-CARD PROOF
   ``--expect-sha256`` asserts the served feed's bytes hash to exactly the card

@@ -49,6 +49,11 @@ uniqueness. Malformed data is never uploaded. ``--dry-run`` validates
 everything and prints the intended target while making no network connection
 at all.
 
+``games`` may legitimately be an empty list: the public card is the current
+publication week, which becomes public when it becomes current and gains its
+games one at a time as each reaches CLOSE. An empty board means "nothing has
+closed in this week yet", which is a state to publish, not a card to refuse.
+
 Usage:
     python scripts/publish_sportsodds_nfl.py --json <path/to/latest.json>
     python scripts/publish_sportsodds_nfl.py --json <path> --dry-run
@@ -224,8 +229,22 @@ def validate_public_payload(payload: Any) -> dict:
     games = payload["games"]
     if not isinstance(games, list):
         _fail(f"games must be a list, got {type(games).__name__}")
-    if not games:
-        _fail("games is empty -- refusing to publish a pricing card with no games")
+
+    # AN EMPTY GAMES LIST IS A STATE, NOT A DEFECT.
+    #
+    # This used to refuse a card with no games, on the reasoning that a
+    # pricing board with nothing on it cannot be worth publishing. That held
+    # while the public product was one certified card assembled all at once.
+    # It stopped holding when the public product became the current week,
+    # published from the moment it BECOMES current and filled in one game at a
+    # time as each reaches its CLOSE snapshot. Between a week's handover and
+    # its first CLOSE there is legitimately nothing to price, and refusing
+    # that card is what kept the page serving the previous week for days.
+    #
+    # So the empty list is allowed, and nothing else is. A missing games key
+    # is still schema drift, a non-list is still wrong, and every game that IS
+    # present is validated exactly as strictly as before -- the loop below is
+    # untouched. What is gone is only the objection to its being empty.
 
     seen_game_ids: set[str] = set()
     for index, game in enumerate(games):

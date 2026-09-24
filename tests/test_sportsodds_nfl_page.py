@@ -456,11 +456,15 @@ class PageDerivationTests(unittest.TestCase):
         self.assertIn('var ET_TIME_ZONE = "America/New_York";', PAGE_TEXT)
         self.assertIn("var settings = { timeZone: ET_TIME_ZONE };", PAGE_TEXT)
         self.assertIn('new Intl.DateTimeFormat("en-US", settings)', PAGE_TEXT)
+        # The identity expression is unchanged; it now lives in one helper
+        # because both the populated board and the awaiting-first-CLOSE state
+        # name the week the same way.
         self.assertIn(
-            'identityEl.textContent = "Season " + card.season + " \\u00b7 Week " + card.week '
+            'return "Season " + card.season + " \\u00b7 Week " + card.week '
             '+ " \\u00b7 " + ALLOWED_HORIZONS[card.horizon] + " Forecast";',
             PAGE_TEXT,
         )
+        self.assertEqual(PAGE_TEXT.count("identityEl.textContent = cardIdentity(card);"), 2)
         self.assertIn('var ALLOWED_HORIZONS = { TUE: "Tuesday", FRI: "Friday" };', PAGE_TEXT)
         self.assertIn('appendText(marketLine, "ATS Books: " + game.market_ats_book_count, "note");', PAGE_TEXT)
         self.assertIn('appendText(marketLine, "Total Books: " + game.market_total_book_count, "note");', PAGE_TEXT)
@@ -529,7 +533,6 @@ class PageDerivationTests(unittest.TestCase):
         self.assertNotIn(".stack", PAGE_TEXT)
         for guard in (
             "if (!response.ok)",
-            'invalid("games is empty")',
             'invalid("games is not an array")',
             "requireExactKeys(payload, TOP_LEVEL_KEYS,",
             "function requireFiniteNumber(value, label)",
@@ -740,8 +743,16 @@ class PublisherValidationTests(PublisherHarness):
             needle="unexpected key(s) ['kelly_stake']",
         )
 
-    def test_23_empty_games_rejected(self):
-        self.assert_rejected(synthetic_card(games=[]), needle="games is empty")
+    def test_23_empty_games_accepted_as_a_week_with_nothing_closed_yet(self):
+        """SUPERSEDED. This used to assert the opposite. The public card is
+        now the current publication week, which goes public when it becomes
+        current and gains games one at a time as each reaches CLOSE, so an
+        empty board is a state to publish rather than a card to refuse.
+        tests/test_empty_week_public_contract.py owns the full contract."""
+        summary = publisher.validate_public_payload(synthetic_card(games=[]))
+        self.assertEqual(summary["game_count"], 0)
+        # The list must still be a list, and a missing key is still drift.
+        self.assert_rejected(synthetic_card(games={"not": "a list"}), needle="games must be a list")
 
     def test_24_duplicate_game_id_rejected(self):
         self.assert_rejected(
