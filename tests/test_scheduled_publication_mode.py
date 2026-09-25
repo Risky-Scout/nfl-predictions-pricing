@@ -241,7 +241,7 @@ case "${1}" in
 */update_2026_games_population.py) echo population ;;
 */run_2026_stage_snapshots.py)
   echo '{"status": "OK", "stages": [{"stage": "OPEN", "due_batches": @DUE@, "executions": []}]}' ;;
-*/generate_2026_recalibration_candidate.py) echo recalibration ;;
+*/generate_2026_recalibration_candidate.py) echo RECALIBRATION_WAS_INVOKED ;;
 */attach_2026_results_from_population.py) echo attached ;;
 */report_2026_snapshot_performance.py) echo reported ;;
 */publish_2026_current_week.py)
@@ -577,6 +577,133 @@ def test_the_verifier_still_fails_when_the_stale_card_is_served(tmp_path, monkey
 
     with pytest.raises(verifier.PublicVerificationError, match="serving a different card"):
         verifier.verify(expect_sha256=published)
+
+
+# ===========================================================================
+# An idle sweep does not re-derive the recalibration candidate.
+#
+#   Measured on live runs, the sweep body takes ~17 minutes of which stage 5
+#   is ~7. The dense windows fire every fifteen minutes and the concurrency
+#   group serialises production on purpose, so a seventeen-minute idle sweep
+#   cannot finish before the next is due and the queue grows until the CLOSE
+#   the window exists to catch is executed late. Skipping the repetition on
+#   idle polls is what makes the cadence hold in wall-clock terms.
+# ===========================================================================
+def test_an_idle_sweep_skips_the_recalibration_candidate(tmp_path):
+    estate = _estate(tmp_path, due=0)
+    result = _run_sweep(estate)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "recalibration=SKIPPED_NOTHING_EXECUTED" in result.stdout
+    assert "recalibration=OK" not in result.stdout
+    assert "RECALIBRATION_WAS_INVOKED" not in (result.stdout + result.stderr)
+
+
+def test_an_executing_sweep_still_runs_recalibration_exactly_as_before(tmp_path):
+    estate = _estate(tmp_path, due=2)
+    result = _run_sweep(estate)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "recalibration=OK" in result.stdout
+    assert "SKIPPED_NOTHING_EXECUTED" not in result.stdout
+    assert "RECALIBRATION_WAS_INVOKED" in result.stdout
+
+
+def test_an_executing_sweep_still_fails_closed_on_a_recalibration_violation(tmp_path):
+    """The five distinct exit classes are untouched; exit 4 is the policy /
+    integrity violation and must still stop the sweep before publication."""
+    estate = _estate(tmp_path, due=2)
+    stub = estate["home"] / "venv" / "bin" / "python"
+    stub.write_text(
+        stub.read_text(encoding="utf-8").replace(
+            '*/generate_2026_recalibration_candidate.py) echo RECALIBRATION_WAS_INVOKED ;;',
+            '*/generate_2026_recalibration_candidate.py) exit 4 ;;',
+        ),
+        encoding="utf-8",
+    )
+    result = _run_sweep(estate)
+
+    assert result.returncode == 5, result.stdout + result.stderr
+    assert "recalibration policy/integrity violation" in result.stderr
+    assert json.loads(estate["served"].read_text())["week"] == 1
+
+
+def test_the_idle_sweep_still_does_everything_a_close_will_need(tmp_path):
+    """Skipping recalibration must not skip the evidence a CLOSE priced on
+    the NEXT poll depends on, nor the publication this poll owes."""
+    estate = _estate(tmp_path, due=0)
+    result = _run_sweep(estate)
+
+    for marker in (
+        "games_evidence_refresh=OK",   # provider evidence still refreshed
+        "games_population=OK",         # canonical population still updated
+        "stage_sweep=OK",              # stage execution still attempted
+        "season_reporting=OK",         # results still attached and reported
+        "=== 7. current-week publication ===",
+        '"status": "PUBLISHED"',
+        "PUBLISHED_SHA256=",
+        "stage_snapshot_status=OK",
+    ):
+        assert marker in result.stdout, marker
+    assert json.loads(estate["served"].read_text())["week"] == 3
+
+
+def test_a_market_capture_is_still_taken_on_an_idle_sweep():
+    """The capture is what a later CLOSE is priced from, so it is the one
+    thing an idle poll must never stop doing. (The harness above runs with
+    --skip-capture; this pins the unconditional call site.)"""
+    text = SWEEP.read_text(encoding="utf-8")
+    capture = text[text.index("# --- 3.") : text.index("# --- 4.")]
+    assert "create_official_capture.sh" in capture
+    assert "due_batches" not in capture
+    assert text.index("create_official_capture.sh") < text.index('echo "due_batches=')
+
+
+def test_repeated_idle_sweeps_still_create_no_extra_artifacts(tmp_path):
+    estate = _estate(tmp_path, due=0)
+    _run_sweep(estate)
+    after_first = sorted(p.name for p in estate["web_dir"].iterdir())
+    for _ in range(2):
+        _run_sweep(estate)
+    assert sorted(p.name for p in estate["web_dir"].iterdir()) == after_first
+
+
+def test_the_daily_pass_still_runs_recalibration_with_promotion():
+    """The whole safety of the skip: the once-daily pass owns it, and it
+    attaches results BEFORE recalibrating so a newly graded game is seen."""
+    daily = (REPO_ROOT / "ops" / "wizard" / "run_daily_maintenance.sh").read_text(encoding="utf-8")
+    assert "generate_2026_recalibration_candidate.py --promote-if-eligible" in daily
+    assert daily.index("attach_2026_results_from_population.py") < daily.index(
+        "generate_2026_recalibration_candidate.py --promote-if-eligible"
+    )
+
+
+def test_the_two_hundred_game_promotion_gate_is_still_automatic_and_unrestated():
+    """The gate lives in the entrypoint and the policy file, never in either
+    orchestrator, so neither the skip nor the schedule can move it."""
+    import json as _json
+
+    from nfl_hybrid.evaluation import prospective_strength_2026 as ps
+
+    assert ps.PROMOTION_ELIGIBLE_MIN_GAMES == 200
+    policy = _json.loads(
+        (REPO_ROOT / "config" / "recalibration_promotion_2026.json").read_text()
+    )
+    assert policy["automatic_promotion_enabled"] is True
+    assert policy["minimum_prospective_maturity"]["derived_from_symbol"] == (
+        "PROMOTION_ELIGIBLE_MIN_GAMES"
+    )
+    for orchestrator in ("run_stage_snapshots.sh", "run_daily_maintenance.sh"):
+        text = (REPO_ROOT / "ops" / "wizard" / orchestrator).read_text(encoding="utf-8")
+        code = "\n".join(l for l in text.splitlines() if not l.strip().startswith("#"))
+        assert "PROMOTION_ELIGIBLE_MIN_GAMES" not in code
+        assert "--force-promote" not in code
+
+
+def test_the_certified_orchestrator_is_untouched_by_the_skip():
+    certified = (REPO_ROOT / "ops" / "wizard" / "run_certified_card.sh").read_text(encoding="utf-8")
+    assert "SKIPPED_NOTHING_EXECUTED" not in certified
+    assert "due_batches" not in certified
 
 
 # ===========================================================================

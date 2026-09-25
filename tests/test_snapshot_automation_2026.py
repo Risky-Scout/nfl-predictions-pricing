@@ -232,10 +232,15 @@ def test_the_sweep_publishes_nothing_when_a_stage_fails(sweep_text):
 
 def test_recalibration_promotion_still_uses_the_existing_policy_entrypoint(sweep_text):
     assert "generate_2026_recalibration_candidate.py --promote-if-eligible" in sweep_text
-    # No bypass flag, no threshold restated in the orchestrator.
-    assert "PROMOTION_ELIGIBLE_MIN_GAMES" not in sweep_text
-    assert "--force-promote" not in sweep_text
-    assert "200" not in sweep_text
+    # No bypass flag, no threshold restated in the orchestrator. Checked
+    # against the CODE, not the comments explaining it -- a comment may name
+    # the maturity gate it is promising not to touch.
+    code = "\n".join(
+        line for line in sweep_text.splitlines() if not line.strip().startswith("#")
+    )
+    assert "PROMOTION_ELIGIBLE_MIN_GAMES" not in code
+    assert "--force-promote" not in code
+    assert "200" not in code
 
 
 def test_the_maturity_firewall_is_still_single_sourced():

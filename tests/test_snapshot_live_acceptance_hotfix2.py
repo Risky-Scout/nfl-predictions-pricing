@@ -166,13 +166,17 @@ def test_zero_due_publishes_a_first_feed_when_none_exists(tmp_path):
 
 
 def test_the_no_op_still_completes_the_work_that_precedes_it(tmp_path):
-    """Evidence refresh, population update and recalibration were never part
-    of the no-op, and still are not."""
+    """Evidence refresh and population update were never part of the no-op,
+    and still are not -- a CLOSE priced on the next poll needs both.
+
+    Recalibration is the one thing an idle sweep now leaves alone, because it
+    only re-derives what the last pass derived and its seven minutes were
+    what made a fifteen-minute cadence unable to keep up with itself."""
     estate = _estate(tmp_path, due=0, with_existing_feed=True)
     result = _run_sweep(estate)
     assert "games_evidence_refresh=OK" in result.stdout
     assert "games_population=OK" in result.stdout
-    assert "recalibration=OK" in result.stdout
+    assert "recalibration=SKIPPED_NOTHING_EXECUTED" in result.stdout
 
 
 def test_a_real_executed_batch_still_proceeds_to_publication(tmp_path):

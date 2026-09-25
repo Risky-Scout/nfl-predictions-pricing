@@ -490,3 +490,112 @@ def test_the_sweep_control_flow_and_no_op_behaviour_are_unchanged():
 def test_the_concurrency_group_still_serialises_production(workflow):
     assert workflow["concurrency"]["group"] == "nfl-2026-production"
     assert workflow["concurrency"]["cancel-in-progress"] is False
+
+
+# ===========================================================================
+# Serialized execution, which cron spacing alone says nothing about.
+#
+#   EVERYTHING ABOVE MODELS TRIGGER TIMES. A cron that fires every fifteen
+#   minutes does not give fifteen-minute execution when production is
+#   serialised and a run takes longer than the interval -- the queue simply
+#   grows and the CLOSE the window exists to catch is executed late. The
+#   assertions in this section are the ones that make the timing guarantees
+#   above mean something in wall-clock terms.
+#
+#   The budgets are measured, not assumed. Across live runs 36053079115,
+#   36056606567 and 36082933560 the sweep body took 17.0 / 17.1 / 17.9
+#   minutes, of which stage 5 recalibration was 7.0 / 7.1 / 7.3. Job setup
+#   (checkout, Python, SSH, bootstrap) and the public-bytes verification add
+#   roughly three more.
+# ===========================================================================
+MEASURED_SWEEP_BODY = timedelta(minutes=18)
+MEASURED_RECALIBRATION = timedelta(minutes=7)
+JOB_OVERHEAD = timedelta(minutes=3)
+
+IDLE_RUN_BUDGET = MEASURED_SWEEP_BODY - MEASURED_RECALIBRATION + JOB_OVERHEAD  # 14 min
+EXECUTING_RUN_BUDGET = MEASURED_SWEEP_BODY + JOB_OVERHEAD  # 21 min
+
+DENSE_INTERVAL = timedelta(minutes=15)
+
+
+def test_an_idle_sweep_fits_inside_the_dense_interval():
+    """The point of the whole amendment. At the old 21-minute idle cost a
+    fifteen-minute window could never drain; at 14 it can."""
+    assert IDLE_RUN_BUDGET < DENSE_INTERVAL
+    assert EXECUTING_RUN_BUDGET > DENSE_INTERVAL  # honest: these still lag
+
+
+def test_the_busiest_hour_can_actually_drain(sweep_firings):
+    """Serialized demand in the densest hour, against the sixty minutes that
+    hour has. Computed from the real expansion, not from the cron interval."""
+    per_hour: dict = {}
+    for firing in sweep_firings:
+        key = firing.replace(minute=0, second=0, microsecond=0)
+        per_hour[key] = per_hour.get(key, 0) + 1
+
+    busiest = max(per_hour.values())
+    assert busiest == 4
+    assert busiest * IDLE_RUN_BUDGET < timedelta(hours=1)
+
+
+def test_the_busiest_day_can_actually_drain(sweep_firings):
+    """A day is the horizon that matters for backlog: an hour can borrow from
+    the next, a day cannot borrow from the next game day."""
+    per_day: dict = {}
+    for firing in sweep_firings:
+        per_day[firing.date()] = per_day.get(firing.date(), 0) + 1
+
+    busiest = max(per_day.values())
+    assert busiest == 63  # Sunday
+    assert busiest * IDLE_RUN_BUDGET < timedelta(hours=24)
+    # And the old schedule could not, which is why the queue never drained.
+    assert 96 * (MEASURED_SWEEP_BODY + JOB_OVERHEAD) > timedelta(hours=24)
+
+
+def test_the_idle_saving_is_structural_and_not_just_asserted_here():
+    """The budget above is only real because the script actually skips the
+    expensive step when nothing executed."""
+    text = (REPO_ROOT / "ops" / "wizard" / "run_stage_snapshots.sh").read_text(encoding="utf-8")
+    stage5 = text[text.index("# --- 5. recalibration") : text.index("# NOTHING NEW TO EXECUTE")]
+    code = "\n".join(line for line in stage5.splitlines() if not line.strip().startswith("#"))
+
+    assert 'if [ "${due_batches}" -eq 0 ]; then' in code
+    assert "recalibration=SKIPPED_NOTHING_EXECUTED" in code
+    assert "generate_2026_recalibration_candidate.py --promote-if-eligible" in code
+    # The due count is known before the decision is taken.
+    assert text.index('echo "due_batches=') < text.index("# --- 5. recalibration")
+
+
+def test_the_skip_cannot_reach_the_things_a_later_close_depends_on():
+    """Evidence, population and the market capture all sit before the due
+    count is even computed, so no gate can accidentally cover them."""
+    text = (REPO_ROOT / "ops" / "wizard" / "run_stage_snapshots.sh").read_text(encoding="utf-8")
+    decision = text.index('echo "due_batches=')
+    for essential in (
+        "refresh_bdl_2026_games_evidence.py",
+        "update_2026_games_population.py",
+        "create_official_capture.sh",
+        "run_2026_stage_snapshots.py",
+    ):
+        assert text.index(essential) < decision, essential
+
+
+def test_only_recalibration_is_conditional_on_the_due_count():
+    """Publication, reporting and retention must stay unconditional -- an
+    idle sweep is exactly the sweep that still owes the public feed."""
+    text = (REPO_ROOT / "ops" / "wizard" / "run_stage_snapshots.sh").read_text(encoding="utf-8")
+    after_stage5 = text[text.index("# --- 6. results"):]
+    code = "\n".join(
+        line for line in after_stage5.splitlines() if not line.strip().startswith("#")
+    )
+    # The only due_batches test after stage 5 is the snapshot_action label.
+    assert code.count('"${due_batches}" -eq 0') == 1
+    assert "snapshot_action=NOOP_NOTHING_DUE" in code
+    for unconditional in (
+        "attach_2026_results_from_population.py",
+        "report_2026_snapshot_performance.py",
+        "publish_2026_current_week.py",
+        "publish_wizard_nfl_local.py",
+        "prune_replaceable_artifacts.py",
+    ):
+        assert unconditional in code, unconditional
