@@ -110,11 +110,69 @@ on:
     # the America/New_York card arithmetic decide what is due, so a firing
     # with nothing due is a clean exit-0 no-op and DST needs no special case.
     #
-    # Bounded on purpose rather than running every 15 minutes all year:
-    # dense on game days during the season, hourly otherwise (which is what
-    # picks up first-board OPEN discovery and the Friday-noon MID).
-    - cron: "*/15 * * 9,10,11,12,1 0,1,4"
-    - cron: "25 * * 9,10,11,12,1 2,3,5,6"
+    # WHAT A CLOSE ACTUALLY NEEDS FROM THE SCHEDULE.
+    #
+    # A stage is priced from newest_capture_at_or_before(cutoff), so polling
+    # affects a CLOSE in two separate ways and it is worth keeping them apart:
+    #
+    #   EXECUTION -- a poll at or after the cutoff, which is what makes the
+    #     stage due. There is no deadline on this. A later poll still prices
+    #     the cutoff correctly from an observation that predates it, so a
+    #     sparse stretch delays a CLOSE, it does not lose one.
+    #   PRECISION -- a poll shortly BEFORE the cutoff, because that poll's
+    #     capture is the board the CLOSE will be priced from. This is the one
+    #     that degrades if the schedule thins out, and it is why the windows
+    #     below open ahead of each kickoff cluster rather than at it.
+    #
+    # So the shape is: a baseline cadence that bounds the worst case anywhere
+    # on the calendar, plus fifteen-minute density bracketing the cutoffs of
+    # the weekly game slates. Nothing here changes what a stage IS.
+    #
+    # The previous schedule polled every fifteen minutes for the whole of
+    # Sunday, Monday and Thursday -- 96 firings a day, against runs that take
+    # 25-45 minutes. The concurrency group serialises them, so the queue never
+    # drained and GitHub was evicting roughly a third of the firings as
+    # superseded before they ever ran.
+
+    # Baseline: one poll an hour, every hour of the season. This is the floor
+    # the whole design rests on -- it is what picks up first-board OPEN
+    # discovery, the Friday-noon MID, the Monday rollover and any off-pattern
+    # kickoff (Black Friday, Christmas, the late-season Saturday slates)
+    # within the hour. Wednesday and Saturday keep exactly the cadence they
+    # already had, minute included.
+    #
+    # It is written out per weekday only so that it can step around the
+    # fifteen-minute windows below. A single "every hour, every day" line
+    # would keep firing at :25 inside those windows too, which is a whole
+    # extra run per dense hour and buys nothing: a poll at :15 and :30 does
+    # not need one at :25 between them.
+    - cron: "25 0-10 * 9,10,11,12,1 0"
+    - cron: "25 2-21 * 9,10,11,12,1 1"
+    - cron: "25 3-23 * 9,10,11,12,1 2"
+    - cron: "25 * * 9,10,11,12,1 3"
+    - cron: "25 0-21 * 9,10,11,12,1 4"
+    - cron: "25 3-23 * 9,10,11,12,1 5"
+    - cron: "25 * * 9,10,11,12,1 6"
+
+    # Sunday morning through the late-afternoon slate. Covers the 9:30 ET
+    # international CLOSE (12:30 UTC on EDT, 13:30 on EST), the 13:00 ET
+    # cluster (16:00/17:00) and the 16:05/16:25 cluster (19:05/20:25).
+    - cron: "*/15 11-21 * 9,10,11,12,1 0"
+
+    # Sunday Night Football, 20:20 ET. Sunday evening in New York is Sunday
+    # late / Monday early in UTC, so the window is written on both sides of
+    # the date line: CLOSE is 23:20 UTC on EDT and 00:20 Monday on EST.
+    - cron: "*/15 22-23 * 9,10,11,12,1 0"
+    - cron: "*/15 0-1 * 9,10,11,12,1 1"
+
+    # Monday Night Football, 20:15 ET. CLOSE 23:15 UTC on EDT, 00:15 Tuesday
+    # on EST; the kickoff itself is always Tuesday in UTC.
+    - cron: "*/15 22-23 * 9,10,11,12,1 1"
+    - cron: "*/15 0-2 * 9,10,11,12,1 2"
+
+    # Thursday Night Football, 20:15 ET. Same shape as Monday.
+    - cron: "*/15 22-23 * 9,10,11,12,1 4"
+    - cron: "*/15 0-2 * 9,10,11,12,1 5"
 
 permissions:
   contents: read
@@ -198,9 +256,35 @@ jobs:
           DAILY_DUE: ${{ steps.decide.outputs.daily_due }}
           CERTIFIED_DUE: ${{ steps.decide.outputs.certified_due }}
           PUBLISH_INPUT: ${{ inputs.publish }}
+          TRIGGERING_CRON: ${{ github.event.schedule }}
+          DAILY_CRON: "20 11 * * *"
         run: |
           set -euo pipefail
           mode="${MODE:-auto}"
+
+          # THE DAILY PASS RUNS ONCE A DAY.
+          #
+          # daily_due answers "is the daily maintenance pass ALLOWED", and the
+          # answer is always yes: refresh, population update, prospective
+          # evaluation and recalibration-candidate generation are idempotent
+          # every-day work. It was never meant to answer "is THIS the firing
+          # that should do it" -- but it was the only gate, so the full
+          # maintenance pass ran on every snapshot poll, 96 times a day on a
+          # game day, each time re-running work the sweep then repeated.
+          #
+          # A scheduled firing carries the cron that triggered it, which is
+          # exactly the discriminator that was missing. A manual dispatch
+          # carries none, and an operator asking for the daily pass by hand
+          # still gets it.
+          #
+          # Nothing time-sensitive depends on this cadence: the snapshot sweep
+          # refreshes evidence, updates the population and evaluates
+          # recalibration itself on every poll, and the publication path is
+          # entirely the sweep's.
+          daily_firing=true
+          if [ -n "${TRIGGERING_CRON:-}" ] && [ "${TRIGGERING_CRON}" != "${DAILY_CRON}" ]; then
+            daily_firing=false
+          fi
 
           # EFFECTIVE PUBLISH MODE, DECIDED ONCE, HERE.
           #
@@ -253,7 +337,9 @@ jobs:
             certified_only) [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true ;;
             snapshot_only)  run_snapshot_sweep=true ;;
             *)
-              [ "${DAILY_DUE}" = "true" ] && run_daily=true
+              if [ "${DAILY_DUE}" = "true" ] && [ "${daily_firing}" = "true" ]; then
+                run_daily=true
+              fi
               [ "${CERTIFIED_DUE}" = "true" ] && run_certified=true
               run_snapshot_sweep=true
               ;;
@@ -287,6 +373,7 @@ jobs:
             echo "| certified_basis | \`${{ steps.decide.outputs.certified_basis }}\` |"
             echo "| deployment_allowed (main only) | \`${{ steps.gate.outputs.deployment_allowed }}\` |"
             echo "| publish_mode | \`${{ steps.gate.outputs.publish_mode }}\` |"
+            echo "| triggering cron | \`${{ github.event.schedule || 'workflow_dispatch' }}\` |"
             echo "| run_daily | \`${{ steps.gate.outputs.run_daily }}\` |"
             echo "| run_certified | \`${{ steps.gate.outputs.run_certified }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"

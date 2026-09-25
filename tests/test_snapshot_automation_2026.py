@@ -102,9 +102,14 @@ def test_the_sweep_has_its_own_polling_crons(workflow):
     assert "20 11 * * *" in crons
     assert "5 16 * * 2,5" in crons
     assert "5 17 * * 2,5" in crons
-    # Plus polling: dense on game days, hourly otherwise.
-    sweep = [c for c in crons if c.startswith("*/15") or c.startswith("25 ")]
-    assert len(sweep) == 2
+    # Plus polling of two kinds: an hourly baseline under the whole season,
+    # and fifteen-minute windows bracketing the weekly kickoff slates. It
+    # used to be one cron of each; the windows are now written per slate so
+    # that Sunday, Monday and Thursday are no longer polled every fifteen
+    # minutes around the clock. tests/test_production_schedule_frequency.py
+    # proves the resulting coverage against real kickoff instants.
+    assert [c for c in crons if c.startswith("25 ")]
+    assert [c for c in crons if c.startswith("*/15 ")]
 
 
 def test_the_polling_crons_are_bounded_to_the_season(workflow):
@@ -117,13 +122,24 @@ def test_the_polling_crons_are_bounded_to_the_season(workflow):
         assert set(month_field.split(",")) <= {"1", "9", "10", "11", "12"}
 
 
-def test_no_sweep_cron_pins_a_wall_clock_hour(workflow):
-    """The stage instants come from America/New_York arithmetic and each
-    game's kickoff, so the sweep crons deliberately do NOT name an hour the
-    way the DST-redundant certified pair has to."""
+def test_no_sweep_window_is_too_narrow_to_survive_a_dst_shift(workflow):
+    """The stage instants come from America/New_York arithmetic, so a cutoff
+    sits an hour later in UTC under EST than under EDT.
+
+    This used to be guaranteed by refusing to name an hour at all. The sweep
+    windows now do name hours, so the guarantee is the DST-redundant one the
+    certified pair already uses: every window is at least two hours wide, so
+    a one-hour seasonal shift cannot move a cutoff out of the window it was
+    drawn for. The windows that straddle UTC midnight are wider still, and
+    tests/test_production_schedule_frequency.py checks the actual coverage
+    against kickoffs generated in both offsets rather than inferring it.
+    """
     crons = [entry["cron"] for entry in workflow[True]["schedule"]]
-    for cron in [c for c in crons if c.startswith("*/15") or c.startswith("25 ")]:
-        assert cron.split()[1] == "*", cron
+    for cron in [c for c in crons if c.startswith("*/15 ")]:
+        hours = cron.split()[1]
+        assert "-" in hours, f"{cron}: a single-hour window cannot absorb a DST shift"
+        start, end = (int(x) for x in hours.split("-"))
+        assert end - start + 1 >= 2, cron
 
 
 def test_stage_dueness_is_decided_by_the_sweep_not_the_gate(workflow):
@@ -216,10 +232,15 @@ def test_the_sweep_publishes_nothing_when_a_stage_fails(sweep_text):
 
 def test_recalibration_promotion_still_uses_the_existing_policy_entrypoint(sweep_text):
     assert "generate_2026_recalibration_candidate.py --promote-if-eligible" in sweep_text
-    # No bypass flag, no threshold restated in the orchestrator.
-    assert "PROMOTION_ELIGIBLE_MIN_GAMES" not in sweep_text
-    assert "--force-promote" not in sweep_text
-    assert "200" not in sweep_text
+    # No bypass flag, no threshold restated in the orchestrator. Checked
+    # against the CODE, not the comments explaining it -- a comment may name
+    # the maturity gate it is promising not to touch.
+    code = "\n".join(
+        line for line in sweep_text.splitlines() if not line.strip().startswith("#")
+    )
+    assert "PROMOTION_ELIGIBLE_MIN_GAMES" not in code
+    assert "--force-promote" not in code
+    assert "200" not in code
 
 
 def test_the_maturity_firewall_is_still_single_sourced():

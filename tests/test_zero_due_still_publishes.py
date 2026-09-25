@@ -214,7 +214,10 @@ def test_the_sweep_still_runs_everything_that_precedes_publication(tmp_path):
         "games_evidence_refresh=OK",
         "games_population=OK",
         "stage_sweep=OK",
-        "recalibration=OK",
+        # An idle sweep no longer re-derives the recalibration candidate; the
+        # daily pass and every executing sweep still do. See
+        # tests/test_scheduled_publication_mode.py for that contract.
+        "recalibration=SKIPPED_NOTHING_EXECUTED",
         "season_reporting=OK",
     ):
         assert marker in result.stdout

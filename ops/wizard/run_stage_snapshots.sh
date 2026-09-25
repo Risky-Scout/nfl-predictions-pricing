@@ -166,19 +166,54 @@ echo "due_batches=${due_batches}"
 # --- 5. recalibration candidate + promotion --------------------------------
 # The SAME entrypoint and the SAME merged policy the daily pass uses, so the
 # existing maturity firewall decides promotion here exactly as it does there.
+#
+# ONLY WHEN THIS SWEEP ACTUALLY EXECUTED A STAGE.
+#
+# This is the most expensive thing the sweep does: seven of the seventeen
+# minutes an idle poll takes, measured across live runs. On an idle poll it is
+# also pure repetition -- no snapshot was written, so it re-reads the same
+# prospective ledger and re-derives the same candidate and the same verdict.
+#
+# That repetition is not free, because the dense windows fire every fifteen
+# minutes and the concurrency group serialises production on purpose. A
+# seventeen-minute idle sweep cannot finish before the next one is due, so the
+# queue grows and the CLOSE that the dense window exists to catch is executed
+# later and later. Dropping the idle path to ten minutes is what makes the
+# fifteen-minute cadence actually hold in wall-clock terms rather than only in
+# cron terms.
+#
+# Nothing here becomes manual or less automatic:
+#   - the once-daily maintenance pass runs this same entrypoint with the same
+#     --promote-if-eligible flag, after its own results attachment;
+#   - any sweep that DID execute a stage still runs it exactly as before, and
+#     executing a stage is the only thing a sweep does that can move the
+#     prospective ledger itself;
+#   - the 200-game maturity gate is untouched -- it lives inside the
+#     entrypoint, not in this decision.
+#
+# The one thing that genuinely waits is a promotion that becomes eligible
+# purely because a game finished and was graded during an idle stretch. That
+# is picked up by the next executing sweep or by the daily pass, whichever
+# comes first. It was already the case that a sweep's own stage 6 result
+# attachment lands AFTER this step, so the freshest results were never visible
+# to the same sweep's recalibration anyway.
 echo "=== 5. recalibration ==="
-set +e
-"${PY}" scripts/generate_2026_recalibration_candidate.py --promote-if-eligible
-recalibration_exit=$?
-set -e
-case "${recalibration_exit}" in
-    0) echo "recalibration=OK" ;;
-    4) echo "FAIL CLOSED: recalibration policy/integrity violation" >&2; exit 5 ;;
-    1) echo "FAIL CLOSED: recalibration candidate generation failed" >&2; exit 6 ;;
-    2) echo "FAIL CLOSED: artifact root unresolvable" >&2; exit 7 ;;
-    3) echo "FAIL CLOSED: active calibrator unresolvable" >&2; exit 8 ;;
-    *) echo "FAIL CLOSED: unexpected recalibration failure (exit ${recalibration_exit})" >&2; exit 9 ;;
-esac
+if [ "${due_batches}" -eq 0 ]; then
+    echo "recalibration=SKIPPED_NOTHING_EXECUTED"
+else
+    set +e
+    "${PY}" scripts/generate_2026_recalibration_candidate.py --promote-if-eligible
+    recalibration_exit=$?
+    set -e
+    case "${recalibration_exit}" in
+        0) echo "recalibration=OK" ;;
+        4) echo "FAIL CLOSED: recalibration policy/integrity violation" >&2; exit 5 ;;
+        1) echo "FAIL CLOSED: recalibration candidate generation failed" >&2; exit 6 ;;
+        2) echo "FAIL CLOSED: artifact root unresolvable" >&2; exit 7 ;;
+        3) echo "FAIL CLOSED: active calibrator unresolvable" >&2; exit 8 ;;
+        *) echo "FAIL CLOSED: unexpected recalibration failure (exit ${recalibration_exit})" >&2; exit 9 ;;
+    esac
+fi
 
 # NOTHING NEW TO EXECUTE IS NOT THE SAME AS NOTHING TO PUBLISH.
 #
