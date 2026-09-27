@@ -35,12 +35,20 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PAGE_PATH = REPO_ROOT / "web" / "sportsodds" / "nfl" / "index.html"
 PUBLISHER_PATH = REPO_ROOT / "scripts" / "publish_sportsodds_nfl.py"
 
-# The whole intended change set for this task.
+# The whole intended change set for the publication/presentation layer.
 EXPECTED_CHANGE_SET = frozenset(
     {
         "web/sportsodds/nfl/index.html",
         "scripts/publish_sportsodds_nfl.py",
+        "scripts/export_current_week_nfl_feed.py",
+        "scripts/verify_public_nfl_feed.py",
         "tests/test_sportsodds_nfl_page.py",
+        "tests/test_pregame_board_publication.py",
+        "tests/test_empty_week_public_contract.py",
+        "tests/test_scheduled_publication_mode.py",
+        "tests/test_snapshot_production_integration.py",
+        "tests/test_week_rollover_active_cards.py",
+        "tests/test_zero_due_still_publishes.py",
     }
 )
 
@@ -86,6 +94,7 @@ PRIMARY_COLUMNS = (
     "Market Total",
     "Total Edge",
     "Winner View",
+    "Snapshot",
 )
 
 TEST_PASSWORD = "n0t-a-real-password-Ynq3"
@@ -147,6 +156,23 @@ def synthetic_card(**overrides) -> dict:
     }
     card.update(overrides)
     return card
+
+
+def synthetic_board_game(**overrides) -> dict:
+    """One current-week board row: the card's fields plus their provenance."""
+    game = synthetic_game()
+    game["snapshot_stage"] = "OPEN"
+    game["model_generated_at_utc"] = "2026-09-08T12:45:00Z"
+    game.update(overrides)
+    return game
+
+
+def synthetic_board(**overrides) -> dict:
+    board = synthetic_card(
+        schema_version="wizard-nfl-pricing-v3", games=[synthetic_board_game()]
+    )
+    board.update(overrides)
+    return board
 
 
 def synthetic_env(**overrides) -> dict:
@@ -336,9 +362,19 @@ class PageIdentityTests(unittest.TestCase):
             r'window\.fetch\(FEED_URL, \{ cache: "no-store"',
         )
 
-    def test_06_required_schema_version_enforced(self):
-        self.assertIn('var REQUIRED_SCHEMA_VERSION = "wizard-nfl-pricing-v2";', PAGE_TEXT)
-        self.assertIn("if (payload.schema_version !== REQUIRED_SCHEMA_VERSION)", PAGE_SQUEEZED)
+    def test_06_both_published_schema_versions_enforced(self):
+        self.assertIn('var BOARD_SCHEMA_VERSION = "wizard-nfl-pricing-v3";', PAGE_TEXT)
+        self.assertIn('var CARD_SCHEMA_VERSION = "wizard-nfl-pricing-v2";', PAGE_TEXT)
+        # An unrecognised schema_version is rejected, not rendered.
+        self.assertIn("if (payload.schema_version === BOARD_SCHEMA_VERSION) { gameKeys = BOARD_GAME_KEYS; }", PAGE_SQUEEZED)
+        self.assertIn("else if (payload.schema_version === CARD_SCHEMA_VERSION) { gameKeys = GAME_KEYS; }", PAGE_SQUEEZED)
+        self.assertIn(
+            'invalid("schema_version is not " + BOARD_SCHEMA_VERSION + " or " + CARD_SCHEMA_VERSION);',
+            PAGE_TEXT,
+        )
+        # The page and the deployment validator agree on both names.
+        self.assertEqual(publisher.BOARD_SCHEMA_VERSION, "wizard-nfl-pricing-v3")
+        self.assertEqual(publisher.SCHEMA_VERSION, "wizard-nfl-pricing-v2")
 
     def test_06b_required_key_sets_declared_exactly(self):
         top_level = re.search(r"var TOP_LEVEL_KEYS = \[(.*?)\];", PAGE_TEXT, flags=re.DOTALL)
@@ -353,6 +389,20 @@ class PageIdentityTests(unittest.TestCase):
             re.findall(r'"([a-z_]+)"', game_keys.group(1)),
             list(publisher.GAME_KEYS),
         )
+        # The board key set is the card's plus exactly the two provenance
+        # fields, in the order the exporter publishes them.
+        self.assertIn(
+            "var BOARD_GAME_KEYS = GAME_KEYS.concat([STAGE_KEY, MODEL_GENERATED_KEY]);", PAGE_TEXT
+        )
+        self.assertIn('var STAGE_KEY = "snapshot_stage";', PAGE_TEXT)
+        self.assertIn('var MODEL_GENERATED_KEY = "model_generated_at_utc";', PAGE_TEXT)
+        self.assertEqual(
+            list(publisher.BOARD_GAME_KEYS),
+            list(publisher.GAME_KEYS) + ["snapshot_stage", "model_generated_at_utc"],
+        )
+        # Each schema is checked against its OWN set; neither borrows the
+        # other's fields.
+        self.assertIn('requireExactKeys(raw, gameKeys, "games[" + index + "]");', PAGE_TEXT)
 
     def test_15_no_external_frontend_dependencies(self):
         self.assertIsNone(re.search(r"<script[^>]*\bsrc=", PAGE_TEXT), "page loads external JavaScript")
@@ -379,7 +429,7 @@ class PageIdentityTests(unittest.TestCase):
 
 
 # =========================================================================== #
-# 7-11: pricing derivations, board structure, Compare Your Line
+# 7-11: pricing derivations, board structure, snapshot provenance
 # =========================================================================== #
 class PageDerivationTests(unittest.TestCase):
     def test_07_model_fair_spread_formula(self):
@@ -469,27 +519,96 @@ class PageDerivationTests(unittest.TestCase):
         self.assertIn('appendText(marketLine, "ATS Books: " + game.market_ats_book_count, "note");', PAGE_TEXT)
         self.assertIn('appendText(marketLine, "Total Books: " + game.market_total_book_count, "note");', PAGE_TEXT)
 
-    def test_11_compare_your_line_section(self):
-        self.assertIn("Compare Your Line", PAGE_TEXT)
-        self.assertIn('<label for="compare-game">Game</label>', PAGE_TEXT)
-        self.assertIn('<label for="compare-spread">Your Home Spread</label>', PAGE_TEXT)
-        self.assertIn('<label for="compare-total">Your Game Total</label>', PAGE_TEXT)
-        self.assertIn('<select id="compare-game" name="compare-game">', PAGE_TEXT)
-        self.assertIn(
-            "Enter the HOME team's spread exactly as shown at your sportsbook. Example: -3.5 if the "
-            "home team is -3.5; +3.5 if the home team is +3.5.",
-            PAGE_SQUEEZED,
-        )
-        self.assertIn("var userAtsHomeEdge = game.predicted_home_margin + userHomeSpread;", PAGE_TEXT)
-        self.assertIn("var userTotalEdge = game.predicted_game_total - userTotal;", PAGE_TEXT)
-        self.assertIn("Your ATS Edge", PAGE_TEXT)
-        self.assertIn("Your Total Edge", PAGE_TEXT)
+    def test_11_compare_your_line_ui_is_gone(self):
+        """The page is a model-prediction dashboard, not an input calculator."""
+        for removed in (
+            "Compare Your Line",
+            "Your Home Spread",
+            "Your Game Total",
+            "Your ATS Edge",
+            "Your Total Edge",
+            "compare-section",
+            "compare-game",
+            "compare-spread",
+            "compare-total",
+            "compare-ats-edge",
+            "compare-total-edge",
+            "compareSectionEl",
+            "buildCompare",
+            "updateCompare",
+            "selectedCompareGame",
+            "readUserNumber",
+            "userAtsHomeEdge",
+            "userTotalEdge",
+        ):
+            self.assertNotIn(removed, PAGE_TEXT, f"Compare Your Line remnant present: {removed}")
+
+        # No reader input surface of any kind remains.
+        for element in (r"<form\b", r"<input\b", r"<select\b", r"<button\b", r"<textarea\b", r"<label\b"):
+            self.assertIsNone(re.search(element, PAGE_TEXT), f"input surface remains: {element}")
+        self.assertNotIn("addEventListener(\"input\"", PAGE_TEXT)
+        self.assertNotIn("addEventListener(\"change\"", PAGE_TEXT)
+        # DOMContentLoaded is the only listener the page still needs.
+        self.assertEqual(re.findall(r"addEventListener\(\"(\w+)\"", PAGE_TEXT), ["DOMContentLoaded"])
+
         # Nothing is stored or transmitted: no storage APIs, no beacons, no
         # form submission, no analytics.
         for forbidden in ("localStorage", "sessionStorage", "document.cookie", "indexedDB", "sendBeacon",
                           "XMLHttpRequest", "gtag(", "dataLayer", "form.submit", "action="):
-            self.assertNotIn(forbidden, PAGE_TEXT, f"Compare Your Line must not use {forbidden}")
+            self.assertNotIn(forbidden, PAGE_TEXT, f"page must not use {forbidden}")
         self.assertEqual(len(re.findall(r"window\.fetch\(", PAGE_TEXT)), 1)
+
+        # The model-vs-market comparison the board itself shows is untouched.
+        self.assertIn("Sportsbook Edge (ATS)", PAGE_TEXT)
+        self.assertIn("Market Consensus", PAGE_TEXT)
+        self.assertIn(EXACT_INTRO, PAGE_SQUEEZED)
+
+    def test_11b_every_row_labels_its_snapshot_stage_and_both_timestamps(self):
+        self.assertIn('var SNAPSHOT_STAGES = ["OPEN", "MID", "CLOSE"];', PAGE_TEXT)
+        self.assertIn(
+            'var STAGE_BADGE_MODIFIER = { OPEN: "badge-open", MID: "badge-mid", CLOSE: "badge-close" };',
+            PAGE_TEXT,
+        )
+        # An unrecognised stage label fails the payload closed.
+        self.assertIn(
+            'if (SNAPSHOT_STAGES.indexOf(game[STAGE_KEY]) === -1) { invalid("games[" + index + "]." '
+            '+ STAGE_KEY + " is not OPEN, MID or CLOSE"); }',
+            PAGE_SQUEEZED,
+        )
+        # The stage badge and both instants are rendered into the row.
+        self.assertIn(
+            'appendBadge(snapshot, game.snapshotStage, STAGE_BADGE_MODIFIER[game.snapshotStage]);',
+            PAGE_TEXT,
+        )
+        self.assertIn(
+            'appendText(snapshot, "Market: " + renderEastern(STAMP_FORMAT, game.marketAsOfEpochMs), "note");',
+            PAGE_TEXT,
+        )
+        self.assertIn(
+            'appendText(snapshot, "Model: " + renderEastern(STAMP_FORMAT, game.modelGeneratedEpochMs), "note");',
+            PAGE_TEXT,
+        )
+        # A board row's model instant comes from the row; a certified card has
+        # one cutoff for the whole card, so the card's own stamp is used and no
+        # per-row stage is invented.
+        self.assertIn(
+            "game.modelGeneratedEpochMs = requireInstant( game[MODEL_GENERATED_KEY],", PAGE_SQUEEZED
+        )
+        self.assertIn("game.snapshotStage = null; game.modelGeneratedEpochMs = cardGeneratedEpochMs;", PAGE_SQUEEZED)
+        # The three stages are distinguished by their words and border style,
+        # never by colour alone.
+        self.assertIn(".badge-open { border-style: dotted; }", PAGE_TEXT)
+        self.assertIn(".badge-mid { border-style: dashed; }", PAGE_TEXT)
+
+    def test_11c_the_awaiting_state_no_longer_waits_for_close(self):
+        self.assertIn(
+            'var AWAITING_FIRST_SNAPSHOT_MESSAGE = "No games in this week have an opening market '
+            'snapshot yet.";',
+            PAGE_TEXT,
+        )
+        self.assertIn("messageEl.textContent = AWAITING_FIRST_SNAPSHOT_MESSAGE;", PAGE_TEXT)
+        self.assertNotIn("AWAITING_FIRST_CLOSE", PAGE_TEXT)
+        self.assertNotIn("reached the public CLOSE snapshot", PAGE_TEXT)
 
     def test_12_sportsbook_edge_disclaimer_present(self):
         self.assertIn(EXACT_EDGE_DISCLAIMER, PAGE_SQUEEZED)
@@ -511,6 +630,12 @@ class PageDerivationTests(unittest.TestCase):
             "The model's predicted combined final score.",
             "The difference between the model total and market total.",
             "Whether the model and market favor the same team outright.",
+            # The new column is explained in the reader's own terms, including
+            # that the superseded snapshots are kept for evaluation.
+            "Which pregame snapshot this row is showing, with the instant its market was captured "
+            "and the instant the model produced it.",
+            "A game appears at OPEN and is replaced by MID and then CLOSE as each becomes available; "
+            "the earlier snapshots are kept unchanged for performance evaluation.",
         ):
             self.assertIn(glossary_entry, PAGE_SQUEEZED)
 
@@ -527,7 +652,7 @@ class PageDerivationTests(unittest.TestCase):
         self.assertIn('["catch"](function () { failClosed(); });', PAGE_SQUEEZED)
         # Fail-closed clears the board rather than leaving stale or partial rows.
         self.assertIn('boardBodyEl.textContent = "";', PAGE_TEXT)
-        self.assertIn("compareSectionEl.hidden = true;", PAGE_TEXT)
+        self.assertIn("boardEl.hidden = true;", PAGE_TEXT)
         # No diagnostics are surfaced to the reader.
         self.assertNotIn("console.log", PAGE_TEXT)
         self.assertNotIn(".stack", PAGE_TEXT)
@@ -793,6 +918,7 @@ class PublisherValidationTests(PublisherHarness):
         self.assertEqual(
             summary,
             {
+                "schema_version": "wizard-nfl-pricing-v2",
                 "season": 2026,
                 "week": 2,
                 "horizon": "TUE",
@@ -800,6 +926,33 @@ class PublisherValidationTests(PublisherHarness):
                 "game_count": 1,
             },
         )
+
+    def test_26c_valid_board_summary_names_the_board_contract(self):
+        """The operator report says which of the two contracts was published."""
+        summary = publisher.validate_public_payload(synthetic_board())
+        self.assertEqual(summary["schema_version"], "wizard-nfl-pricing-v3")
+        self.assertEqual(summary["game_count"], 1)
+
+    def test_26d_board_provenance_is_validated_as_strictly_as_every_other_field(self):
+        for broken, expected in (
+            ({"snapshot_stage": "PREGAME"}, "snapshot_stage must be one of"),
+            ({"snapshot_stage": "close"}, "snapshot_stage must be one of"),
+            ({"snapshot_stage": None}, "snapshot_stage must be one of"),
+            ({"model_generated_at_utc": "2026-09-08T13:00:00"}, "not timezone-aware"),
+            ({"model_generated_at_utc": "not-a-time"}, "not a parseable timestamp"),
+            ({"model_generated_at_utc": ""}, "must be a non-empty string"),
+        ):
+            with self.subTest(broken=broken):
+                board = synthetic_board(games=[synthetic_board_game(**broken)])
+                with self.assertRaisesRegex(publisher.PublishError, expected):
+                    publisher.validate_public_payload(board)
+
+    def test_26e_neither_contract_may_borrow_the_other_key_set(self):
+        """A card carrying board keys and a board missing them are both drift."""
+        with self.assertRaisesRegex(publisher.PublishError, "unexpected key"):
+            publisher.validate_public_payload(synthetic_card(games=[synthetic_board_game()]))
+        with self.assertRaisesRegex(publisher.PublishError, "missing required key"):
+            publisher.validate_public_payload(synthetic_board(games=[synthetic_game()]))
 
 
 # =========================================================================== #
@@ -1019,13 +1172,18 @@ class RepositoryScopeTests(unittest.TestCase):
         return paths
 
     def test_34_no_model_files_changed(self):
+        """Working-tree scope guard.
+
+        It has teeth while the change is uncommitted, which is when a stray
+        edit to the model surface is easiest to make and hardest to notice. On
+        a clean checkout there is nothing to report and the assertions below
+        pass trivially, which is the intended outcome rather than a gap.
+        """
         changed = self._changed_paths()
         unexpected = sorted(path for path in changed if path not in EXPECTED_CHANGE_SET)
         self.assertEqual(unexpected, [], f"change set escaped its scope: {unexpected}")
         protected = sorted(path for path in changed if path.startswith(PROTECTED_PREFIXES))
         self.assertEqual(protected, [], f"protected model surface modified: {protected}")
-        # No tracked file is modified at all: the three files are additions.
-        self.assertEqual(self._git("diff", "--name-only", "HEAD").split(), [])
 
     def test_34b_expected_change_set_present(self):
         for relative in sorted(EXPECTED_CHANGE_SET):

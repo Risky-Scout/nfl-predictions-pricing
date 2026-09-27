@@ -11,17 +11,34 @@
   /tools/odds-scanner/predictions/NFL/.
 
   PRESENTATION ONLY. The single data source is the same-origin sibling file
-  ./latest.json carrying the wizard-nfl-pricing-v2 contract written by
-  scripts/export_wizard_nfl_pricing.py. Nothing here fits a model, predicts a
-  margin or total, reconstructs a market, or contacts any other origin: no
-  CDN, no external script, no external stylesheet, no web font, no analytics,
-  no tracking pixel. The only outbound navigation on the page is the
-  methodology link, and only when the reader chooses it.
+  ./latest.json. Two published contracts are accepted and each is validated
+  against its OWN closed key set:
+
+    wizard-nfl-pricing-v3  the current-week pregame board written by
+                           scripts/export_current_week_nfl_feed.py. Every game
+                           of the week appears from its OPEN snapshot onwards
+                           and is represented by the latest pregame snapshot it
+                           has reached (CLOSE > MID > OPEN), so each row also
+                           carries the stage it was published from and the
+                           instant the model produced it.
+    wizard-nfl-pricing-v2  the certified TUE/FRI card written by
+                           scripts/export_wizard_nfl_pricing.py, where one
+                           cutoff covers the whole card and there is therefore
+                           no per-row stage to name.
+
+  Nothing here fits a model, predicts a margin or total, reconstructs a market,
+  or contacts any other origin: no CDN, no external script, no external
+  stylesheet, no web font, no analytics, no tracking pixel. The only outbound
+  navigation on the page is the methodology link, and only when the reader
+  chooses it.
 
   Every displayed pricing quantity (model fair spread, market-implied margin,
-  ATS edge, total edge, winner agreement) is derived here from the eleven
-  published per-game fields. None of them is read from the feed, because none
-  of them is persisted in the feed by design.
+  ATS edge, total edge, winner agreement) is derived here from the published
+  per-game fields. None of them is read from the feed, because none of them is
+  persisted in the feed by design.
+
+  This is a model-prediction dashboard, not an input calculator: it asks the
+  reader for nothing and there is no form on the page.
 
   Fail closed: any transport, schema, key-set, numeric or timestamp problem
   renders exactly one message and no board. Sample/placeholder games are
@@ -222,66 +239,11 @@
     letter-spacing: 0.02em;
   }
 
-  form { margin: 0; }
-
-  .field-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin: 0 0 14px;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 240px;
-    flex: 1 1 240px;
-  }
-
-  label {
-    font-weight: 600;
-    font-size: 0.95rem;
-  }
-
-  select,
-  input[type="number"] {
-    font: inherit;
-    color: var(--ink);
-    background: var(--surface);
-    padding: 9px 10px;
-    border: 1px solid var(--rule-strong);
-    border-radius: 6px;
-    min-height: 42px;
-  }
-
-  .help {
-    font-size: 0.85rem;
-    color: var(--ink-soft);
-  }
-
-  .results {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px 32px;
-    margin: 0;
-    padding: 14px;
-    border: 1px solid var(--rule);
-    border-radius: 8px;
-    background: var(--surface-alt);
-  }
-
-  .results dt {
-    font-weight: 600;
-    color: var(--ink-soft);
-    font-size: 0.9rem;
-  }
-
-  .results dd {
-    margin: 0;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-  }
+  /* The three pregame stages are distinguished by their own words and by
+     border style, never by colour alone. */
+  .badge-close { border-style: solid; border-color: var(--brand); color: var(--brand); }
+  .badge-mid { border-style: dashed; }
+  .badge-open { border-style: dotted; }
 
   dl.glossary { margin: 0; }
 
@@ -302,17 +264,12 @@
 
   a:hover { text-decoration-thickness: 2px; }
 
-  a:focus-visible,
-  select:focus-visible,
-  input:focus-visible,
-  button:focus-visible {
+  a:focus-visible {
     outline: 3px solid var(--focus);
     outline-offset: 2px;
   }
 
-  a:focus,
-  select:focus,
-  input:focus {
+  a:focus {
     outline: 3px solid var(--focus);
     outline-offset: 2px;
   }
@@ -322,7 +279,7 @@
     font-size: 0.88rem;
   }
 
-  /* Mobile: the same eight information groups, one card per game. Column
+  /* Mobile: the same nine information groups, one card per game. Column
      headers are re-attached to each cell through data-label so nothing is
      dropped on a small screen. */
   @media (max-width: 760px) {
@@ -414,7 +371,7 @@
     <p id="feed-message" role="status" aria-live="polite">Loading NFL predictive pricing&hellip;</p>
 
     <table id="pricing-board" hidden>
-      <caption>Model fair pricing beside the captured market consensus, ordered by kickoff.</caption>
+      <caption>Every current-week game from its opening market onwards, at the latest pregame snapshot it has reached, ordered by kickoff.</caption>
       <thead>
         <tr>
           <th scope="col">Matchup</th>
@@ -425,45 +382,11 @@
           <th scope="col">Market Total</th>
           <th scope="col">Total Edge</th>
           <th scope="col">Winner View</th>
+          <th scope="col">Snapshot</th>
         </tr>
       </thead>
       <tbody id="pricing-board-body"></tbody>
     </table>
-  </section>
-
-  <section class="panel" id="compare-section" aria-labelledby="compare-heading" hidden>
-    <h2 id="compare-heading">Compare Your Line</h2>
-    <p class="intro">Sportsbook prices differ by book and by country, and they move. Enter the line you can actually bet to compare it with the model price. Your entries stay in this browser tab: nothing is saved and nothing is sent anywhere.</p>
-
-    <form id="compare-form" novalidate>
-      <div class="field-grid">
-        <p class="field">
-          <label for="compare-game">Game</label>
-          <select id="compare-game" name="compare-game"></select>
-        </p>
-        <p class="field">
-          <label for="compare-spread">Your Home Spread</label>
-          <input type="number" id="compare-spread" name="compare-spread" step="0.5" inputmode="decimal" aria-describedby="compare-spread-help">
-          <span class="help" id="compare-spread-help">Enter the HOME team's spread exactly as shown at your sportsbook. Example: -3.5 if the home team is -3.5; +3.5 if the home team is +3.5.</span>
-        </p>
-        <p class="field">
-          <label for="compare-total">Your Game Total</label>
-          <input type="number" id="compare-total" name="compare-total" step="0.5" inputmode="decimal" aria-describedby="compare-total-help">
-          <span class="help" id="compare-total-help">Enter the total (combined points) offered at your sportsbook, for example 44.5.</span>
-        </p>
-      </div>
-
-      <dl class="results">
-        <div>
-          <dt>Your ATS Edge</dt>
-          <dd id="compare-ats-edge" role="status" aria-live="polite">&mdash;</dd>
-        </div>
-        <div>
-          <dt>Your Total Edge</dt>
-          <dd id="compare-total-edge" role="status" aria-live="polite">&mdash;</dd>
-        </div>
-      </dl>
-    </form>
   </section>
 
   <section class="panel" aria-labelledby="how-to-read-heading">
@@ -486,6 +409,9 @@
 
       <dt>Winner View</dt>
       <dd>Whether the model and market favor the same team outright.</dd>
+
+      <dt>Snapshot</dt>
+      <dd>Which pregame snapshot this row is showing, with the instant its market was captured and the instant the model produced it. OPEN is the first valid market of the week, MID the midweek market, and CLOSE the final market before kickoff. A game appears at OPEN and is replaced by MID and then CLOSE as each becomes available; the earlier snapshots are kept unchanged for performance evaluation.</dd>
     </dl>
     <p class="disclaimer" style="margin-top:16px">Lines move. Compare the model with the price currently available at your sportsbook before making a decision.</p>
   </section>
@@ -509,10 +435,11 @@
   "use strict";
 
   // ------------------------------------------------------------------ //
-  // published contract -- wizard-nfl-pricing-v2
+  // published contracts -- the current-week board and the certified card
   // ------------------------------------------------------------------ //
   var FEED_URL = "./latest.json";
-  var REQUIRED_SCHEMA_VERSION = "wizard-nfl-pricing-v2";
+  var BOARD_SCHEMA_VERSION = "wizard-nfl-pricing-v3";
+  var CARD_SCHEMA_VERSION = "wizard-nfl-pricing-v2";
 
   var TOP_LEVEL_KEYS = ["schema_version", "season", "week", "horizon", "generated_at_utc", "games"];
   var GAME_KEYS = [
@@ -528,10 +455,23 @@
     "market_ats_book_count",
     "market_total_book_count"
   ];
+  var STAGE_KEY = "snapshot_stage";
+  var MODEL_GENERATED_KEY = "model_generated_at_utc";
+  // The board publishes the card's fields plus the provenance a mixed-stage
+  // board cannot be honest without. Each schema is checked against its own
+  // exact key set, so neither can borrow the other's fields.
+  var BOARD_GAME_KEYS = GAME_KEYS.concat([STAGE_KEY, MODEL_GENERATED_KEY]);
+
   var NUMERIC_GAME_KEYS = ["predicted_home_margin", "predicted_game_total", "market_home_spread", "market_total"];
   var BOOK_COUNT_KEYS = ["market_ats_book_count", "market_total_book_count"];
   var TEAM_KEYS = ["away_team", "home_team"];
   var INSTANT_GAME_KEYS = ["kickoff_utc", "market_as_of_utc"];
+
+  // Publication order: a game is shown at the latest pregame snapshot it has
+  // reached. Presentation only -- the page never merges stages and never
+  // recomputes one from another.
+  var SNAPSHOT_STAGES = ["OPEN", "MID", "CLOSE"];
+  var STAGE_BADGE_MODIFIER = { OPEN: "badge-open", MID: "badge-mid", CLOSE: "badge-close" };
 
   var ALLOWED_HORIZONS = { TUE: "Tuesday", FRI: "Friday" };
   var MINIMUM_ELIGIBLE_BOOKS = 3;
@@ -545,9 +485,9 @@
   var NO_DATA_MESSAGE = "No NFL predictive pricing data is currently available.";
 
   // NOT a failure. The published week becomes public the moment it becomes
-  // the current week, and its games appear one at a time as each reaches its
-  // CLOSE snapshot. Saying so is more honest than implying the feed is broken.
-  var AWAITING_FIRST_CLOSE_MESSAGE = "No games have reached the public CLOSE snapshot yet.";
+  // the current week, and its games appear as each one's market opens. Saying
+  // so is more honest than implying the feed is broken.
+  var AWAITING_FIRST_SNAPSHOT_MESSAGE = "No games in this week have an opening market snapshot yet.";
 
   var EM_DASH = "\u2014";
 
@@ -562,19 +502,13 @@
   var marketAsOfEl = document.getElementById("market-as-of");
   var boardEl = document.getElementById("pricing-board");
   var boardBodyEl = document.getElementById("pricing-board-body");
-  var compareSectionEl = document.getElementById("compare-section");
-  var compareGameEl = document.getElementById("compare-game");
-  var compareSpreadEl = document.getElementById("compare-spread");
-  var compareTotalEl = document.getElementById("compare-total");
-  var compareAtsEdgeEl = document.getElementById("compare-ats-edge");
-  var compareTotalEdgeEl = document.getElementById("compare-total-edge");
 
   // ------------------------------------------------------------------ //
   // fail-closed validation. Anything unexpected throws; the single caller
   // turns every throw into NO_DATA_MESSAGE.
   // ------------------------------------------------------------------ //
   function invalid(detail) {
-    throw new Error("invalid wizard-nfl-pricing-v2 payload: " + detail);
+    throw new Error("invalid published pricing payload: " + detail);
   }
 
   function hasOwn(object, key) {
@@ -642,22 +576,33 @@
     }
     requireExactKeys(payload, TOP_LEVEL_KEYS, "payload");
 
-    if (payload.schema_version !== REQUIRED_SCHEMA_VERSION) {
-      invalid("schema_version is not " + REQUIRED_SCHEMA_VERSION);
+    // The board and the certified card are separate closed contracts, and the
+    // declared schema_version decides which key set a game must match exactly.
+    var gameKeys;
+    if (payload.schema_version === BOARD_SCHEMA_VERSION) {
+      gameKeys = BOARD_GAME_KEYS;
+    } else if (payload.schema_version === CARD_SCHEMA_VERSION) {
+      gameKeys = GAME_KEYS;
+    } else {
+      invalid("schema_version is not " + BOARD_SCHEMA_VERSION + " or " + CARD_SCHEMA_VERSION);
     }
+    var carriesStage = gameKeys === BOARD_GAME_KEYS;
+
     requireFiniteNumber(payload.season, "season");
     requireFiniteNumber(payload.week, "week");
     if (!hasOwn(ALLOWED_HORIZONS, requireNonEmptyString(payload.horizon, "horizon"))) {
       invalid("horizon is not TUE or FRI");
     }
-    requireInstant(payload.generated_at_utc, "generated_at_utc");
+    var cardGeneratedEpochMs = requireInstant(payload.generated_at_utc, "generated_at_utc");
 
     if (Object.prototype.toString.call(payload.games) !== "[object Array]") {
       invalid("games is not an array");
     }
-    // An empty array is a valid published week that has not closed a game
-    // yet, so it is not rejected here. Every game that IS present is checked
-    // exactly as strictly as before by the loop below.
+    // An empty array is a valid published week in which no game's market has
+    // opened yet, so it is not rejected here. Every game that IS present is
+    // checked exactly as strictly as before by the loop below. A week where
+    // only SOME games have opened is likewise ordinary: the games present are
+    // rendered and the absent ones are simply not on the board.
 
     var seenGameIds = {};
     var games = [];
@@ -671,11 +616,11 @@
       if (raw === null || typeof raw !== "object" || Object.prototype.toString.call(raw) === "[object Array]") {
         invalid("games[" + index + "] is not a JSON object");
       }
-      requireExactKeys(raw, GAME_KEYS, "games[" + index + "]");
+      requireExactKeys(raw, gameKeys, "games[" + index + "]");
 
       game = {};
-      for (keyIndex = 0; keyIndex < GAME_KEYS.length; keyIndex += 1) {
-        game[GAME_KEYS[keyIndex]] = raw[GAME_KEYS[keyIndex]];
+      for (keyIndex = 0; keyIndex < gameKeys.length; keyIndex += 1) {
+        game[gameKeys[keyIndex]] = raw[gameKeys[keyIndex]];
       }
 
       requireNonEmptyString(game.game_id, "games[" + index + "].game_id");
@@ -702,6 +647,23 @@
 
       game.kickoffEpochMs = requireInstant(game.kickoff_utc, "games[" + index + "].kickoff_utc");
       game.marketAsOfEpochMs = requireInstant(game.market_as_of_utc, "games[" + index + "].market_as_of_utc");
+
+      // Board rows name their own stage and their own model instant. A
+      // certified card has one cutoff for the whole card, so there is no
+      // per-row stage to name and the card's own stamp is the model instant
+      // for every row -- stated, not invented.
+      if (carriesStage) {
+        if (SNAPSHOT_STAGES.indexOf(game[STAGE_KEY]) === -1) {
+          invalid("games[" + index + "]." + STAGE_KEY + " is not OPEN, MID or CLOSE");
+        }
+        game.snapshotStage = game[STAGE_KEY];
+        game.modelGeneratedEpochMs = requireInstant(
+          game[MODEL_GENERATED_KEY], "games[" + index + "]." + MODEL_GENERATED_KEY
+        );
+      } else {
+        game.snapshotStage = null;
+        game.modelGeneratedEpochMs = cardGeneratedEpochMs;
+      }
       games.push(game);
     }
 
@@ -905,83 +867,17 @@
     appendText(winnerView, "Market: " + priced.marketFavoriteTeam, "note");
     row.appendChild(winnerView);
 
+    var snapshot = cell("td", "Snapshot");
+    if (game.snapshotStage === null) {
+      appendText(snapshot, EM_DASH, "price");
+    } else {
+      appendBadge(snapshot, game.snapshotStage, STAGE_BADGE_MODIFIER[game.snapshotStage]);
+    }
+    appendText(snapshot, "Market: " + renderEastern(STAMP_FORMAT, game.marketAsOfEpochMs), "note");
+    appendText(snapshot, "Model: " + renderEastern(STAMP_FORMAT, game.modelGeneratedEpochMs), "note");
+    row.appendChild(snapshot);
+
     return row;
-  }
-
-  // ------------------------------------------------------------------ //
-  // Compare Your Line -- entirely in this tab. Nothing is stored and
-  // nothing is transmitted.
-  // ------------------------------------------------------------------ //
-  function selectedCompareGame(card) {
-    var index;
-    for (index = 0; index < card.games.length; index += 1) {
-      if (card.games[index].game_id === compareGameEl.value) {
-        return card.games[index];
-      }
-    }
-    return null;
-  }
-
-  function readUserNumber(input) {
-    var text = input.value.trim();
-    if (text.length === 0) {
-      return null;
-    }
-    var value = Number(text);
-    if (typeof value !== "number" || !isFinite(value)) {
-      return null;
-    }
-    return value;
-  }
-
-  function updateCompare(card) {
-    var game = selectedCompareGame(card);
-    var userHomeSpread = readUserNumber(compareSpreadEl);
-    var userTotal = readUserNumber(compareTotalEl);
-
-    if (game === null || userHomeSpread === null) {
-      compareAtsEdgeEl.textContent = "\u2014";
-    } else {
-      var userAtsHomeEdge = game.predicted_home_margin + userHomeSpread;
-      compareAtsEdgeEl.textContent = userAtsHomeEdge === 0
-        ? NO_EDGE
-        : favoriteSide(userAtsHomeEdge) + " " + formatMagnitude(userAtsHomeEdge) + " pts";
-    }
-
-    if (game === null || userTotal === null) {
-      compareTotalEdgeEl.textContent = "\u2014";
-    } else {
-      var userTotalEdge = game.predicted_game_total - userTotal;
-      compareTotalEdgeEl.textContent = userTotalEdge === 0
-        ? NO_EDGE
-        : (userTotalEdge > 0 ? "OVER" : "UNDER") + " " + formatMagnitude(userTotalEdge) + " pts";
-    }
-  }
-
-  function buildCompare(card) {
-    var index;
-    var game;
-    var option;
-    for (index = 0; index < card.games.length; index += 1) {
-      game = card.games[index];
-      option = document.createElement("option");
-      option.value = game.game_id;
-      option.textContent = game.away_team + " at " + game.home_team + " \u00b7 " + renderEastern(KICKOFF_FORMAT, game.kickoffEpochMs);
-      compareGameEl.appendChild(option);
-    }
-
-    function onChange() {
-      updateCompare(card);
-    }
-
-    compareGameEl.addEventListener("change", onChange);
-    compareSpreadEl.addEventListener("input", onChange);
-    compareSpreadEl.addEventListener("change", onChange);
-    compareTotalEl.addEventListener("input", onChange);
-    compareTotalEl.addEventListener("change", onChange);
-
-    compareSectionEl.hidden = false;
-    updateCompare(card);
   }
 
   // ------------------------------------------------------------------ //
@@ -993,12 +889,11 @@
 
   // The published week is real and is named; it simply has nothing on the
   // board yet. The week and the model stamp are shown, the market stamp has
-  // no games to be "as of", and the board and the compare form stay out of
-  // the way until there is something in them.
-  function renderAwaitingFirstClose(card) {
+  // no games to be "as of", and the board stays out of the way until there is
+  // something in it.
+  function renderAwaitingFirstSnapshot(card) {
     boardBodyEl.textContent = "";
     boardEl.hidden = true;
-    compareSectionEl.hidden = true;
 
     identityEl.textContent = cardIdentity(card);
     identityEl.hidden = false;
@@ -1007,7 +902,7 @@
     marketAsOfEl.textContent = EM_DASH;
     stampsEl.hidden = false;
 
-    messageEl.textContent = AWAITING_FIRST_CLOSE_MESSAGE;
+    messageEl.textContent = AWAITING_FIRST_SNAPSHOT_MESSAGE;
     messageEl.hidden = false;
   }
 
@@ -1015,7 +910,7 @@
     var index;
 
     if (card.games.length === 0) {
-      renderAwaitingFirstClose(card);
+      renderAwaitingFirstSnapshot(card);
       return;
     }
 
@@ -1037,8 +932,6 @@
 
     boardEl.hidden = false;
     messageEl.hidden = true;
-
-    buildCompare(card);
   }
 
   function failClosed() {
@@ -1046,7 +939,6 @@
     boardEl.hidden = true;
     identityEl.hidden = true;
     stampsEl.hidden = true;
-    compareSectionEl.hidden = true;
     messageEl.hidden = false;
     messageEl.textContent = NO_DATA_MESSAGE;
   }

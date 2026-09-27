@@ -20,10 +20,13 @@ WHY VERIFY FROM OUTSIDE
 
 THE FEED IS VALIDATED WITH THE EXISTING CONTRACT
   :func:`scripts.publish_sportsodds_nfl.validate_public_payload` -- the same
-  frozen ``wizard-nfl-pricing-v2`` gate the publisher applies. No second
-  schema is defined here, and that is exactly why this script needs no rule
-  of its own about an empty week: a current week with no CLOSE yet carries
-  ``games: []``, the shared validator accepts it, and so does this verifier.
+  gate the publisher applies, covering both the certified
+  ``wizard-nfl-pricing-v2`` card and the current-week
+  ``wizard-nfl-pricing-v3`` pregame board. No second schema is defined here,
+  and that is exactly why this script needs no rule of its own about an empty
+  week, and none about the board's per-game stage either: a current week with
+  nothing snapshotted yet carries ``games: []``, the shared validator accepts
+  it, and so does this verifier.
   Deliberately, the ``--expect-sha256`` proof is unaffected -- an empty card
   still has to be byte-for-byte the card the run published.
 
@@ -147,7 +150,7 @@ def verify(
     try:
         summary = validate_public_payload(payload)
     except PublishError as exc:
-        raise PublicVerificationError(f"{feed_url} failed the wizard-nfl-pricing-v2 contract: {exc}") from exc
+        raise PublicVerificationError(f"{feed_url} failed the published pricing contract: {exc}") from exc
 
     if expect_sha256 and digest.lower() != expect_sha256.strip().lower():
         raise PublicVerificationError(

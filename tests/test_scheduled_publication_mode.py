@@ -251,7 +251,7 @@ case "${1}" in
   done
   mkdir -p "$(dirname "${out}")"
   printf '%s\\n' '@ASSEMBLED@' > "${out}"
-  echo "publication_status=OK_AWAITING_FIRST_CLOSE" ;;
+  echo "publication_status=OK_AWAITING_FIRST_SNAPSHOT" ;;
 */publish_wizard_nfl_local.py)
   shift
   exec @PY@ "@REPO@/scripts/publish_wizard_nfl_local.py" "$@" ;;
@@ -709,11 +709,14 @@ def test_the_certified_orchestrator_is_untouched_by_the_skip():
 # ===========================================================================
 # 10-12. What must not have moved.
 # ===========================================================================
-def test_publication_is_still_close_only():
-    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE,)
+def test_publication_prefers_the_latest_available_pregame_stage():
+    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
 
 
-def test_no_stage_is_named_in_a_published_card(tmp_path):
+def test_the_sweep_still_names_no_stage_of_its_own_in_the_served_card(tmp_path):
+    """The sweep publishes whatever the assembler decided. It never asks for a
+    stage, so a card served by an idle sweep carries no stage token it could
+    only have got from the orchestrator."""
     estate = _estate(tmp_path, due=0)
     _run_sweep(estate)
     served = estate["served"].read_text()

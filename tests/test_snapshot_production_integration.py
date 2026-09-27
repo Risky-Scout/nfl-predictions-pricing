@@ -559,49 +559,56 @@ def _publish(feed_estate, generated_at="2026-09-20T16:05:00Z"):
     )
 
 
-def test_the_feed_publishes_only_close_backed_games(feed_estate):
-    """CLOSE-only: a game with just a MID is archival evidence, not public."""
+def test_the_board_publishes_each_game_at_its_latest_pregame_stage(feed_estate):
+    """A game with only a MID is public AND labelled MID, beside a closed one."""
     _write(feed_estate, "EARLY", st.STAGE_CLOSE, margin=6.5, total=47.0, spread=-4.5, market_total=45.5)
     _write(feed_estate, "LATE", st.STAGE_MID, margin=2.0, total=43.0, spread=-1.5, market_total=42.5)
 
     result = _publish(feed_estate)
     assert result["status"] == "OK"
-    assert result["game_count"] == 1
-    assert result["stages"] == {"EARLY": st.STAGE_CLOSE}
+    assert result["game_count"] == 2
+    assert result["stages"] == {"EARLY": st.STAGE_CLOSE, "LATE": st.STAGE_MID}
+    # Only the closed game is frozen; the MID is expected to be superseded.
     assert result["frozen_close_games"] == ["EARLY"]
 
     published = json.loads(feed_estate["output"].read_text())
-    assert published["schema_version"] == "wizard-nfl-pricing-v2"
+    assert published["schema_version"] == "wizard-nfl-pricing-v3"
     assert tuple(published.keys()) == feed.TOP_LEVEL_KEY_ORDER
     for game in published["games"]:
         assert tuple(game.keys()) == feed.GAME_KEY_ORDER
 
 
-def test_the_public_schema_gains_no_stage_field(feed_estate):
-    """Stage is operational bookkeeping and stays out of the public payload."""
+def test_the_public_schema_names_the_stage_each_row_came_from(feed_estate):
+    """A board assembled from different stages cannot be honest without it."""
     _write(feed_estate, "EARLY", st.STAGE_CLOSE, margin=6.5, total=47.0, spread=-4.5, market_total=45.5)
+    _write(feed_estate, "LATE", st.STAGE_MID, margin=2.0, total=43.0, spread=-1.5, market_total=42.5)
     _publish(feed_estate)
     published = json.loads(feed_estate["output"].read_text())
     assert "snapshot_stage" not in published
+    stages = {game["game_id"]: game["snapshot_stage"] for game in published["games"]}
+    assert stages == {"EARLY": st.STAGE_CLOSE, "LATE": st.STAGE_MID}
     for game in published["games"]:
-        assert "snapshot_stage" not in game
+        assert game["model_generated_at_utc"].endswith("Z")
 
 
-def test_a_future_game_appears_only_once_it_closes(feed_estate):
-    """The feed ACCUMULATES: a game is absent until its CLOSE, then joins."""
+def test_a_game_advances_from_mid_to_close_in_place(feed_estate):
+    """The board REPLACES a game's representation rather than accumulating it."""
     _write(feed_estate, "EARLY", st.STAGE_CLOSE, margin=6.5, total=47.0, spread=-4.5, market_total=45.5)
     _write(feed_estate, "LATE", st.STAGE_MID, margin=2.0, total=43.0, spread=-1.5, market_total=42.5)
     _publish(feed_estate)
     before = json.loads(feed_estate["output"].read_text())
-    assert [g["game_id"] for g in before["games"]] == ["EARLY"]
+    assert [g["game_id"] for g in before["games"]] == ["EARLY", "LATE"]
+    assert [g for g in before["games"] if g["game_id"] == "LATE"][0]["predicted_home_margin"] == 2.0
 
     # LATE now reaches its own CLOSE.
     _write(feed_estate, "LATE", st.STAGE_CLOSE, margin=3.5, total=44.0, spread=-2.5, market_total=43.5)
     result = _publish(feed_estate, generated_at="2026-09-21T23:20:00Z")
 
     after = json.loads(feed_estate["output"].read_text())
+    assert [g["game_id"] for g in after["games"]] == ["EARLY", "LATE"]
     late_after = [g for g in after["games"] if g["game_id"] == "LATE"][0]
     assert late_after["predicted_home_margin"] == 3.5
+    assert late_after["snapshot_stage"] == st.STAGE_CLOSE
     assert result["stages"]["LATE"] == st.STAGE_CLOSE
     assert result["frozen_close_games"] == ["EARLY", "LATE"]
 
@@ -661,10 +668,10 @@ def test_a_game_with_no_snapshot_is_absent_rather_than_placeheld(feed_estate):
     assert [g["game_id"] for g in json.loads(feed_estate["output"].read_text())["games"]] == ["EARLY"]
 
 
-def test_a_week_with_nothing_closed_yet_still_publishes(feed_estate):
+def test_a_week_with_nothing_snapshotted_yet_still_publishes(feed_estate):
     """Refusing here is what left a finished week on the page for days."""
     result = _publish(feed_estate)
-    assert result["status"] == "OK_AWAITING_FIRST_CLOSE"
+    assert result["status"] == "OK_AWAITING_FIRST_SNAPSHOT"
     assert result["game_count"] == 0
 
     published = json.loads(feed_estate["output"].read_text())

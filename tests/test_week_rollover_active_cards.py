@@ -385,14 +385,17 @@ def test_the_due_close_is_available_to_the_publisher(estate):
     assert pd.Timestamp(recorded["snapshot_at_utc"]) == W2_MONDAY_CLOSE
 
 
-def test_the_feed_publishes_close_ahead_of_open_and_mid():
-    """The publisher's preference order is unchanged: a CLOSE always wins."""
+def test_the_feed_publishes_close_ahead_of_mid_ahead_of_open():
+    """A CLOSE still always wins. OPEN and MID are now publishable BELOW it, so
+    a rolled-over game that has opened but not closed is on the board rather
+    than invisible -- but it can never outrank its own CLOSE."""
     spec = importlib.util.spec_from_file_location(
         "_feed_pref", REPO_ROOT / "scripts" / "export_current_week_nfl_feed.py"
     )
     feed = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(feed)
     assert feed.PUBLICATION_PREFERENCE[0] == st.STAGE_CLOSE
+    assert feed.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
 
 
 # ===========================================================================
