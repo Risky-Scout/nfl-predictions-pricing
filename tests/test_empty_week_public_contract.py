@@ -17,11 +17,16 @@ assembled and then rejected at the door, the sweep aborted before emitting
 PUBLISHED_SHA256, and the public page kept serving a Week-1 card from
 ``2026-09-15T05:14:43Z``.
 
-THE RULE. An empty games list means "no game in this publication week has
-reached CLOSE yet". It is a state to publish, not malformed data. Everything
+THE RULE. An empty games list means "no game in this publication week has a
+pregame snapshot yet". It is a state to publish, not malformed data. Everything
 else about the contract is unchanged: a missing games key, a non-array, and
     20|any malformed game object are all still refused, and the served bytes must
 still be exactly the bytes that were published.
+
+SINCE THE PREGAME BOARD LANDED, that emptiness is rarer and earlier: a game
+becomes public at its OPEN snapshot rather than at CLOSE, so the empty envelope
+now describes only the gap between a week becoming current and its first market
+opening. The rule itself is unchanged, and so is every proof below.
 
 Hermetic: ``tmp_path`` estates, synthetic cards, a stubbed transport for the
 verifier and a DOM shim for the page. No network, no provider, no server,
@@ -43,7 +48,12 @@ import pytest
 
 from nfl_hybrid.production import snapshot_stages_2026 as st
 
-from test_sportsodds_nfl_page import synthetic_card, synthetic_game
+from test_sportsodds_nfl_page import (
+    synthetic_board,
+    synthetic_board_game,
+    synthetic_card,
+    synthetic_game,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PAGE_PATH = REPO_ROOT / "web" / "sportsodds" / "nfl" / "index.html"
@@ -64,9 +74,13 @@ verifier = _load(REPO_ROOT / "scripts" / "verify_public_nfl_feed.py", "_contract
 exporter = _load(REPO_ROOT / "scripts" / "export_current_week_nfl_feed.py", "_contract_exporter")
 
 
-# The live shape: season 2026 week 3, handed over from week 2, nothing closed.
-EMPTY_WEEK_3 = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
-# The stale card the page was stuck on.
+# The live shape: season 2026 week 3, handed over from week 2, nothing
+# snapshotted. It is a BOARD envelope, because the current-week board is the one
+# thing a public writer is allowed to place.
+EMPTY_WEEK_3 = synthetic_board(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+# The stale card the page was stuck on. Deliberately left on the LEGACY contract:
+# that is what was really sitting on the endpoint, and deploying the empty board
+# over it is exactly the transition this suite has to prove still works.
 STALE_WEEK_1 = synthetic_card(week=1, generated_at_utc="2026-09-15T05:14:43Z")
 
 
@@ -292,7 +306,7 @@ def test_the_verifier_still_rejects_a_corrupt_served_payload(monkeypatch, page_h
     corrupt = _bytes(synthetic_card(week=3, games=[synthetic_game(market_ats_book_count=1)]))
     _stub_transport(monkeypatch, page_html, corrupt)
 
-    with pytest.raises(verifier.PublicVerificationError, match="wizard-nfl-pricing-v2 contract"):
+    with pytest.raises(verifier.PublicVerificationError, match="published pricing contract"):
         verifier.verify(now_utc=NOW)
 
 
@@ -301,6 +315,43 @@ def test_the_verifier_still_rejects_a_truncated_served_payload(monkeypatch, page
 
     with pytest.raises(verifier.PublicVerificationError, match="not valid UTF-8 JSON"):
         verifier.verify(now_utc=NOW)
+
+
+def test_the_verifier_verifies_the_authoritative_contract(monkeypatch, page_html):
+    """Requirement 19: asked to, the verifier proves the live endpoint is serving
+    the one contract a writer may place."""
+    feed_bytes = _bytes(EMPTY_WEEK_3)
+    _stub_transport(monkeypatch, page_html, feed_bytes)
+
+    report = verifier.verify(
+        expect_sha256=sha256(feed_bytes).hexdigest(),
+        expect_authoritative_contract=True,
+        require_fresh_hours=24,
+        now_utc=NOW,
+    )
+    assert report["status"] == "VERIFIED"
+    assert report["feed"]["schema_version"] == "wizard-nfl-pricing-v3"
+
+
+def test_the_verifier_rejects_a_downgraded_endpoint_when_asked(monkeypatch, page_html):
+    """If a legacy card ever did reach the endpoint, the publishing job's own
+    verification is what would catch it."""
+    legacy = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+    _stub_transport(monkeypatch, page_html, _bytes(legacy))
+
+    with pytest.raises(verifier.PublicVerificationError, match="not the authoritative public contract"):
+        verifier.verify(expect_authoritative_contract=True, now_utc=NOW)
+
+
+def test_the_verifier_still_reports_a_legacy_card_rather_than_refusing_to_read_it(monkeypatch, page_html):
+    """Reading stays broader than writing: mid-deployment the endpoint may still
+    hold an older card, and saying so honestly is this script's whole job."""
+    legacy = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+    _stub_transport(monkeypatch, page_html, _bytes(legacy))
+
+    report = verifier.verify(now_utc=NOW)
+    assert report["status"] == "VERIFIED"
+    assert report["feed"]["schema_version"] == "wizard-nfl-pricing-v2"
 
 
 def test_the_verifier_still_enforces_freshness_on_an_empty_card(monkeypatch, page_html):
@@ -316,7 +367,10 @@ def test_the_verifier_defines_no_second_schema_of_its_own():
     source = (REPO_ROOT / "scripts" / "verify_public_nfl_feed.py").read_text(encoding="utf-8")
     assert 'REPO_ROOT / "scripts" / "publish_sportsodds_nfl.py"' in source
     assert "validate_public_payload = _contract.validate_public_payload" in source
-    for restated in ("SCHEMA_VERSION =", "GAME_KEYS =", "TOP_LEVEL_KEYS =", "games is empty"):
+    # Borrowing a constant by reference is the point; DEFINING one here would be
+    # the second schema. So the ban is on literal restatement, not on the name.
+    assert "AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = _contract." in source
+    for restated in ('SCHEMA_VERSION = "', "GAME_KEYS = ", "TOP_LEVEL_KEYS = ", "games is empty"):
         assert restated not in source
 
     # And it really is the same gate: identical verdicts on identical input.
@@ -353,12 +407,19 @@ El.prototype.addEventListener = function () {};
 
 var REGISTRY = {};
 ["feed-message", "feed-identity", "feed-stamps", "generated-at", "market-as-of",
- "pricing-board", "pricing-board-body", "compare-section", "compare-game",
- "compare-spread", "compare-total", "compare-ats-edge", "compare-total-edge"
+ "pricing-board", "pricing-board-body"
 ].forEach(function (id) { REGISTRY[id] = new El("div"); });
-["feed-identity", "feed-stamps", "pricing-board", "compare-section"].forEach(function (id) {
+["feed-identity", "feed-stamps", "pricing-board"].forEach(function (id) {
   REGISTRY[id].hidden = true;
 });
+
+// Flatten one rendered row to the text a reader would actually see, cell by
+// cell, so a test can assert on the board rather than on the page source.
+function rowText(row) {
+  return row.children.map(function (cell) {
+    return cell.children.map(function (span) { return span.textContent; }).join(" | ");
+  });
+}
 
 globalThis.document = {
   readyState: "complete",
@@ -389,8 +450,7 @@ setTimeout(function () {
     marketAsOf: REGISTRY["market-as-of"].textContent,
     boardHidden: REGISTRY["pricing-board"].hidden,
     rowCount: REGISTRY["pricing-board-body"].children.length,
-    compareHidden: REGISTRY["compare-section"].hidden,
-    compareOptions: REGISTRY["compare-game"].children.length
+    rows: REGISTRY["pricing-board-body"].children.map(rowText)
   }));
 }, 0);
 """
@@ -419,7 +479,7 @@ def _render(tmp_path: Path, feed_text: str) -> dict:
 
 requires_node = pytest.mark.skipif(NODE is None, reason="no JavaScript engine available")
 
-AWAITING_MESSAGE = "No games have reached the public CLOSE snapshot yet."
+AWAITING_MESSAGE = "No games in this week have an opening market snapshot yet."
 NO_DATA_MESSAGE = "No NFL predictive pricing data is currently available."
 
 
@@ -442,10 +502,9 @@ def test_the_page_renders_the_waiting_state_not_the_invalid_feed_state(tmp_path)
     assert rendered["generatedAt"] != ""
     # Nothing can be "as of" when there are no games.
     assert rendered["marketAsOf"] == "\u2014"
-    # No empty table, no empty compare form.
+    # No empty table.
     assert rendered["boardHidden"] is True
     assert rendered["rowCount"] == 0
-    assert rendered["compareHidden"] is True
 
 
 @requires_node
@@ -466,11 +525,14 @@ def test_the_populated_board_renders_exactly_as_before(tmp_path):
 
     assert rendered["boardHidden"] is False
     assert rendered["rowCount"] == 2
-    assert rendered["compareHidden"] is False
-    assert rendered["compareOptions"] == 2
     assert rendered["messageHidden"] is True
     assert rendered["identity"] == "Season 2026 \u00b7 Week 3 \u00b7 Tuesday Forecast"
     assert rendered["marketAsOf"] != "\u2014"
+    # A certified card has one cutoff for the whole card, so its rows name no
+    # stage and fall back to the card's own model stamp.
+    for row in rendered["rows"]:
+        assert row[-1].startswith("\u2014 | Market: ")
+        assert "| Model: " in row[-1]
 
 
 @requires_node
@@ -491,14 +553,14 @@ def test_the_page_still_fails_closed_on_a_genuinely_broken_feed(tmp_path, feed_t
     assert rendered["message"] == NO_DATA_MESSAGE
     assert rendered["boardHidden"] is True
     assert rendered["identityHidden"] is True
-    assert rendered["compareHidden"] is True
+    assert rendered["rowCount"] == 0
 
 
 def test_the_waiting_message_is_not_the_failure_message():
     text = PAGE_PATH.read_text(encoding="utf-8")
-    assert f'var AWAITING_FIRST_CLOSE_MESSAGE = "{AWAITING_MESSAGE}";' in text
+    assert f'var AWAITING_FIRST_SNAPSHOT_MESSAGE = "{AWAITING_MESSAGE}";' in text
     assert f'var NO_DATA_MESSAGE = "{NO_DATA_MESSAGE}";' in text
-    assert "messageEl.textContent = AWAITING_FIRST_CLOSE_MESSAGE;" in text
+    assert "messageEl.textContent = AWAITING_FIRST_SNAPSHOT_MESSAGE;" in text
     assert "messageEl.textContent = NO_DATA_MESSAGE;" in text
 
 
@@ -513,22 +575,105 @@ def test_the_waiting_state_reuses_the_existing_page_furniture():
 
 
 # ===========================================================================
-# 11. CLOSE-only remains absolute.
+# 11. The board shows every game from OPEN onwards, and says which stage.
 # ===========================================================================
-def test_publication_is_still_close_only():
-    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE,)
+def test_publication_prefers_close_then_mid_then_open():
+    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
 
 
-def test_the_public_schema_still_cannot_name_a_stage():
+def test_the_certified_card_schema_still_cannot_name_a_stage():
+    """Only the board carries provenance. The certified card's key set is
+    frozen, which is what keeps its immutable archives byte-valid."""
     assert "snapshot_stage" not in publisher.GAME_KEYS
     assert "snapshot_stage" not in publisher.TOP_LEVEL_KEYS
     assert publisher.SCHEMA_VERSION == "wizard-nfl-pricing-v2"
+    assert publisher.BOARD_GAME_KEYS[-2:] == ("snapshot_stage", "model_generated_at_utc")
 
 
 def test_the_empty_envelope_carries_no_stage_token():
     serialized = _bytes(EMPTY_WEEK_3).decode("utf-8")
     for token in ("OPEN", "MID", "CLOSE", "snapshot_stage"):
         assert token not in serialized
+
+
+@requires_node
+def test_an_open_only_game_is_visible_on_the_public_board(tmp_path):
+    """The product requirement, proved through the page's own JavaScript: a game
+    whose market has merely OPENED is on the board, labelled OPEN."""
+    rendered = _render(tmp_path, json.dumps(synthetic_board(week=3)))
+
+    assert rendered["boardHidden"] is False
+    assert rendered["rowCount"] == 1
+    assert rendered["message"] != NO_DATA_MESSAGE
+    assert rendered["message"] != AWAITING_MESSAGE
+    assert rendered["rows"][0][-1].startswith("OPEN | Market: ")
+
+
+@requires_node
+def test_the_board_renders_one_game_per_stage_in_the_same_slate(tmp_path):
+    board = synthetic_board(
+        week=3,
+        games=[
+            synthetic_board_game(
+                game_id="2026_03_ATL_GB", kickoff_utc="2026-09-25T00:15:00Z",
+                away_team="ATL", home_team="GB", snapshot_stage="CLOSE",
+            ),
+            synthetic_board_game(
+                game_id="2026_03_KC_MIA", kickoff_utc="2026-09-27T17:00:00Z",
+                away_team="KC", home_team="MIA", snapshot_stage="MID",
+            ),
+            synthetic_board_game(
+                game_id="2026_03_SEA_WAS", kickoff_utc="2026-09-27T20:05:00Z",
+                away_team="SEA", home_team="WAS", snapshot_stage="OPEN",
+            ),
+        ],
+    )
+    rendered = _render(tmp_path, json.dumps(board))
+
+    assert rendered["rowCount"] == 3
+    # Kickoff order, each row naming its own stage and both instants.
+    assert [row[-1].split(" | ")[0] for row in rendered["rows"]] == ["CLOSE", "MID", "OPEN"]
+    for row in rendered["rows"]:
+        stage, market, model = row[-1].split(" | ")
+        assert stage in ("OPEN", "MID", "CLOSE")
+        assert market.startswith("Market: ") and "EDT" in market
+        assert model.startswith("Model: ") and "EDT" in model
+
+
+@requires_node
+def test_a_partially_opened_week_renders_the_games_that_opened(tmp_path):
+    """One unopened market does not hold the rest of the slate back."""
+    board = synthetic_board(
+        week=3,
+        games=[
+            synthetic_board_game(game_id="2026_03_KC_MIA", kickoff_utc="2026-09-27T17:00:00Z"),
+            synthetic_board_game(
+                game_id="2026_03_SEA_WAS", kickoff_utc="2026-09-27T20:05:00Z",
+                away_team="SEA", home_team="WAS", snapshot_stage="MID",
+            ),
+        ],
+    )
+    rendered = _render(tmp_path, json.dumps(board))
+
+    assert rendered["boardHidden"] is False
+    assert rendered["rowCount"] == 2
+    assert rendered["messageHidden"] is True
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "game",
+    [
+        synthetic_board_game(snapshot_stage="PREGAME"),
+        synthetic_board_game(snapshot_stage="close"),
+        synthetic_board_game(model_generated_at_utc="2026-09-08T12:45:00"),
+    ],
+    ids=["unknown-stage", "wrong-case-stage", "naive-model-instant"],
+)
+def test_the_page_fails_closed_on_broken_board_provenance(tmp_path, game):
+    rendered = _render(tmp_path, json.dumps(synthetic_board(games=[game])))
+    assert rendered["message"] == NO_DATA_MESSAGE
+    assert rendered["boardHidden"] is True
 
 
 def test_allowing_an_empty_board_did_not_invent_a_placeholder_row():
@@ -557,6 +702,7 @@ def test_the_page_never_invents_a_row_for_an_empty_week(tmp_path):
 def test_a_normal_certified_card_validates_exactly_as_before():
     summary = publisher.validate_public_payload(synthetic_card())
     assert summary == {
+        "schema_version": "wizard-nfl-pricing-v2",
         "season": 2026,
         "week": 2,
         "horizon": "TUE",

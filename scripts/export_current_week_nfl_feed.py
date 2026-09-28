@@ -1,20 +1,37 @@
-"""Current-week wizard-nfl-pricing-v2 feed, frozen game by game at CLOSE.
+"""Current-week public pregame board: every game at its latest pregame snapshot.
 
 WHY THIS EXISTS ALONGSIDE export_wizard_nfl_pricing.py. That exporter
 publishes ONE certified card: every game shares one cutoff and one run
-manifest. The current-week feed is a different shape -- each game advances
+manifest. The current-week board is a different shape -- each game advances
 through OPEN, MID and CLOSE on its own clock, so at any moment the live page
 carries a mixture: games already past their individual CLOSE, and games still
-updating. One run manifest cannot describe that, so the feed is assembled per
+updating. One run manifest cannot describe that, so the board is assembled per
 game instead.
 
-THE PUBLIC CONTRACT IS UNCHANGED. Output is exactly ``wizard-nfl-pricing-v2``
--- same schema_version, same top-level keys, same eleven game keys in the same
-order, same publication gate -- produced by the v2 exporter's OWN translation
-and serialization helpers rather than a second implementation of them. Which
-stage a game was published from is operational bookkeeping, so it is recorded
-in a private sidecar under the artifact root, never added to the public
-payload.
+LATEST AVAILABLE PREGAME SNAPSHOT, PER GAME. The public product is the model's
+prediction for the current week BEFORE the games, so a game becomes public as
+soon as its OPEN snapshot exists and is then REPRESENTED by the most advanced
+snapshot it has reached: CLOSE ahead of MID ahead of OPEN. The board therefore
+fills up early in the week and sharpens as the week proceeds, instead of
+appearing one game at a time in the final hour before each kickoff.
+
+    PUBLICATION_PREFERENCE = (CLOSE, MID, OPEN)
+
+THIS PRIORITY IS PUBLIC PRESENTATION ONLY. It selects which immutable snapshot
+REPRESENTS a game on the board. It does not merge stages, does not rewrite one
+stage with another, and does not touch the forecast ledger, the snapshot
+performance ledger, the evaluation ledger or the recalibration inputs -- all of
+which keep grading OPEN, MID and CLOSE separately and chronologically. Display
+preference and evaluation provenance are deliberately separate concerns:
+nothing here can let a later stage's information reach an earlier stage's
+record, because nothing here writes a stage record at all.
+
+PROVENANCE TRAVELS WITH EACH ROW. A board whose rows come from different
+stages would be dishonest without saying so, so each published game carries
+the stage it was published from plus the instant the model produced it. That
+makes the board's own contract a superset of the certified card's, published
+under its own ``schema_version`` (``wizard-nfl-pricing-v3``); the certified
+``wizard-nfl-pricing-v2`` card is untouched, and its exporter is not modified.
 
 ONE-WAY DOOR AT CLOSE. A game's CLOSE projection is its final public word.
 Once published it is recorded in the sidecar and, on every later publication,
@@ -22,24 +39,21 @@ the frozen bytes are reused and the freshly assembled entry must agree with
 them. A later weekly update that would change an already-closed game fails the
 whole publication closed rather than rewriting history -- so a game's
 published close can never drift, even if its forecast ledger were somehow
-re-derived.
+re-derived. OPEN and MID carry no such door: they are expected to be
+superseded, which is the whole point of the preference order above.
 
-CLOSE-ONLY. The public product is the closing projection. A game appears on
-the page once, when its CLOSE is recorded, and never before: OPEN and MID are
-archival performance evidence and are never a public fallback. The feed
-therefore ACCUMULATES through the week, gaining each game as it closes.
-
-A WEEK WITH NOTHING CLOSED YET IS STILL PUBLISHED. Between a week's last
-kickoff and the next week's first CLOSE there is genuinely nothing closed to
-show, and refusing to publish then is what left the page serving a Week-1
-card for eight days -- every attempt exited non-zero, so ``latest.json`` was
-never replaced and the site silently advertised a finished week as current.
-An empty envelope for the CORRECT week is the honest answer, and publication
-never falls back to an older week merely because the current one has no
-closes yet.
+A WEEK WITH NOTHING SNAPSHOTTED YET IS STILL PUBLISHED. Between a week's last
+kickoff and the next week's first OPEN there is genuinely nothing to show, and
+refusing to publish then is what left the page serving a Week-1 card for eight
+days -- every attempt exited non-zero, so ``latest.json`` was never replaced
+and the site silently advertised a finished week as current. An empty envelope
+for the CORRECT week is the honest answer, and publication never falls back to
+an older week merely because the current one has no snapshots yet. Equally, a
+week where only SOME games have opened publishes exactly those games: one
+unopened market never holds the rest of the slate back.
 
 NOTHING IS INVENTED. A game with no usable snapshot is simply absent from the
-feed; it is never published with a placeholder line, a stale line from another
+board; it is never published with a placeholder line, a stale line from another
 stage's cutoff, or a projection carried over from another week.
 """
 from __future__ import annotations
@@ -76,17 +90,28 @@ _v2 = _load_v2_exporter()
 
 WizardExportError = _v2.WizardExportError
 _fail = _v2._fail
-SCHEMA_VERSION = _v2.SCHEMA_VERSION
 TOP_LEVEL_KEY_ORDER = _v2.TOP_LEVEL_KEY_ORDER
-GAME_KEY_ORDER = _v2.GAME_KEY_ORDER
 
-# Best-available order: a game publishes from the latest stage it has reached.
-# CLOSE-ONLY. The public product is the closing projection; OPEN and MID are
-# archival performance evidence and are never a public fallback. The earlier
-# best-available order could in principle have shown a MID or OPEN price as
-# though it were final, which is a different product from the one this page
-# promises.
-PUBLICATION_PREFERENCE = (st.STAGE_CLOSE,)
+# The certified card's per-game contract, reused verbatim. It is also exactly
+# the shape the frozen-CLOSE sidecar stores, so a sidecar written before the
+# board carried provenance still validates against it unchanged.
+BASE_GAME_KEY_ORDER = _v2.GAME_KEY_ORDER
+
+# Best-available order: a game is REPRESENTED by the latest pregame stage it
+# has reached. A game is public from OPEN onwards, and MID then CLOSE replace
+# that public representation as each becomes available. The immutable OPEN, MID
+# and CLOSE records themselves are untouched by this ordering -- see the module
+# docstring.
+PUBLICATION_PREFERENCE = (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
+
+# The board's own public contract: the certified card's keys plus the two
+# provenance fields a mixed-stage board cannot be honest without. Published
+# under its own schema_version so the certified v2 card stays byte-identical
+# and its immutable archives stay valid.
+SCHEMA_VERSION = "wizard-nfl-pricing-v3"
+STAGE_KEY = "snapshot_stage"
+MODEL_GENERATED_KEY = "model_generated_at_utc"
+GAME_KEY_ORDER = BASE_GAME_KEY_ORDER + (STAGE_KEY, MODEL_GENERATED_KEY)
 
 SIDECAR_NAME = "published_close_state.json"
 
@@ -112,22 +137,72 @@ def _week_label(week) -> str:
         return label
 
 
-def _in_public_key_order(game: dict) -> dict:
-    """Restore the frozen public key order.
+def _in_base_key_order(game: dict) -> dict:
+    """Restore the frozen per-game key order.
 
     The sidecar is stored with ``sort_keys=True`` so it is diffable, which
-    loses the v2 key order on the way back in. The ORDER is part of the public
+    loses the key order on the way back in. The ORDER is part of the public
     contract, so it is rebuilt from the frozen values rather than trusting
     whatever order a JSON round-trip happened to produce.
+
+    The sidecar stores the CERTIFIED-CARD shape, not the board shape: stage and
+    model instant are board provenance recorded beside the frozen game rather
+    than inside it, which is what lets a sidecar written before the board
+    carried provenance keep validating here unchanged.
     """
-    missing = [key for key in GAME_KEY_ORDER if key not in game]
-    extra = [key for key in game if key not in GAME_KEY_ORDER]
+    missing = [key for key in BASE_GAME_KEY_ORDER if key not in game]
+    extra = [key for key in game if key not in BASE_GAME_KEY_ORDER]
     if missing or extra:
         _fail(
-            f"frozen published game does not match the {SCHEMA_VERSION} contract "
+            "frozen published game does not match the published per-game contract "
             f"(missing={missing} unexpected={extra})"
         )
-    return {key: game[key] for key in GAME_KEY_ORDER}
+    return {key: game[key] for key in BASE_GAME_KEY_ORDER}
+
+
+def _board_game(base_game: dict, *, stage: str, model_generated_at_utc: str) -> dict:
+    """One board row: the certified per-game fields plus their provenance."""
+    row = dict(base_game)
+    row[STAGE_KEY] = st.validate_stage(stage)
+    row[MODEL_GENERATED_KEY] = model_generated_at_utc
+    ordered = {key: row[key] for key in GAME_KEY_ORDER}
+    assert tuple(ordered.keys()) == GAME_KEY_ORDER
+    return ordered
+
+
+def _model_generated_at_utc(record: dict, *, game_id: str) -> str:
+    """When the model PRODUCED this snapshot, read from the immutable row.
+
+    ``run_created_at_utc`` is the same instant the certified exporter publishes
+    as its card-wide ``generated_at_utc``; on a mixed-stage board it differs per
+    game, so it has to travel with the row. Never the export's own clock, never
+    the stage cutoff, and never ``created_at_utc``.
+    """
+    raw = record.get("run_created_at_utc")
+    if not isinstance(raw, str) or not raw:
+        _fail(
+            f"{game_id}: forecast of record carries no run_created_at_utc -- the instant the model "
+            "produced this snapshot is never invented"
+        )
+    return _v2._format_utc_z(_v2._parse_utc_instant(raw, field_name=f"{game_id}: run_created_at_utc"))
+
+
+def _frozen_model_generated_at_utc(frozen: dict, *, game_id: str) -> str:
+    """The model instant a frozen CLOSE was published with.
+
+    A sidecar written before the board carried provenance has no model instant
+    to keep, so the publication instant it DOES carry is used instead. That is a
+    real instant recorded by this game's own freeze -- never re-derived from a
+    later snapshot, which would be exactly the lookahead this board must not
+    introduce.
+    """
+    for key in (MODEL_GENERATED_KEY, "frozen_at_utc"):
+        raw = frozen.get(key)
+        if isinstance(raw, str) and raw:
+            return _v2._format_utc_z(
+                _v2._parse_utc_instant(raw, field_name=f"{game_id}: published close state {key}")
+            )
+    _fail(f"{game_id}: frozen published close state carries no instant to publish as its model stamp")
 
 
 def load_close_state(artifact_root: Path, *, season: int, week) -> dict:
@@ -165,6 +240,11 @@ def select_publishable_snapshots(
 
     Returns ``{game_id: (stage, record)}`` plus the games with nothing
     publishable and why.
+
+    Resolved INDEPENDENTLY per game, so partial availability is normal rather
+    than exceptional: a game whose market has not opened contributes a
+    ``NO_SNAPSHOT_YET`` entry and nothing else, and never delays the games that
+    have opened.
     """
     observations = open_observations or {}
     earliest = st.card_earliest_kickoff_utc(card["scheduled_kickoff_utc"])
@@ -216,54 +296,64 @@ def build_current_week_feed(
     dated: list[tuple] = []
 
     for game_id, (stage, record) in sorted(chosen.items()):
-        kickoff, public_game = _v2._build_public_game(record)
+        kickoff, base_game = _v2._build_public_game(record)
+        model_generated = _model_generated_at_utc(record, game_id=game_id)
 
         frozen = previous.get(game_id)
         if frozen is not None:
-            frozen_game = _in_public_key_order(frozen["published_game"])
-            if public_game != frozen_game:
+            # The one-way door. Reached only for a game that has already
+            # published a CLOSE, so a MID or OPEN selected above can never
+            # reopen it: the frozen bytes win and must still agree.
+            frozen_game = _in_base_key_order(frozen["published_game"])
+            if base_game != frozen_game:
                 _fail(
                     f"{game_id} was already published at CLOSE and a later pass would change it -- "
                     "an already-closed game is never mutated. Refusing to publish the whole feed. "
-                    f"frozen={frozen_game} recomputed={public_game}"
+                    f"frozen={frozen_game} recomputed={base_game}"
                 )
-            public_game = frozen_game
+            base_game = frozen_game
             stage = st.STAGE_CLOSE
+            model_generated = _frozen_model_generated_at_utc(frozen, game_id=game_id)
         elif stage == st.STAGE_CLOSE:
             state[game_id] = {
-                "published_game": public_game,
+                "published_game": base_game,
                 "frozen_at_utc": generated_at_utc,
                 "forecast_prediction_hash": record.get("prediction_hash"),
                 "snapshot_at_utc": str(record.get("target_cutoff_utc")),
+                MODEL_GENERATED_KEY: model_generated,
             }
 
         stages[game_id] = stage
-        dated.append((kickoff, public_game))
+        dated.append((kickoff, _board_game(base_game, stage=stage, model_generated_at_utc=model_generated)))
 
     # A game that has already been frozen must never silently vanish from the
-    # feed because its snapshot file moved: the published close outlives the
+    # board because its snapshot file moved: the published close outlives the
     # ledger lookup that produced it.
     for game_id, frozen in sorted(previous.items()):
         if game_id in stages:
             continue
-        frozen_game = _in_public_key_order(frozen["published_game"])
+        frozen_game = _in_base_key_order(frozen["published_game"])
         stages[game_id] = st.STAGE_CLOSE
         dated.append((
             _v2._parse_utc_instant(frozen_game["kickoff_utc"], field_name=f"{game_id}: kickoff_utc"),
-            frozen_game,
+            _board_game(
+                frozen_game,
+                stage=st.STAGE_CLOSE,
+                model_generated_at_utc=_frozen_model_generated_at_utc(frozen, game_id=game_id),
+            ),
         ))
         unpublishable.pop(game_id, None)
 
-    # ZERO CLOSES IS A LEGITIMATE WEEK, NOT A FAILURE.
+    # ZERO SNAPSHOTS IS A LEGITIMATE WEEK, NOT A FAILURE.
     #
-    # Between a week's last kickoff and the next week's first CLOSE there is
-    # genuinely nothing closed to show. Treating that as fail-closed is what
+    # Between a week's last kickoff and the next week's first OPEN there is
+    # genuinely nothing to show. Treating that as fail-closed is what
     # left the public page serving the Week-1 card for eight days: every
     # publication attempt exited non-zero, so latest.json was never replaced
     # and the site silently advertised a stale week as current.
     #
     # Publishing an empty envelope for the CORRECT week is the honest answer.
-    # It says "this is the current week and nothing has closed yet" instead of
+    # It says "this is the current week and nothing has opened yet" instead of
     # "here is a week that finished days ago". Fail-closed is reserved for
     # actual corruption -- a contradicted frozen close, an unidentifiable
     # record, a malformed game -- all of which still raise above.
@@ -317,10 +407,10 @@ def publish_current_week_feed(
     saved = save_close_state(artifact_root, season=season, week=week, state=state)
 
     return {
-        # Both are successes. AWAITING_FIRST_CLOSE simply names the state so
-        # an operator reading a log can tell "nothing has closed yet" apart
+        # Both are successes. AWAITING_FIRST_SNAPSHOT simply names the state so
+        # an operator reading a log can tell "no game has opened yet" apart
         # from "something went wrong", without either failing the workflow.
-        "status": "OK" if feed["games"] else "OK_AWAITING_FIRST_CLOSE",
+        "status": "OK" if feed["games"] else "OK_AWAITING_FIRST_SNAPSHOT",
         "season": feed["season"],
         "week": feed["week"],
         "game_count": len(feed["games"]),

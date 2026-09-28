@@ -1,5 +1,14 @@
-"""Publish one ``wizard-nfl-pricing-v2`` card onto the Wizard server's own
+"""Publish the current-week public NFL board onto the Wizard server's own
 nginx-served NFL directory, atomically. Runs ON the Wizard server.
+
+THE PUBLIC ENDPOINT HAS ONE CONTRACT. Only
+``publish_sportsodds_nfl.AUTHORITATIVE_PUBLIC_SCHEMA_VERSION`` may be placed
+here. Every automated public write goes through this script, so refusing
+anything else is what makes a downgrade of the live board structurally
+impossible rather than merely unwired: whatever the caller, whatever produced
+the card, a non-authoritative payload never reaches the served directory. The
+certified TUE/FRI card is still generated, exported and archived; it is simply
+not the thing the public endpoint serves.
 
 LOCAL FILESYSTEM TRANSPORT ONLY. This is the authoritative publication path
 and it opens no socket at all: no FTP, no FTPS, no HTTP upload. The workflow
@@ -17,10 +26,12 @@ VALIDATION HAPPENS BEFORE ANYTHING IS PLACED
   The card is validated with the EXISTING published-contract validator
   (:func:`scripts.publish_sportsodds_nfl.load_and_validate_json`) -- schema
   version, exact top-level and per-game key sets, season, horizon, instants,
-  finite non-boolean numerics, the >=3-book floors, game_id uniqueness. There
-  is no second contract here: the ``wizard-nfl-pricing-v2`` schema is frozen
-  and this script only re-uses its gate. An invalid card is never staged and
-  never placed.
+  finite non-boolean numerics, the >=3-book floors, game_id uniqueness -- and
+  then held to the authoritative-contract gate above
+  (:func:`scripts.publish_sportsodds_nfl.require_publishable_contract`). There
+  is no second contract here: both schemas are defined in one place and this
+  script only re-uses their gates. An invalid or non-authoritative card is
+  never staged and never placed.
 
 ATOMIC PLACEMENT
   1. the validated bytes are written to a unique temporary file INSIDE the
@@ -86,6 +97,8 @@ _contract = _load_contract_validator()
 
 PublishError = _contract.PublishError
 load_and_validate_json = _contract.load_and_validate_json
+require_publishable_contract = _contract.require_publishable_contract
+AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = _contract.AUTHORITATIVE_PUBLIC_SCHEMA_VERSION
 
 PUBLIC_JSON_NAME = "latest.json"
 PREVIOUS_JSON_NAME = "latest.json.prev"
@@ -135,6 +148,10 @@ def publish(
     dry_run: bool = False,
 ) -> dict:
     payload_bytes, summary = load_and_validate_json(json_path)
+    # THE PUBLICATION GATE, ahead of every filesystem effect including the dry
+    # run's report. A card that may not be published is refused here rather than
+    # described as publishable.
+    require_publishable_contract(summary, source=str(json_path))
     digest = sha256(payload_bytes).hexdigest()
 
     target = web_dir / PUBLIC_JSON_NAME
@@ -204,7 +221,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--json", required=True, help="The exported wizard-nfl-pricing-v2 card to publish.")
+    parser.add_argument(
+        "--json",
+        required=True,
+        help=f"The exported {AUTHORITATIVE_PUBLIC_SCHEMA_VERSION} board to publish.",
+    )
     parser.add_argument(
         "--web-dir",
         default=None,

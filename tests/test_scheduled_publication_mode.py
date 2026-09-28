@@ -251,7 +251,7 @@ case "${1}" in
   done
   mkdir -p "$(dirname "${out}")"
   printf '%s\\n' '@ASSEMBLED@' > "${out}"
-  echo "publication_status=OK_AWAITING_FIRST_CLOSE" ;;
+  echo "publication_status=OK_AWAITING_FIRST_SNAPSHOT" ;;
 */publish_wizard_nfl_local.py)
   shift
   exec @PY@ "@REPO@/scripts/publish_wizard_nfl_local.py" "$@" ;;
@@ -260,10 +260,11 @@ case "${1}" in
 esac
 """
 
-# What the assembler writes for the current week before its first CLOSE.
+# What the assembler writes for the current week before its first snapshot. The
+# board contract, because that is the only contract a public writer may place.
 EMPTY_WEEK_3 = json.dumps(
     {
-        "schema_version": "wizard-nfl-pricing-v2",
+        "schema_version": "wizard-nfl-pricing-v3",
         "season": 2026,
         "week": 3,
         "horizon": "TUE",
@@ -521,13 +522,16 @@ def test_the_verifier_condition_truth_table(workflow, publish_mode, published_sh
     )
 
 
-def test_the_certified_verifier_condition_also_fires_on_a_schedule(workflow, tmp_path):
-    gate = _run_gate(workflow, tmp_path, publish_input=None)
-    condition = _step_named(workflow, "certified-production", "verify_public_nfl_feed.py")["if"]
+def test_the_certified_job_no_longer_verifies_the_public_feed(workflow):
+    """It used to publish its own card and then assert the public site served
+    exactly those bytes, which is the downgrade the board must never suffer. It
+    publishes nothing now, so it has nothing to verify and no such step."""
+    with pytest.raises(StopIteration):
+        _step_named(workflow, "certified-production", "verify_public_nfl_feed.py")
 
-    assert _evaluate_if(
-        condition, {"needs.resolve.outputs.publish_mode": gate["outputs"]["publish_mode"]}
-    )
+    runs = "\n".join(step.get("run", "") for step in workflow["jobs"]["certified-production"]["steps"])
+    assert "verify_public_nfl_feed.py" not in runs
+    assert "--expect-sha256" not in runs
 
 
 def test_the_verifier_is_asked_to_compare_against_the_published_sha(workflow):
@@ -709,11 +713,14 @@ def test_the_certified_orchestrator_is_untouched_by_the_skip():
 # ===========================================================================
 # 10-12. What must not have moved.
 # ===========================================================================
-def test_publication_is_still_close_only():
-    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE,)
+def test_publication_prefers_the_latest_available_pregame_stage():
+    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
 
 
-def test_no_stage_is_named_in_a_published_card(tmp_path):
+def test_the_sweep_still_names_no_stage_of_its_own_in_the_served_card(tmp_path):
+    """The sweep publishes whatever the assembler decided. It never asks for a
+    stage, so a card served by an idle sweep carries no stage token it could
+    only have got from the orchestrator."""
     estate = _estate(tmp_path, due=0)
     _run_sweep(estate)
     served = estate["served"].read_text()

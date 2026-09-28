@@ -20,10 +20,23 @@ name: NFL 2026 production (daily maintenance + certified TUE/FRI)
 #   CERTIFIED (TUE/FRI) -- create or accept the official BallDontLie capture,
 #                          retain its manifest path and hash, run production
 #                          preflight and REQUIRE READY, run the certified
-#                          six-Elo Ridge-alpha-100 card, export
-#                          wizard-nfl-pricing-v2, publish latest.json
-#                          atomically on the server, then verify the public
-#                          feed serves exactly that card.
+#                          six-Elo Ridge-alpha-100 card, then export and
+#                          ARCHIVE wizard-nfl-pricing-v2. Publishes NOTHING.
+#   SNAPSHOT SWEEP      -- execute whatever OPEN/MID/CLOSE instants are due and
+#                          publish the current-week board, then verify the
+#                          public bytes. The ONLY public writer.
+#
+# ONE AUTHORITATIVE PUBLIC CONTRACT. The public NFL endpoint serves the
+# current-week pregame board (wizard-nfl-pricing-v3), in which each game is
+# shown at the latest pregame snapshot it has reached. Exactly one job writes it:
+# the snapshot sweep. The certified job used to publish its own single-cutoff
+# wizard-nfl-pricing-v2 card twice a week and then assert the public site served
+# it, which dropped every game the board was showing from its OPEN or MID
+# snapshot until the next sweep happened to restore it. That publication is gone;
+# the certified card is still generated, exported and archived, and remains the
+# forecast of record the stage machinery reads. scripts/publish_wizard_nfl_local.py
+# additionally refuses any non-authoritative contract, so the downgrade is
+# impossible rather than merely unwired.
 #
 # THERE IS NO DAILY FORECAST HORIZON. Public prediction cards are produced only
 # under the EXISTING Fix-8 TUE/FRI horizon semantics. Eligibility is decided by
@@ -580,24 +593,33 @@ jobs:
               --capture-manifest '${MANIFEST}'${extra}
           " | tee /dev/stderr)"
 
+          # THE ASSERTION THAT REPLACES THE OLD PUBLIC BYTE CHECK.
+          #
+          # This job used to publish its card and then assert the public site
+          # served exactly those bytes -- which IS the downgrade the current-week
+          # board must never suffer. The certified card is now exported and
+          # archived only, so the check here is the opposite one: the
+          # orchestrator must report that it performed no public write, and must
+          # not have emitted a published-bytes line at all. The public bytes are
+          # proved by the snapshot sweep that actually writes them.
+          #
+          # Asserted from the output already captured above: no network, and no
+          # dependence on whether the sweep has run yet.
+          if ! printf '%s\n' "${out}" | grep -q '^certified_card_published=NO_PUBLIC_WRITE_BY_DESIGN$'; then
+            echo "FAIL CLOSED: the certified orchestrator did not report a no-public-write run" >&2
+            exit 1
+          fi
+          if printf '%s\n' "${out}" | grep -q '^PUBLISHED_SHA256='; then
+            echo "FAIL CLOSED: the certified orchestrator published public bytes; the current-week" >&2
+            echo "board is the only authoritative public card and is never downgraded." >&2
+            exit 1
+          fi
+
           {
-            echo "published_sha256=$(printf '%s\n' "${out}" | sed -n 's/^PUBLISHED_SHA256=//p' | tail -n 1)"
-            echo "run_id=$(printf '%s\n' "${out}" | sed -n 's/^PUBLISHED_RUN_ID=//p' | tail -n 1)"
+            echo "exported_sha256=$(printf '%s\n' "${out}" | sed -n 's/^exported_sha256=//p' | tail -n 1)"
+            echo "run_id=$(printf '%s\n' "${out}" | sed -n 's/^CERTIFIED_RUN_ID=//p' | tail -n 1)"
             echo "capture_sha256=$(printf '%s\n' "${out}" | sed -n 's/^capture_manifest_sha256=//p' | tail -n 1)"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Verify the public NFL page serves exactly this card
-        if: ${{ needs.resolve.outputs.publish_mode == 'publish' }}
-        env:
-          EXPECTED_SHA256: ${{ steps.certified.outputs.published_sha256 }}
-        run: |
-          set -euo pipefail
-          # A server-side atomic rename proves the bytes landed on the served
-          # path; only this proves the PUBLIC site serves them.
-          python scripts/verify_public_nfl_feed.py \
-            --expect-sha256 "${EXPECTED_SHA256}" \
-            --expect-horizon "${HORIZON}" \
-            --require-fresh-hours 24
 
       - name: Summary
         if: always()
@@ -612,7 +634,8 @@ jobs:
             echo "| capture manifest | \`${{ steps.capture.outputs.manifest }}\` |"
             echo "| capture sha256 | \`${{ steps.certified.outputs.capture_sha256 }}\` |"
             echo "| run_id | \`${{ steps.certified.outputs.run_id }}\` |"
-            echo "| published sha256 | \`${{ steps.certified.outputs.published_sha256 }}\` |"
+            echo "| exported + archived sha256 | \`${{ steps.certified.outputs.exported_sha256 }}\` |"
+            echo "| public write | \`none -- the current-week board is the only public card\` |"
             echo "| publish mode | \`${{ needs.resolve.outputs.publish_mode }}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -625,8 +648,9 @@ jobs:
   #    nothing due is an exit-0 no-op.
   #
   #    Ordered after the certified job so that on a Tuesday the certified
-  #    card lands first and the sweep's republication then reflects it,
-  #    rather than the two racing for latest.json.
+  #    forecasts exist in the ledger before the board is assembled, and the
+  #    board therefore reflects them. The two no longer race for latest.json:
+  #    this is the only job that writes it.
   # ==========================================================================
   snapshot-sweep:
     name: Snapshot sweep (Wizard)
@@ -727,10 +751,13 @@ jobs:
           python -m pip install --upgrade pip >/dev/null
           python -m pip install -e ".[data]" >/dev/null
           # Proves the live page and the live latest.json are the exact bytes
-          # this sweep published, and that they still satisfy the public
-          # contract -- from OUTSIDE the server, over the public URL.
+          # this sweep published, that they carry the ONE authoritative public
+          # contract, and that they still satisfy it -- from OUTSIDE the server,
+          # over the public URL. This is the only public-bytes assertion in the
+          # workflow, because this is the only job that writes public bytes.
           python scripts/verify_public_nfl_feed.py \
             --expect-sha256 "${{ steps.sweep.outputs.published_sha256 }}" \
+            --expect-authoritative-contract \
             --require-fresh-hours 24
 
       - name: Summary

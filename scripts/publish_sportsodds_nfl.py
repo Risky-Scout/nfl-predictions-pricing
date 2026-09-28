@@ -81,9 +81,41 @@ from typing import Any, Iterable, Mapping, Sequence
 # it is validated as data, whatever produced it.
 # --------------------------------------------------------------------------- #
 SCHEMA_VERSION = "wizard-nfl-pricing-v2"
+
+# The current-week pregame board (scripts/export_current_week_nfl_feed.py). Its
+# per-game shape is the certified card's plus the stage each row was published
+# from and the instant the model produced it -- provenance a board assembled
+# from different games' OPEN, MID and CLOSE snapshots cannot be honest without.
+# Both contracts are closed and each is checked against its OWN key set; a card
+# never borrows the other's keys.
+BOARD_SCHEMA_VERSION = "wizard-nfl-pricing-v3"
+
+# THE ONE CONTRACT A PUBLIC WRITER MAY PLACE.
+#
+# Reading and writing are deliberately different rules here. The validator
+# above READS both contracts, because the public endpoint is a real place whose
+# current contents this repository does not get to assume -- an older card may
+# legitimately still be sitting there mid-deployment, and the verifier has to be
+# able to parse it in order to say so.
+#
+# WRITING is narrower. The public product is the current-week pregame board, and
+# a board that has gone live must never be replaced by a single-cutoff certified
+# card: that would silently drop every game the board was showing from its OPEN
+# or MID snapshot and strip the stage labelling from the rest. Before this gate
+# existed the certified TUE/FRI orchestrator did exactly that twice a week, and
+# the only thing that restored the board was the next snapshot sweep happening
+# to run afterwards.
+#
+# So every public writer asks this question before it places anything, and a
+# non-authoritative payload is refused rather than published. The certified card
+# is still generated, still exported and still archived -- it simply is not what
+# the public endpoint serves.
+AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = BOARD_SCHEMA_VERSION
+
 SUPPORTED_SEASON = 2026
 ALLOWED_HORIZONS = ("TUE", "FRI")
 MINIMUM_ELIGIBLE_BOOKS = 3
+ALLOWED_SNAPSHOT_STAGES = ("OPEN", "MID", "CLOSE")
 
 TOP_LEVEL_KEYS = ("schema_version", "season", "week", "horizon", "generated_at_utc", "games")
 GAME_KEYS = (
@@ -99,6 +131,16 @@ GAME_KEYS = (
     "market_ats_book_count",
     "market_total_book_count",
 )
+STAGE_KEY = "snapshot_stage"
+MODEL_GENERATED_KEY = "model_generated_at_utc"
+BOARD_GAME_KEYS = GAME_KEYS + (STAGE_KEY, MODEL_GENERATED_KEY)
+
+# schema_version -> the exact per-game key set that version publishes.
+GAME_KEYS_BY_SCHEMA = {
+    SCHEMA_VERSION: GAME_KEYS,
+    BOARD_SCHEMA_VERSION: BOARD_GAME_KEYS,
+}
+
 NUMERIC_GAME_KEYS = ("predicted_home_margin", "predicted_game_total", "market_home_spread", "market_total")
 BOOK_COUNT_KEYS = ("market_ats_book_count", "market_total_book_count")
 INSTANT_GAME_KEYS = ("kickoff_utc", "market_as_of_utc")
@@ -188,7 +230,9 @@ def _validate_instant(value: Any, *, label: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _validate_exact_keys(payload: Mapping[str, Any], expected: Sequence[str], *, label: str) -> None:
+def _validate_exact_keys(
+    payload: Mapping[str, Any], expected: Sequence[str], *, label: str, contract: str = SCHEMA_VERSION
+) -> None:
     """Exact key set: a missing public field and an unexpected extra public
     field are both schema drift, and neither is published."""
     actual = set(payload.keys())
@@ -197,20 +241,26 @@ def _validate_exact_keys(payload: Mapping[str, Any], expected: Sequence[str], *,
         _fail(f"{label} is missing required key(s) {missing}")
     unexpected = sorted(actual.difference(expected))
     if unexpected:
-        _fail(f"{label} carries unexpected key(s) {unexpected} -- {SCHEMA_VERSION} is a closed contract")
+        _fail(f"{label} carries unexpected key(s) {unexpected} -- {contract} is a closed contract")
 
 
 def validate_public_payload(payload: Any) -> dict:
-    """Validate one decoded wizard-nfl-pricing-v2 card. Returns a small
-    summary used only for operator output; raises PublishError on anything
-    that must not be published."""
+    """Validate one decoded published card -- either the certified
+    ``wizard-nfl-pricing-v2`` card or the current-week
+    ``wizard-nfl-pricing-v3`` pregame board. Returns a small summary used only
+    for operator output; raises PublishError on anything that must not be
+    published."""
     if not isinstance(payload, dict):
         _fail(f"public JSON must be a JSON object, got {type(payload).__name__}")
 
     _validate_exact_keys(payload, TOP_LEVEL_KEYS, label="public JSON")
 
-    if payload["schema_version"] != SCHEMA_VERSION:
-        _fail(f"schema_version must be {SCHEMA_VERSION!r}, got {payload['schema_version']!r}")
+    schema_version = payload["schema_version"]
+    if schema_version not in GAME_KEYS_BY_SCHEMA:
+        _fail(
+            f"schema_version must be one of {tuple(GAME_KEYS_BY_SCHEMA)}, got {schema_version!r}"
+        )
+    game_keys = GAME_KEYS_BY_SCHEMA[schema_version]
 
     season = _validate_int(payload["season"], label="season")
     if season != SUPPORTED_SEASON:
@@ -251,7 +301,7 @@ def validate_public_payload(payload: Any) -> dict:
         position = f"games[{index}]"
         if not isinstance(game, dict):
             _fail(f"{position} must be a JSON object, got {type(game).__name__}")
-        _validate_exact_keys(game, GAME_KEYS, label=position)
+        _validate_exact_keys(game, game_keys, label=position, contract=schema_version)
 
         game_id = _validate_non_empty_str(game["game_id"], label=f"{position}.game_id")
         if game_id in seen_game_ids:
@@ -277,13 +327,43 @@ def validate_public_payload(payload: Any) -> dict:
         for key in INSTANT_GAME_KEYS:
             _validate_instant(game[key], label=f"{position}.{key}")
 
+        # Board provenance. Only the board carries it, and when it does it is
+        # checked as strictly as every other public field: an unrecognised
+        # stage label or an unparseable model instant is not published.
+        if STAGE_KEY in game_keys:
+            stage = game[STAGE_KEY]
+            if stage not in ALLOWED_SNAPSHOT_STAGES:
+                _fail(
+                    f"{position}.{STAGE_KEY} must be one of {ALLOWED_SNAPSHOT_STAGES}, got {stage!r}"
+                )
+            _validate_instant(game[MODEL_GENERATED_KEY], label=f"{position}.{MODEL_GENERATED_KEY}")
+
     return {
+        "schema_version": schema_version,
         "season": season,
         "week": week,
         "horizon": horizon,
         "generated_at_utc": generated_at.isoformat().replace("+00:00", "Z"),
         "game_count": len(games),
     }
+
+
+def require_publishable_contract(summary: Mapping[str, Any], *, source: str) -> str:
+    """The publication gate. Refuses to place anything but the authoritative
+    public contract, whatever produced it and whichever transport is placing it.
+
+    Takes the summary ``validate_public_payload`` already returned, so a writer
+    cannot reach this check without having fully validated the payload first.
+    """
+    schema_version = summary.get("schema_version")
+    if schema_version != AUTHORITATIVE_PUBLIC_SCHEMA_VERSION:
+        _fail(
+            f"{source} declares schema_version {schema_version!r}, but the public NFL endpoint "
+            f"serves {AUTHORITATIVE_PUBLIC_SCHEMA_VERSION!r} and is never downgraded. The "
+            "current-week pregame board is the only authoritative public card; a certified "
+            "single-cutoff card is exported and archived but not published. Refusing to publish."
+        )
+    return schema_version
 
 
 def load_and_validate_json(path: Path) -> tuple[bytes, dict]:
@@ -546,6 +626,9 @@ def publish(
         if json_path is None:
             _fail("--json <PATH> is required when publishing the public JSON feed")
         payload_bytes, json_summary = load_and_validate_json(json_path)
+        # Before a socket exists: this transport reaches the same public
+        # endpoint, so it is held to the same one-contract rule.
+        require_publishable_contract(json_summary, source=str(json_path))
         uploads.append((REMOTE_JSON_NAME, json_path, payload_bytes))
     if publish_html:
         uploads.append((REMOTE_HTML_NAME, html_path, load_and_validate_html(html_path)))
@@ -553,8 +636,8 @@ def publish(
     if json_summary is not None:
         _print(
             out,
-            "validated public JSON: season={season} week={week} horizon={horizon} "
-            "generated_at_utc={generated_at_utc} games={game_count}".format(**json_summary),
+            "validated public JSON: schema_version={schema_version} season={season} week={week} "
+            "horizon={horizon} generated_at_utc={generated_at_utc} games={game_count}".format(**json_summary),
         )
     _print(out, f"validated page source: {html_path}" if publish_html else "page publication skipped (--json-only)")
 

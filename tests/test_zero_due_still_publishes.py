@@ -37,7 +37,7 @@ import yaml
 
 from nfl_hybrid.production import snapshot_stages_2026 as st
 
-from test_close_only_publication import (  # noqa: E402
+from test_pregame_board_publication import (  # noqa: E402
     MONDAY,
     OPEN_AT,
     SUNDAY,
@@ -125,7 +125,7 @@ def _estate(
     publish_exit: int = 0,
     publish_failure: str = "an already-closed game is never mutated",
     published_body: str = CURRENT_WEEK_EMPTY,
-    publication_status: str = "OK_AWAITING_FIRST_CLOSE",
+    publication_status: str = "OK_AWAITING_FIRST_SNAPSHOT",
 ) -> dict:
     home = tmp_path / "nfl-production-2026"
     for sub in ("repo/scripts", "venv/bin", "logs", "artifacts", "state"):
@@ -244,7 +244,7 @@ def test_the_public_payload_advances_to_the_current_week(tmp_path):
     result = _run_sweep(estate)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "publication_status=OK_AWAITING_FIRST_CLOSE" in result.stdout
+    assert "publication_status=OK_AWAITING_FIRST_SNAPSHOT" in result.stdout
     served = _served(estate)
     assert served["week"] == 3
     assert served["games"] == []
@@ -268,7 +268,7 @@ def test_no_stage_is_fabricated_to_force_a_publication(tmp_path):
     assert "--market-capture-manifest" not in argv
 
 
-def test_the_real_publisher_returns_awaiting_first_close_for_an_empty_week(tmp_path):
+def test_the_real_publisher_returns_awaiting_first_snapshot_for_an_empty_week(tmp_path):
     """The shell proofs above stub the publisher; this pins that the status
     and shape they stub are the ones the real exporter produces."""
     forecast_dir = tmp_path / "forecast-ledger" / "TUE"
@@ -288,7 +288,7 @@ def test_the_real_publisher_returns_awaiting_first_close_for_an_empty_week(tmp_p
 
     result = _publish(estate)
 
-    assert result["status"] == "OK_AWAITING_FIRST_CLOSE"
+    assert result["status"] == "OK_AWAITING_FIRST_SNAPSHOT"
     assert json.loads(estate["output"].read_text())["games"] == []
 
 
@@ -352,10 +352,12 @@ def test_a_zero_due_sweep_publishes_the_cumulative_close_feed(tmp_path):
 
 
 # ===========================================================================
-# 5. OPEN and MID are still never exposed.
+# 5. The sweep still chooses no stage of its own.
 # ===========================================================================
-def test_publication_remains_close_only():
-    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE,)
+def test_publication_prefers_the_latest_available_pregame_stage():
+    """Which stage represents a game is the ASSEMBLER's decision, made from the
+    snapshots that exist. The sweep below still has no say in it."""
+    assert exporter.PUBLICATION_PREFERENCE == (st.STAGE_CLOSE, st.STAGE_MID, st.STAGE_OPEN)
 
 
 def test_the_sweep_gives_the_publisher_no_way_to_select_a_stage(tmp_path):
@@ -410,7 +412,7 @@ def test_the_real_publisher_still_raises_on_a_mutated_close(tmp_path):
         "output": tmp_path / "public" / "latest.json",
     }
 
-    from test_close_only_publication import _write
+    from test_pregame_board_publication import _write
 
     _write(estate, "SUN", st.STAGE_CLOSE)
     _publish(estate)
