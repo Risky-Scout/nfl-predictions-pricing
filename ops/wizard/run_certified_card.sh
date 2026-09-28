@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# CERTIFIED TUE/FRI: run one public prediction card end to end on the Wizard
-# server, then publish it atomically.
+# CERTIFIED TUE/FRI: run one certified prediction card end to end on the Wizard
+# server, export it and archive it. It does NOT write the public endpoint --
+# see stage 4.
 #
 # Executed over SSH by the certified job of
 # .github/workflows/nfl_2026_production.yml. It is an ORCHESTRATOR ONLY: every
@@ -15,26 +16,32 @@
 #      the card will be priced at -- must report READY;
 #   3. the certified six-Elo / Ridge-alpha-100 card for the horizon, priced
 #      from that capture, via scripts/run_2026_production_card.py;
-#   4. export the frozen wizard-nfl-pricing-v2 contract for the run;
-#   5. publish it atomically into the nginx-served NFL directory over the
-#      local filesystem (never FTP).
+#   4. export the frozen wizard-nfl-pricing-v2 contract for the run and write
+#      its immutable archive.
+#
+# THERE IS NO PUBLICATION STAGE. The public NFL endpoint serves exactly one
+# contract -- the current-week pregame board written by run_stage_snapshots.sh --
+# and this orchestrator is not a public writer. Stage 4 explains why.
 #
 # Every stage fails closed: a hash mismatch, a preflight that is not READY, a
-# non-SUCCESS batch, a failed export or a failed validation aborts before
-# anything is published, leaving the currently published card untouched.
+# non-SUCCESS batch or a failed export aborts, leaving the archive and the
+# published board untouched.
 #
 # Usage (on the server):
 #   bash run_certified_card.sh --horizon TUE \
 #       --capture-manifest /path/to/manifest.json \
 #       --capture-sha256 <hex> \
 #       [--as-of ISO8601] [--dry-run-publish]
+#
+# --dry-run-publish is still ACCEPTED and does nothing: there is no publication
+# left for it to withhold. It is kept so an existing caller -- including this
+# workflow's own dry-run path -- is not failed by an unknown argument.
 set -euo pipefail
 
 HORIZON=""
 CAPTURE_MANIFEST=""
 CAPTURE_SHA256=""
 AS_OF=""
-DRY_RUN_PUBLISH=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -42,7 +49,8 @@ while [ $# -gt 0 ]; do
         --capture-manifest)  CAPTURE_MANIFEST="$2"; shift 2 ;;
         --capture-sha256)    CAPTURE_SHA256="$2"; shift 2 ;;
         --as-of)             AS_OF="$2"; shift 2 ;;
-        --dry-run-publish)   DRY_RUN_PUBLISH=1; shift ;;
+        # Accepted and inert -- see the usage note above.
+        --dry-run-publish)   shift ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
 done
@@ -139,27 +147,44 @@ if [ "${run_exit}" -ne 0 ] || [ "${run_status}" != "SUCCESS" ]; then
     exit 5
 fi
 
-# --- 4. export wizard-nfl-pricing-v2 ---------------------------------------
-echo "=== 4. export wizard-nfl-pricing-v2 ==="
+# --- 4. export and archive wizard-nfl-pricing-v2 ----------------------------
+#
+# The certified card is EXPORTED AND ARCHIVED, NOT PUBLISHED.
+#
+# export_wizard_nfl_pricing.py writes the immutable archive at
+# archive/season=<YYYY>/week=<NN>/horizon=<TUE|FRI>.json first and refuses to
+# overwrite a differing one, so this step is the audit record of the certified
+# card and is unchanged. It also writes the card into the ARTIFACT tree, which
+# is a staging path, not the served directory.
+#
+# What is gone is the public publication that used to follow. A certified card
+# covers one cutoff for the whole slate; the public product is the current-week
+# pregame board, where each game is shown at the latest pregame snapshot it has
+# reached. Publishing the certified card replaced that board with a
+# single-cutoff card twice a week and dropped every game that was being shown
+# from OPEN or MID, until the next snapshot sweep happened to restore it. The
+# board assembler in run_stage_snapshots.sh is now the sole public writer, and
+# scripts/publish_wizard_nfl_local.py refuses a non-authoritative contract, so
+# this orchestrator could not perform that downgrade even if it tried.
+#
+# Nothing else about the certified path changes: the same capture, the same
+# preflight, the same six-Elo / Ridge-alpha-100 card, the same forecast ledger
+# the OPEN/MID/CLOSE stage machinery reads, the same archive.
+echo "=== 4. export + archive wizard-nfl-pricing-v2 ==="
 run_manifest="${NFL_MODEL_ARTIFACT_ROOT}/production-2026/run-manifests/${run_id}.json"
 forecast_dir="${NFL_MODEL_ARTIFACT_ROOT}/production-2026/forecast-ledger/${HORIZON}"
-public_json="${NFL_MODEL_ARTIFACT_ROOT}/public/wizardofodds/nfl-pricing/latest.json"
+certified_json="${NFL_MODEL_ARTIFACT_ROOT}/public/wizardofodds/nfl-pricing/latest.json"
 "${PY}" scripts/export_wizard_nfl_pricing.py \
     --run-manifest "${run_manifest}" \
     --forecast-dir "${forecast_dir}" \
-    --output "${public_json}"
-echo "exported=${public_json}"
-echo "exported_sha256=$(sha256sum "${public_json}" | awk '{print $1}')"
+    --output "${certified_json}"
+echo "exported=${certified_json}"
+echo "exported_sha256=$(sha256sum "${certified_json}" | awk '{print $1}')"
 
-# --- 5. atomic publication --------------------------------------------------
-echo "=== 5. publish ==="
-publish_args=(--json "${public_json}")
-[ "${DRY_RUN_PUBLISH}" -eq 1 ] && publish_args+=(--dry-run)
-"${PY}" scripts/publish_wizard_nfl_local.py "${publish_args[@]}"
-
-# The single machine-readable line the workflow parses to verify the PUBLIC
-# site is serving exactly this card.
-echo "PUBLISHED_SHA256=$(sha256sum "${public_json}" | awk '{print $1}')"
-echo "PUBLISHED_RUN_ID=${run_id}"
-echo "PUBLISHED_HORIZON=${HORIZON}"
+# The machine-readable lines the workflow parses. There is deliberately no
+# PUBLISHED_SHA256: this orchestrator publishes nothing, and the public bytes
+# are proved by the snapshot sweep that does.
+echo "CERTIFIED_RUN_ID=${run_id}"
+echo "CERTIFIED_HORIZON=${HORIZON}"
+echo "certified_card_published=NO_PUBLIC_WRITE_BY_DESIGN"
 echo "certified_card_status=OK"

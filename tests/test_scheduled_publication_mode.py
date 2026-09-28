@@ -260,10 +260,11 @@ case "${1}" in
 esac
 """
 
-# What the assembler writes for the current week before its first CLOSE.
+# What the assembler writes for the current week before its first snapshot. The
+# board contract, because that is the only contract a public writer may place.
 EMPTY_WEEK_3 = json.dumps(
     {
-        "schema_version": "wizard-nfl-pricing-v2",
+        "schema_version": "wizard-nfl-pricing-v3",
         "season": 2026,
         "week": 3,
         "horizon": "TUE",
@@ -521,13 +522,16 @@ def test_the_verifier_condition_truth_table(workflow, publish_mode, published_sh
     )
 
 
-def test_the_certified_verifier_condition_also_fires_on_a_schedule(workflow, tmp_path):
-    gate = _run_gate(workflow, tmp_path, publish_input=None)
-    condition = _step_named(workflow, "certified-production", "verify_public_nfl_feed.py")["if"]
+def test_the_certified_job_no_longer_verifies_the_public_feed(workflow):
+    """It used to publish its own card and then assert the public site served
+    exactly those bytes, which is the downgrade the board must never suffer. It
+    publishes nothing now, so it has nothing to verify and no such step."""
+    with pytest.raises(StopIteration):
+        _step_named(workflow, "certified-production", "verify_public_nfl_feed.py")
 
-    assert _evaluate_if(
-        condition, {"needs.resolve.outputs.publish_mode": gate["outputs"]["publish_mode"]}
-    )
+    runs = "\n".join(step.get("run", "") for step in workflow["jobs"]["certified-production"]["steps"])
+    assert "verify_public_nfl_feed.py" not in runs
+    assert "--expect-sha256" not in runs
 
 
 def test_the_verifier_is_asked_to_compare_against_the_published_sha(workflow):

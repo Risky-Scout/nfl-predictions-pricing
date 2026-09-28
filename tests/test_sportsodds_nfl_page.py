@@ -49,6 +49,11 @@ EXPECTED_CHANGE_SET = frozenset(
         "tests/test_snapshot_production_integration.py",
         "tests/test_week_rollover_active_cards.py",
         "tests/test_zero_due_still_publishes.py",
+        # Removing the legacy v2 public writer: one contract, one writer.
+        "scripts/publish_wizard_nfl_local.py",
+        "ops/wizard/run_certified_card.sh",
+        ".github/workflows/nfl_2026_production.yml",
+        "tests/test_public_writer_topology.py",
     }
 )
 
@@ -741,7 +746,7 @@ class PublisherConfigTests(PublisherHarness):
         self.assertNotIn(TEST_PASSWORD, str(config))
         self.assertIn("<redacted>", repr(config))
 
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
 
         self.assertEqual(self.publish(json_path=json_path, dry_run=True), 0)
         self.assertNotIn(TEST_PASSWORD, self.output())
@@ -780,7 +785,7 @@ class PublisherValidationTests(PublisherHarness):
         self.assertEqual(FakeFtpTlsClient.instances, [])
 
     def test_20_dry_run_performs_no_network_operation(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         # Any socket creation at all -- by ftplib or anything else -- fails the test.
         with mock.patch.object(socket, "socket", side_effect=AssertionError("dry run opened a socket")), \
                 mock.patch.object(socket, "create_connection", side_effect=AssertionError("dry run connected")), \
@@ -793,14 +798,17 @@ class PublisherValidationTests(PublisherHarness):
         self.assertIn("mode: ftp", output)
         self.assertIn("remote target: /tools/odds-scanner/predictions/NFL/latest.json", output)
         self.assertIn("remote target: /tools/odds-scanner/predictions/NFL/index.html", output)
-        self.assertIn("validated public JSON: season=2026 week=2 horizon=TUE", output)
+        self.assertIn(
+            "validated public JSON: schema_version=wizard-nfl-pricing-v3 season=2026 week=2 horizon=TUE",
+            output,
+        )
         self.assertEqual(FakeFtpClient.instances, [])
         self.assertEqual(FakeFtpTlsClient.instances, [])
 
     def test_20b_dry_run_validates_config_without_password_contents(self):
         env = synthetic_env()
         del env["SPORTSODDS_FTP_PASSWORD"]
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         self.assertEqual(self.publish(json_path=json_path, dry_run=True, env=env), 0)
         self.assertIn("DRY RUN", self.output())
         # Every other required setting is still enforced in a dry run.
@@ -960,7 +968,7 @@ class PublisherValidationTests(PublisherHarness):
 # =========================================================================== #
 class PublisherTransportTests(PublisherHarness):
     def test_27_ftp_mode_uses_plain_ftp(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(self.publish(json_path=json_path), 0)
 
@@ -974,7 +982,7 @@ class PublisherTransportTests(PublisherHarness):
         self.assertIn("quit", client.method_names())
 
     def test_28_ftps_mode_uses_ftp_tls_then_prot_p(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(
                 self.publish(json_path=json_path, env=synthetic_env(SPORTSODDS_FTP_MODE="ftps")),
@@ -993,7 +1001,7 @@ class PublisherTransportTests(PublisherHarness):
         self.assertEqual(client.timeout, publisher.FTP_TIMEOUT_SECONDS)
 
     def test_29_temporary_upload_then_rename(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(self.publish(json_path=json_path), 0)
 
@@ -1020,7 +1028,7 @@ class PublisherTransportTests(PublisherHarness):
         self.assertEqual(sorted(client.stored), ["index.html", "latest.json"])
 
     def test_29b_rename_refusal_falls_back_to_delete_then_rename(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         FakeFtpClient.refuse_rename_over_existing = True
         with self.patched_transport():
             client = FakeFtpClient()
@@ -1034,7 +1042,7 @@ class PublisherTransportTests(PublisherHarness):
         self.assertEqual(client.stored["latest.json"], json_path.read_bytes())
 
     def test_29c_failed_upload_exits_non_zero_and_publishes_nothing_broken(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
 
         class FailingClient(FakeFtpClient):
             def storbinary(self, command, source):
@@ -1071,7 +1079,7 @@ class PublisherTransportTests(PublisherHarness):
         for forbidden in ("--remote-name", "--remote-json", "--remote-html", "--remote-file", "--name"):
             self.assertNotIn(forbidden, parser_actions)
 
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         differently_named = self.tmp_dir / "week02-TUE.json"
         differently_named.write_bytes(json_path.read_bytes())
         with self.patched_transport():
@@ -1079,14 +1087,14 @@ class PublisherTransportTests(PublisherHarness):
         self.assertEqual(sorted(FakeFtpClient.instances[0].stored), ["index.html", "latest.json"])
 
     def test_30b_publication_order_is_json_then_html(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(self.publish(json_path=json_path), 0)
         renames = [call[2] for call in FakeFtpClient.instances[0].calls if call[0] == "rename"]
         self.assertEqual(renames, ["latest.json", "index.html"])
 
     def test_30c_remote_directory_components_created_when_missing(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(self.publish(json_path=json_path), 0)
         client = FakeFtpClient.instances[0]
@@ -1112,7 +1120,7 @@ class PublisherTransportTests(PublisherHarness):
         self.assertNotIn(("cwd", "/"), FakeFtpClient.instances[0].calls)
 
     def test_31_json_only_supported(self):
-        json_path = self.write_json(synthetic_card())
+        json_path = self.write_json(synthetic_board())
         with self.patched_transport():
             self.assertEqual(self.publish(json_path=json_path, publish_html=False), 0)
         client = FakeFtpClient.instances[0]

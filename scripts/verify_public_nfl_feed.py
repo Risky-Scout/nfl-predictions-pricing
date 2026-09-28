@@ -27,6 +27,13 @@ THE FEED IS VALIDATED WITH THE EXISTING CONTRACT
   week, and none about the board's per-game stage either: a current week with
   nothing snapshotted yet carries ``games: []``, the shared validator accepts
   it, and so does this verifier.
+
+  Reading is deliberately broader than writing. This script reports what the
+  public endpoint IS serving, which mid-deployment may legitimately be an older
+  card, so it parses both contracts. ``--expect-authoritative-contract``
+  additionally asserts the served feed is the one contract a writer is allowed
+  to place; the job that publishes passes it, and the read-only daily liveness
+  probe does not.
   Deliberately, the ``--expect-sha256`` proof is unaffected -- an empty card
   still has to be byte-for-byte the card the run published.
 
@@ -87,6 +94,7 @@ def _load_contract_validator():
 _contract = _load_contract_validator()
 validate_public_payload = _contract.validate_public_payload
 PublishError = _contract.PublishError
+AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = _contract.AUTHORITATIVE_PUBLIC_SCHEMA_VERSION
 
 
 class PublicVerificationError(RuntimeError):
@@ -115,6 +123,7 @@ def verify(
     expect_generated_at: str | None = None,
     expect_horizon: str | None = None,
     expect_week: int | None = None,
+    expect_authoritative_contract: bool = False,
     require_fresh_hours: float | None = None,
     timeout: float = 30.0,
     now_utc: datetime | None = None,
@@ -151,6 +160,20 @@ def verify(
         summary = validate_public_payload(payload)
     except PublishError as exc:
         raise PublicVerificationError(f"{feed_url} failed the published pricing contract: {exc}") from exc
+
+    # OPT-IN, and deliberately not the default. The publishing job asserts it,
+    # because it knows it has just placed the authoritative board. The read-only
+    # liveness probe does not, because the live endpoint may legitimately still
+    # be serving an older card mid-deployment and reporting that honestly is
+    # this script's whole job -- turning the probe into a tripwire would fail the
+    # daily pass for a state it has no power to fix.
+    if expect_authoritative_contract:
+        served = summary.get("schema_version")
+        if served != AUTHORITATIVE_PUBLIC_SCHEMA_VERSION:
+            raise PublicVerificationError(
+                f"{feed_url} serves schema_version {served!r}, not the authoritative public "
+                f"contract {AUTHORITATIVE_PUBLIC_SCHEMA_VERSION!r}"
+            )
 
     if expect_sha256 and digest.lower() != expect_sha256.strip().lower():
         raise PublicVerificationError(
@@ -208,6 +231,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--expect-horizon", default=None, choices=[None, "TUE", "FRI"])
     parser.add_argument("--expect-week", type=int, default=None)
     parser.add_argument(
+        "--expect-authoritative-contract",
+        action="store_true",
+        help=(
+            "Assert the served feed carries the one authoritative public contract "
+            f"({AUTHORITATIVE_PUBLIC_SCHEMA_VERSION}). Used by the job that publishes it."
+        ),
+    )
+    parser.add_argument(
         "--require-fresh-hours",
         type=float,
         default=None,
@@ -227,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
             expect_generated_at=args.expect_generated_at,
             expect_horizon=args.expect_horizon,
             expect_week=args.expect_week,
+            expect_authoritative_contract=args.expect_authoritative_contract,
             require_fresh_hours=args.require_fresh_hours,
             timeout=args.timeout,
         )

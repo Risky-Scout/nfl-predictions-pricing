@@ -74,9 +74,13 @@ verifier = _load(REPO_ROOT / "scripts" / "verify_public_nfl_feed.py", "_contract
 exporter = _load(REPO_ROOT / "scripts" / "export_current_week_nfl_feed.py", "_contract_exporter")
 
 
-# The live shape: season 2026 week 3, handed over from week 2, nothing closed.
-EMPTY_WEEK_3 = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
-# The stale card the page was stuck on.
+# The live shape: season 2026 week 3, handed over from week 2, nothing
+# snapshotted. It is a BOARD envelope, because the current-week board is the one
+# thing a public writer is allowed to place.
+EMPTY_WEEK_3 = synthetic_board(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+# The stale card the page was stuck on. Deliberately left on the LEGACY contract:
+# that is what was really sitting on the endpoint, and deploying the empty board
+# over it is exactly the transition this suite has to prove still works.
 STALE_WEEK_1 = synthetic_card(week=1, generated_at_utc="2026-09-15T05:14:43Z")
 
 
@@ -313,6 +317,43 @@ def test_the_verifier_still_rejects_a_truncated_served_payload(monkeypatch, page
         verifier.verify(now_utc=NOW)
 
 
+def test_the_verifier_verifies_the_authoritative_contract(monkeypatch, page_html):
+    """Requirement 19: asked to, the verifier proves the live endpoint is serving
+    the one contract a writer may place."""
+    feed_bytes = _bytes(EMPTY_WEEK_3)
+    _stub_transport(monkeypatch, page_html, feed_bytes)
+
+    report = verifier.verify(
+        expect_sha256=sha256(feed_bytes).hexdigest(),
+        expect_authoritative_contract=True,
+        require_fresh_hours=24,
+        now_utc=NOW,
+    )
+    assert report["status"] == "VERIFIED"
+    assert report["feed"]["schema_version"] == "wizard-nfl-pricing-v3"
+
+
+def test_the_verifier_rejects_a_downgraded_endpoint_when_asked(monkeypatch, page_html):
+    """If a legacy card ever did reach the endpoint, the publishing job's own
+    verification is what would catch it."""
+    legacy = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+    _stub_transport(monkeypatch, page_html, _bytes(legacy))
+
+    with pytest.raises(verifier.PublicVerificationError, match="not the authoritative public contract"):
+        verifier.verify(expect_authoritative_contract=True, now_utc=NOW)
+
+
+def test_the_verifier_still_reports_a_legacy_card_rather_than_refusing_to_read_it(monkeypatch, page_html):
+    """Reading stays broader than writing: mid-deployment the endpoint may still
+    hold an older card, and saying so honestly is this script's whole job."""
+    legacy = synthetic_card(week=3, games=[], generated_at_utc="2026-09-23T19:53:02Z")
+    _stub_transport(monkeypatch, page_html, _bytes(legacy))
+
+    report = verifier.verify(now_utc=NOW)
+    assert report["status"] == "VERIFIED"
+    assert report["feed"]["schema_version"] == "wizard-nfl-pricing-v2"
+
+
 def test_the_verifier_still_enforces_freshness_on_an_empty_card(monkeypatch, page_html):
     _stub_transport(monkeypatch, page_html, _bytes(STALE_WEEK_1))
 
@@ -326,7 +367,10 @@ def test_the_verifier_defines_no_second_schema_of_its_own():
     source = (REPO_ROOT / "scripts" / "verify_public_nfl_feed.py").read_text(encoding="utf-8")
     assert 'REPO_ROOT / "scripts" / "publish_sportsodds_nfl.py"' in source
     assert "validate_public_payload = _contract.validate_public_payload" in source
-    for restated in ("SCHEMA_VERSION =", "GAME_KEYS =", "TOP_LEVEL_KEYS =", "games is empty"):
+    # Borrowing a constant by reference is the point; DEFINING one here would be
+    # the second schema. So the ban is on literal restatement, not on the name.
+    assert "AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = _contract." in source
+    for restated in ('SCHEMA_VERSION = "', "GAME_KEYS = ", "TOP_LEVEL_KEYS = ", "games is empty"):
         assert restated not in source
 
     # And it really is the same gate: identical verdicts on identical input.

@@ -90,6 +90,28 @@ SCHEMA_VERSION = "wizard-nfl-pricing-v2"
 # never borrows the other's keys.
 BOARD_SCHEMA_VERSION = "wizard-nfl-pricing-v3"
 
+# THE ONE CONTRACT A PUBLIC WRITER MAY PLACE.
+#
+# Reading and writing are deliberately different rules here. The validator
+# above READS both contracts, because the public endpoint is a real place whose
+# current contents this repository does not get to assume -- an older card may
+# legitimately still be sitting there mid-deployment, and the verifier has to be
+# able to parse it in order to say so.
+#
+# WRITING is narrower. The public product is the current-week pregame board, and
+# a board that has gone live must never be replaced by a single-cutoff certified
+# card: that would silently drop every game the board was showing from its OPEN
+# or MID snapshot and strip the stage labelling from the rest. Before this gate
+# existed the certified TUE/FRI orchestrator did exactly that twice a week, and
+# the only thing that restored the board was the next snapshot sweep happening
+# to run afterwards.
+#
+# So every public writer asks this question before it places anything, and a
+# non-authoritative payload is refused rather than published. The certified card
+# is still generated, still exported and still archived -- it simply is not what
+# the public endpoint serves.
+AUTHORITATIVE_PUBLIC_SCHEMA_VERSION = BOARD_SCHEMA_VERSION
+
 SUPPORTED_SEASON = 2026
 ALLOWED_HORIZONS = ("TUE", "FRI")
 MINIMUM_ELIGIBLE_BOOKS = 3
@@ -324,6 +346,24 @@ def validate_public_payload(payload: Any) -> dict:
         "generated_at_utc": generated_at.isoformat().replace("+00:00", "Z"),
         "game_count": len(games),
     }
+
+
+def require_publishable_contract(summary: Mapping[str, Any], *, source: str) -> str:
+    """The publication gate. Refuses to place anything but the authoritative
+    public contract, whatever produced it and whichever transport is placing it.
+
+    Takes the summary ``validate_public_payload`` already returned, so a writer
+    cannot reach this check without having fully validated the payload first.
+    """
+    schema_version = summary.get("schema_version")
+    if schema_version != AUTHORITATIVE_PUBLIC_SCHEMA_VERSION:
+        _fail(
+            f"{source} declares schema_version {schema_version!r}, but the public NFL endpoint "
+            f"serves {AUTHORITATIVE_PUBLIC_SCHEMA_VERSION!r} and is never downgraded. The "
+            "current-week pregame board is the only authoritative public card; a certified "
+            "single-cutoff card is exported and archived but not published. Refusing to publish."
+        )
+    return schema_version
 
 
 def load_and_validate_json(path: Path) -> tuple[bytes, dict]:
@@ -586,6 +626,9 @@ def publish(
         if json_path is None:
             _fail("--json <PATH> is required when publishing the public JSON feed")
         payload_bytes, json_summary = load_and_validate_json(json_path)
+        # Before a socket exists: this transport reaches the same public
+        # endpoint, so it is held to the same one-contract rule.
+        require_publishable_contract(json_summary, source=str(json_path))
         uploads.append((REMOTE_JSON_NAME, json_path, payload_bytes))
     if publish_html:
         uploads.append((REMOTE_HTML_NAME, html_path, load_and_validate_html(html_path)))
@@ -593,8 +636,8 @@ def publish(
     if json_summary is not None:
         _print(
             out,
-            "validated public JSON: season={season} week={week} horizon={horizon} "
-            "generated_at_utc={generated_at_utc} games={game_count}".format(**json_summary),
+            "validated public JSON: schema_version={schema_version} season={season} week={week} "
+            "horizon={horizon} generated_at_utc={generated_at_utc} games={game_count}".format(**json_summary),
         )
     _print(out, f"validated page source: {html_path}" if publish_html else "page publication skipped (--json-only)")
 
