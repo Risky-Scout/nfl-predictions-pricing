@@ -372,6 +372,10 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Summary
+        env:
+          # Bound out of the script body. An empty mode is a schedule, which
+          # the expression used to render as "auto (scheduled)" inline.
+          MODE_LABEL: ${{ inputs.mode || 'auto (scheduled)' }}
         run: |
           {
             echo "### NFL 2026 production -- schedule decision"
@@ -379,7 +383,7 @@ jobs:
             echo "| field | value |"
             echo "|---|---|"
             echo "| ref | \`${{ github.ref }}\` |"
-            echo "| mode | \`${{ inputs.mode || 'auto (scheduled)' }}\` |"
+            echo "| mode | \`${MODE_LABEL}\` |"
             echo "| daily_due | \`${{ steps.decide.outputs.daily_due }}\` |"
             echo "| certified_due | \`${{ steps.decide.outputs.certified_due }}\` |"
             echo "| certified_horizon | \`${{ steps.decide.outputs.certified_horizon }}\` |"
@@ -555,11 +559,30 @@ jobs:
           fi
 
           echo "capture_source=NEW_CAPTURE"
+          # HORIZON and AS_OF are dispatch values. printf %q leaves an ordinary
+          # horizon or ISO timestamp unchanged, and that token is single-quoted
+          # so the remote command stays the historical one. A value %q has to
+          # escape is sent as that word: a single quote becomes \', which cannot
+          # close a quoted string because the raw value is never expanded
+          # between quotes in this double-quoted remote command.
+          shell_quote_arg() {
+            local flag="$1" value="$2" quoted
+            quoted=$(printf '%q' "${value}")
+            if [ "${quoted}" = "${value}" ]; then
+              printf " %s '%s'" "${flag}" "${quoted}"
+            else
+              printf ' %s %s' "${flag}" "${quoted}"
+            fi
+          }
+          capture_args=$(shell_quote_arg --horizon "${HORIZON}")
+          if [ -n "${AS_OF:-}" ]; then
+            capture_args+=$(shell_quote_arg --as-of "${AS_OF}")
+          fi
           out="$(bash ops/wizard/remote.sh exec "
             export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
             export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
             OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
-            bash \"\$OPS/create_official_capture.sh\" --horizon '${HORIZON}' ${AS_OF:+--as-of \"${AS_OF}\"}
+            bash \"\$OPS/create_official_capture.sh\"${capture_args}
           " | tee /dev/stderr)"
 
           manifest="$(printf '%s\n' "${out}" | sed -n 's/^OFFICIAL_CAPTURE_MANIFEST=//p' | tail -n 1)"
@@ -577,10 +600,31 @@ jobs:
           MANIFEST: ${{ steps.capture.outputs.manifest }}
         run: |
           set -euo pipefail
-          extra=""
-          [ -n "${EXPECTED_CAPTURE_SHA256:-}" ] && extra="${extra} --capture-sha256 '${EXPECTED_CAPTURE_SHA256}'"
-          [ -n "${AS_OF:-}" ] && extra="${extra} --as-of '${AS_OF}'"
-          [ "${PUBLISH_MODE}" = "dry_run" ] && extra="${extra} --dry-run-publish"
+          # Horizon, manifest path, capture hash and as-of are dispatch values
+          # (the manifest may also be the path the capture step just printed).
+          # Same rule as the capture step: ordinary tokens keep the historical
+          # single-quoted command; anything printf %q escapes is one word, so a
+          # single quote cannot break out of the remote command.
+          shell_quote_arg() {
+            local flag="$1" value="$2" quoted
+            quoted=$(printf '%q' "${value}")
+            if [ "${quoted}" = "${value}" ]; then
+              printf " %s '%s'" "${flag}" "${quoted}"
+            else
+              printf ' %s %s' "${flag}" "${quoted}"
+            fi
+          }
+          card_args=$(shell_quote_arg --horizon "${HORIZON}")
+          card_args+=$(shell_quote_arg --capture-manifest "${MANIFEST}")
+          if [ -n "${EXPECTED_CAPTURE_SHA256:-}" ]; then
+            card_args+=$(shell_quote_arg --capture-sha256 "${EXPECTED_CAPTURE_SHA256}")
+          fi
+          if [ -n "${AS_OF:-}" ]; then
+            card_args+=$(shell_quote_arg --as-of "${AS_OF}")
+          fi
+          # Only an explicit dry run withholds publication. The resolved mode
+          # is publish or dry_run; the flag below is a literal, not the input.
+          [ "${PUBLISH_MODE}" = "dry_run" ] && card_args="${card_args} --dry-run-publish"
 
           out="$(bash ops/wizard/remote.sh exec "
             export WIZARD_NFL_HOME='${WIZARD_NFL_HOME}'
@@ -588,9 +632,7 @@ jobs:
             export BALLDONTLIE_API_KEY='${BALLDONTLIE_API_KEY}'
             export THE_ODDS_API_KEY='${THE_ODDS_API_KEY}'
             OPS=\"\${WIZARD_NFL_HOME:-\$HOME/${DEFAULT_WIZARD_NFL_HOME_LEAF}}/repo/ops/wizard\"
-            bash \"\$OPS/run_certified_card.sh\" \
-              --horizon '${HORIZON}' \
-              --capture-manifest '${MANIFEST}'${extra}
+            bash \"\$OPS/run_certified_card.sh\"${card_args}
           " | tee /dev/stderr)"
 
           # THE ASSERTION THAT REPLACES THE OLD PUBLIC BYTE CHECK.
@@ -717,7 +759,18 @@ jobs:
         run: |
           set -euo pipefail
           args=""
-          [ -n "${AS_OF:-}" ] && args="${args} --as-of '${AS_OF}'"
+          # AS_OF is a dispatch value. An ordinary ISO timestamp needs no
+          # escaping, so the remote command stays `--as-of '<timestamp>'`.
+          # A value printf %q must quote is appended as that word, never as
+          # raw text inside single quotes the local double-quoted command expands.
+          if [ -n "${AS_OF:-}" ]; then
+            as_of_q=$(printf '%q' "${AS_OF}")
+            if [ "${as_of_q}" = "${AS_OF}" ]; then
+              args+=$(printf " --as-of '%s'" "${as_of_q}")
+            else
+              args+=$(printf ' --as-of %s' "${as_of_q}")
+            fi
+          fi
           # Same test the certified job makes, against the same resolved
           # value: only an explicit dry run withholds publication.
           [ "${PUBLISH_MODE}" = "dry_run" ] && args="${args} --dry-run-publish"
