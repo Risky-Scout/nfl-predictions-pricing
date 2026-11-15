@@ -207,6 +207,7 @@ def _sweep_args(workflow: dict, tmp_path: Path, *, publish_mode: str, as_of: str
         ["bash", str(script)],
         capture_output=True,
         text=True,
+        cwd=REPO_ROOT,
         env={"PATH": os.environ["PATH"], "AS_OF": as_of, "PUBLISH_MODE": publish_mode},
     )
     assert result.returncode == 0, result.stderr
